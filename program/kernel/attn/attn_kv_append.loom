@@ -1,0 +1,101 @@
+// Appends a span to the cache. A local visit stores only the last 1024 tokens of the span.
+func.decl @inkling_attn_span(%spans: buffer, %span_cap: index, %token: index) -> (index, index, index, index, offset)
+
+func.decl @inkling_attn_live_tokens(%spans: buffer, %span_cap: index) -> (index)
+
+kernel.def export("inkling_attn_kv_append") @inkling_attn_kv_append(%cap: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 128 : index
+  kernel.launch.config workgroups(%cap, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%cap_in: index, %span_cap: index, %global: index, %max_blocks: index, %kv_origin: offset, %spans: buffer, %rows: buffer, %state: buffer, %k_act: buffer, %v_act: buffer) {
+  %cap = index.assume %cap_in [range(%cap_in, 1, 32768)] : index
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c2 = index.constant 2 : index
+  %c8 = index.constant 8 : index
+  %c16 = index.constant 16 : index
+  %c64 = index.constant 64 : index
+  %c128 = index.constant 128 : index
+  %c1024 = index.constant 1024 : index
+  %c16_o = index.constant 16 : offset
+  %c40 = index.constant 40 : offset
+  %c262144 = index.constant 262144 : offset
+  %c32768 = index.constant 32768 : offset
+  %c16384 = index.constant 16384 : offset
+  %c256_o = index.constant 256 : offset
+  %zero = index.constant 0 : offset
+  %token0 = kernel.workgroup.id<x> : index
+  %token = index.assume %token0 [range(%token0, 0, 16777214), lt(%token0, %cap)] : index
+  %tid0 = kernel.workitem.id<x> : index
+  %tid = index.assume %tid0 [range(%tid0, 0, 127)] : index
+  %live = func.call @inkling_attn_live_tokens(%spans, %span_cap) : (buffer, index) -> (index)
+  %active = index.cmp ult, %token, %live : index
+  scf.if %active {
+    %begin, %len, %pos0, %row, %slot = func.call @inkling_attn_span(%spans, %span_cap, %token) : (buffer, index, index) -> (index, index, index, index, offset)
+    %rel = index.sub %token, %begin : index
+    %pos = index.add %pos0, %rel : index
+    %is_global = index.cmp ne, %global, %c0 : index
+    %rel_far = index.add %rel, %c1024 : index
+    %in_ring = index.cmp uge, %rel_far, %len : index
+    %keep = scalar.ori %is_global, %in_ring : i1
+    scf.if %keep {
+      %pos_a = index.assume %pos [range(%pos, 0, 2147483647)] : index
+      %block = index.div %pos_a, %c64 : index
+      %within = index.rem %pos_a, %c64 : index
+      %rows_meta = buffer.assume.memory_space<constant> %rows : buffer
+      %record_at = index.scale %row, %c40 : index, offset -> offset
+      %record = buffer.view %rows_meta[%record_at] : buffer -> view<5xi64>
+      %map_word = view.load %record[4] : view<5xi64> -> i64
+      %map_ok = scalar.assume %map_word [range(%map_word, 0, 9223372036854775807), multiple_of(%map_word, 4)] : i64
+      %map_origin = index.cast %map_ok : i64 to offset
+      %map_view = buffer.view %rows_meta[%map_origin] : buffer -> view<[%max_blocks]xi32>
+      %page_off = scf.if %is_global -> (offset) {
+        %bb = index.assume %block [range(%block, 0, 16777215), lt(%block, %max_blocks)] : index
+        %page_word = view.load %map_view[%bb] : view<[%max_blocks]xi32> -> i32
+        %page = index.cast %page_word : i32 to index
+        %page_ok = index.assume %page [range(%page, 0, 2147483647)] : index
+        %page_bytes = index.scale %page_ok, %c262144 : index, offset -> offset
+        %at = index.add %kv_origin, %page_bytes : offset
+        scf.yield %at : offset
+      } else {
+        %ring = index.rem %block, %c16 : index
+        %ring_bytes = index.scale %ring, %c262144 : index, offset -> offset
+        %base = index.add %slot, %kv_origin : offset
+        %at = index.add %base, %ring_bytes : offset
+        scf.yield %at : offset
+      }
+      %tok_bytes = index.scale %within, %c256_o : index, offset -> offset
+      %tok_off = index.add %page_off, %tok_bytes : offset
+      %k_view = buffer.view %k_act[%zero] : buffer -> view<[%cap]x1024xf16>
+      %v_view = buffer.view %v_act[%zero] : buffer -> view<[%cap]x1024xf16>
+      scf.for %it = [%c0 to %c2 step %c1] {
+        %group0 = index.madd %it, %c128, %tid : index
+        %group = index.assume %group0 [range(%group0, 0, 255)] : index
+        %is_v = index.cmp uge, %group, %c128 : index
+        %rem = index.rem %group, %c128 : index
+        %head = index.div %rem, %c16 : index
+        %c8x = index.rem %rem, %c16 : index
+        %col0 = index.madd %head, %c128, %c0 : index
+        %col1 = index.madd %c8x, %c8, %col0 : index
+        %col = index.assume %col1 [range(%col1, 0, 1016)] : index
+        %value = scf.if %is_v -> (vector<8xf16>) {
+          %x = vector.load %v_view[%token, %col] : view<[%cap]x1024xf16> -> vector<8xf16>
+          scf.yield %x : vector<8xf16>
+        } else {
+          %x = vector.load %k_view[%token, %col] : view<[%cap]x1024xf16> -> vector<8xf16>
+          scf.yield %x : vector<8xf16>
+        }
+        %head_bytes = index.scale %head, %c32768 : index, offset -> offset
+        %kind = scf.select %is_v, %c1, %c0 : index
+        %kind_bytes = index.scale %kind, %c16384 : index, offset -> offset
+        %col_bytes = index.scale %c8x, %c16_o : index, offset -> offset
+        %o1 = index.add %tok_off, %head_bytes : offset
+        %o2 = index.add %o1, %kind_bytes : offset
+        %dst_off = index.add %o2, %col_bytes : offset
+        %dst = buffer.view %state[%dst_off] : buffer -> view<8xf16>
+        vector.store %value, %dst[0] : vector<8xf16>, view<8xf16>
+      }
+    }
+  }
+  kernel.return
+}

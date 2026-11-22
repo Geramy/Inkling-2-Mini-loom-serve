@@ -1,0 +1,81 @@
+// Device sampler for the Inkling output head. One workgroup draws one token from one row of logits with the options record that request_options produced.
+// The draw depends only on the request seed, the absolute position and the token ID, so packing, row order and epoch shape do not change it.
+// The categorical selection and Philox generator are the AMD motifs (sampling.loom, random.loom).
+
+config.decl @inkling.packet_capacity : %value: index where [range(%value, 2, 2147483646)]
+
+func.decl @inkling_packet_identity_origin(%capacity: index) -> (offset)
+
+func.decl @inkling_packet_policy_origin(%capacity: index) -> (offset)
+
+template.decl @sampling.categorical_excluding_f32(%columns: index, %logits: buffer, %logits_origin: offset, %excluded_id: i32, %temperature: f32, %top_p: f32, %top_k: i32, %seed: i64, %position: i64) -> (i32)
+
+// Token that opens a tool call. Option flag bit 1 (tool_choice none) removes it from the draw.
+func.def @chat_tool_open_token() -> (i32) {
+  %token = scalar.constant 200049 : i32
+  func.return %token : i32
+}
+
+// Identity record per selected row (packet identity table): {owner, position}. The owner indexes the 24-byte option table of the packet, the position is the absolute index of the drawn token. Rows at or above the selected count do nothing.
+// The logit stride is the element distance between rows; zero makes every row read row zero.
+kernel.def @inkling_sample_rows(%rows_value: index) {
+  %rows = index.assume %rows_value [range(%rows_value, 1, 2147483647)] : index
+  %c1_index = index.constant 1 : index
+  %threads = index.constant 256 : index
+  kernel.launch.config workgroups(%rows, %c1_index, %c1_index) workgroup_size(%threads, %c1_index, %c1_index) : index
+} launch(%rows_value: index, %logit_stride: index, %epoch: buffer, %logits: buffer, %outputs: buffer) {
+  %origin = index.constant 0 : offset
+  %c0 = index.constant 0 : index
+  %thread = kernel.workitem.id<x> : index
+  %row_value = kernel.workgroup.id<x> : index
+  %rows = index.assume %rows_value [range(%rows_value, 1, 2147483647)] : index
+  %row = index.assume %row_value [ge(%row_value, 0), lt(%row_value, %rows)] : index
+  %packet_capacity = config.get @inkling.packet_capacity : index
+  %header = buffer.view %epoch[%origin] : buffer -> view<3xi32>
+  %selected_count = view.load %header[2] : view<3xi32> -> i32
+  %row_word = index.cast %row : index to i32
+  %live = scalar.cmpi ult, %row_word, %selected_count : i32
+  scf.if %live {
+  %identity_row = index.assume %row [ge(%row, 0), lt(%row, %packet_capacity)] : index
+  %identity_origin = func.call @inkling_packet_identity_origin(%packet_capacity) : (index) -> (offset)
+  %records = buffer.view %epoch[%identity_origin] : buffer -> view<[%packet_capacity]x2xi32>
+  %owner_word = view.load %records[%identity_row, 0] : view<[%packet_capacity]x2xi32> -> i32
+  %position_word = view.load %records[%identity_row, 1] : view<[%packet_capacity]x2xi32> -> i32
+  %position = scalar.extui %position_word : i32 to i64
+  %owner_value = index.cast %owner_word : i32 to index
+  %owner = index.assume %owner_value [ge(%owner_value, 0), lt(%owner_value, %packet_capacity)] : index
+  %policy_origin = func.call @inkling_packet_policy_origin(%packet_capacity) : (index) -> (offset)
+  %policy_stride = index.constant 24 : offset
+  %policy_relative = index.scale %owner, %policy_stride : index, offset -> offset
+  %policy_offset = index.add %policy_origin, %policy_relative : offset
+  %policy = buffer.view %epoch[%policy_offset] : buffer -> view<6xi32>
+  %floats = buffer.view %epoch[%policy_offset] : buffer -> view<6xf32>
+  %seed_relative = index.constant 16 : offset
+  %seed_offset = index.add %policy_offset, %seed_relative : offset
+  %seeds = buffer.view %epoch[%seed_offset] : buffer -> view<1xi64>
+  %temperature = view.load %floats[0] : view<6xf32> -> f32
+  %top_p = view.load %floats[1] : view<6xf32> -> f32
+  %top_k = view.load %policy[2] : view<6xi32> -> i32
+  %flags = view.load %policy[3] : view<6xi32> -> i32
+  %seed = view.load %seeds[0] : view<1xi64> -> i64
+  %forbid_bit = scalar.constant 2 : i32
+  %none = scalar.constant -1 : i32
+  %c0_i32 = scalar.constant 0 : i32
+  %forbidden_bits = scalar.andi %flags, %forbid_bit : i32
+  %forbidden = scalar.cmpi ne, %forbidden_bits, %c0_i32 : i32
+  %tool_open = func.call @chat_tool_open_token() : () -> (i32)
+  %excluded = scf.select %forbidden, %tool_open, %none : i32
+  %columns = index.constant 200058 : index
+  %c4 = index.constant 4 : offset
+  %row_elements = index.mul %row, %logit_stride : index
+  %row_offset = index.scale %row_elements, %c4 : index, offset -> offset
+  %selected = template.apply<@sampling.categorical_excluding_f32>(%columns, %logits, %row_offset, %excluded, %temperature, %top_p, %top_k, %seed, %position) : (index, buffer, offset, i32, f32, f32, i32, i64, i64) -> (i32)
+  %publishes = index.cmp eq, %thread, %c0 : index
+  scf.if %publishes {
+    %tokens = buffer.view %outputs[%origin] : buffer -> view<[%rows]xi32>
+    view.store %selected, %tokens[%row] : i32, view<[%rows]xi32>
+  }
+  }
+  kernel.return
+}
+

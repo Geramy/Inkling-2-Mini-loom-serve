@@ -1,0 +1,114 @@
+// Helpers of the dense GEMV kernels. Weights are read as 16-value parts of 256-value superblocks (see the weight motifs).
+
+func.decl @inkling_dense_col_origin(%origin: offset, %col: index, %last: index, %stride: index) -> (offset)
+
+func.def public inline @inkling_dense_mv_xload(%use: i1, %input: buffer, %x_col_origin: offset, %sb: index, %o0: index, %o1: index, %o2: index, %o3: index) -> (vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>) {
+  %c256 = index.constant 256 : index
+  %b4 = index.constant 4 : offset
+  %zero4 = vector.splatf 0.0 : vector<4xf32>
+  %x0, %x1, %x2, %x3 = scf.if %use -> (vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>) {
+    %sb_values = index.mul %sb, %c256 : index
+    %sb_bytes = index.scale %sb_values, %b4 : index, offset -> offset
+    %x_byte = index.add %x_col_origin, %sb_bytes : offset
+    %x_view = buffer.view %input[%x_byte] : buffer -> view<256xf32>
+    %y0 = vector.load %x_view[%o0] : view<256xf32> -> vector<4xf32>
+    %y1 = vector.load %x_view[%o1] : view<256xf32> -> vector<4xf32>
+    %y2 = vector.load %x_view[%o2] : view<256xf32> -> vector<4xf32>
+    %y3 = vector.load %x_view[%o3] : view<256xf32> -> vector<4xf32>
+    scf.yield %y0, %y1, %y2, %y3 : vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>
+  } else {
+    scf.yield %zero4, %zero4, %zero4, %zero4 : vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>
+  }
+  func.return %x0, %x1, %x2, %x3 : vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>
+}
+
+func.def public inline @inkling_dense_mv_dot16(%use: i1, %w0: vector<4xf32>, %w1: vector<4xf32>, %w2: vector<4xf32>, %w3: vector<4xf32>, %x0: vector<4xf32>, %x1: vector<4xf32>, %x2: vector<4xf32>, %x3: vector<4xf32>) -> (f32) {
+  %zero = scalar.constant 0.0 : f32
+  %result = scf.if %use -> (f32) {
+    %p0 = vector.mulf %w0, %x0 : vector<4xf32>
+    %p1 = vector.fmaf %w1, %x1, %p0 : vector<4xf32>
+    %p2 = vector.fmaf %w2, %x2, %p1 : vector<4xf32>
+    %p3 = vector.fmaf %w3, %x3, %p2 : vector<4xf32>
+    %lane_sum = vector.reduce<addf> %p3, %zero : vector<4xf32>, f32
+    %sum = kernel.subgroup.reduce<addf> %lane_sum {cluster_size = 16} : f32
+    scf.yield %sum : f32
+  } else {
+    scf.yield %zero : f32
+  }
+  func.return %result : f32
+}
+
+config.decl @inkling.dense.gemv.cols : %value: index where [range(%value, 1, 8)]
+
+target.decl @inkling_dense_gfx11
+
+template.decl @inkling.dense.gemv.xs_wg_per_unit() -> (index)
+
+template.def<@inkling.dense.gemv.xs_wg_per_unit> priority(-1) @inkling_dense_xs_wg_per_unit_default() -> (index) {
+  %value = index.constant 2 : index
+  template.return %value : index
+}
+
+template.def<@inkling.dense.gemv.xs_wg_per_unit> device target(@inkling_dense_gfx11) priority(20) @inkling_dense_xs_wg_per_unit_gfx11() -> (index) {
+  %value = index.constant 4 : index
+  template.return %value : index
+}
+
+config.decl @inkling.dense.gemv.xs_depth : %value: index where [range(%value, 1, 4)]
+
+// The workgroup target is a multiple of the execution unit (CU) count. Fewer workgroups give a long tail.
+func.def public pure inline @inkling_dense_mv_xs_plan(%n_rows: index, %k_size: index, %per_unit: index) -> (index, index, index, index) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c16 = index.constant 16 : index
+  %units = target.execution.unit.count : index
+  %n_wg_target = index.mul %per_unit, %units : index
+  %n_wg_target_m1 = index.sub %n_wg_target, %c1 : index
+  %c256 = index.constant 256 : index
+  %c32 = index.constant 32 : index
+  %n_sb0 = index.div %k_size, %c256 : index
+  %n_sb1 = index.min %n_sb0, %c16 : index
+  %no_sb = index.cmp eq, %n_sb1, %c0 : index
+  %n_sb2 = scf.select %no_sb, %c1, %n_sb1 : index
+  %n_sb = index.assume %n_sb2 [range(%n_sb2, 1, 16)] : index
+  %rows_par0 = index.div %c16, %n_sb : index
+  %rows_par = index.assume %rows_par0 [range(%rows_par0, 1, 16)] : index
+  %rows_par_m1 = index.sub %rows_par, %c1 : index
+  %rows_round = index.add %n_rows, %rows_par_m1 : index
+  %total_pass = index.div %rows_round, %rows_par : index
+  %pass_round = index.add %total_pass, %n_wg_target_m1 : index
+  %n_pass0 = index.div %pass_round, %n_wg_target : index
+  %n_pass1 = index.min %n_pass0, %c32 : index
+  // Each workgroup loads all activations once. Thus use at least 4 passes when this keeps 16 workgroups.
+  %c4 = index.constant 4 : index
+  %c64 = index.constant 64 : index
+  %many_pass = index.cmp uge, %total_pass, %c64 : index
+  %min_pass = scf.select %many_pass, %c4, %c1 : index
+  %few_pass = index.cmp ult, %n_pass1, %min_pass : index
+  %n_pass2 = scf.select %few_pass, %min_pass, %n_pass1 : index
+  %n_pass = index.assume %n_pass2 [range(%n_pass2, 1, 32)] : index
+  %n_pass_m1 = index.sub %n_pass, %c1 : index
+  %wg_round = index.add %total_pass, %n_pass_m1 : index
+  %n_wg = index.div %wg_round, %n_pass : index
+  func.return %n_sb, %rows_par, %n_pass, %n_wg : index, index, index, index
+}
+
+// Callers keep p < 32, col < 8 and slot < 16. Thus the index is below 4096.
+func.def public inline @inkling_dense_mv_xs_stage_index(%p: index, %col: index, %slot: index) -> (index) {
+  %c7 = index.constant 7 : index
+  %c8 = index.constant 8 : index
+  %c15 = index.constant 15 : index
+  %c16 = index.constant 16 : index
+  %c31 = index.constant 31 : index
+  %p_min = index.min %p, %c31 : index
+  %col_min = index.min %col, %c7 : index
+  %slot_min = index.min %slot, %c15 : index
+  %p_in = index.assume %p_min [range(%p_min, 0, 31)] : index
+  %col_in = index.assume %col_min [range(%col_min, 0, 7)] : index
+  %slot_in = index.assume %slot_min [range(%slot_min, 0, 15)] : index
+  %p_cols = index.mul %p_in, %c8 : index
+  %p_col = index.add %p_cols, %col_in : index
+  %p_slots = index.mul %p_col, %c16 : index
+  %index = index.add %p_slots, %slot_in : index
+  func.return %index : index
+}

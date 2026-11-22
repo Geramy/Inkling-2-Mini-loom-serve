@@ -1,0 +1,364 @@
+// Loop controller: z = down [rms(x); rms(m)], x' = x - tanh(forget z) x + tanh(gain z) m, then rms norm with weight.
+// ctrl_down writes partial sums of z, ctrl_z adds them, ctrl_apply evaluates the two 64 to 2304 products.
+
+config.decl @inkling.mix.ctrl_chunk : %value: index where [range(%value, 64, 512), multiple_of(%value, 64)]
+config.decl @inkling.mix.ctrl_bf16 : %value: index where [range(%value, 0, 1)]
+config.decl @inkling.mix.ctrl_tokens : %value: index where [range(%value, 1, 64)]
+
+func.def public inline @inkling_ctrl_weights4(%w: buffer, %elem: index, %bf16: i1) -> (vector<4xf32>) {
+  %origin = index.constant 0 : offset
+  %v = scf.if %bf16 -> (vector<4xf32>) {
+    %view = buffer.view %w[%origin] : buffer -> view<294912xbf16>
+    %raw = vector.load %view[%elem] : view<294912xbf16> -> vector<4xbf16>
+    %wide = vector.extf %raw : vector<4xbf16> to vector<4xf32>
+    scf.yield %wide : vector<4xf32>
+  } else {
+    %view = buffer.view %w[%origin] : buffer -> view<294912xf32>
+    %x = vector.load %view[%elem] : view<294912xf32> -> vector<4xf32>
+    scf.yield %x : vector<4xf32>
+  }
+  func.return %v : vector<4xf32>
+}
+
+func.def public inline @inkling_ctrl_pick(%c: index, %a: buffer, %b: buffer, %d: buffer) -> (buffer) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %is1 = index.cmp eq, %c, %c1 : index
+  %is0 = index.cmp eq, %c, %c0 : index
+  %bd = scf.select %is1, %b, %d : buffer
+  %r = scf.select %is0, %a, %bd : buffer
+  func.return %r : buffer
+}
+
+func.def public inline @inkling_ctrl_f32(%buf: buffer, %elem: index) -> (f32) {
+  %four = index.constant 4 : offset
+  %bytes = index.scale %elem, %four : index, offset -> offset
+  %view = buffer.view %buf[%bytes] : buffer -> view<1xf32>
+  %v = view.load %view[0] : view<1xf32> -> f32
+  func.return %v : f32
+}
+
+func.def public inline @inkling_ctrl_store(%buf: buffer, %elem: index, %v: f32) {
+  %four = index.constant 4 : offset
+  %bytes = index.scale %elem, %four : index, offset -> offset
+  %view = buffer.view %buf[%bytes] : buffer -> view<1xf32>
+  view.store %v, %view[0] : f32, view<1xf32>
+  func.return
+}
+
+func.def public inline @inkling_ctrl_live(%spans: buffer) -> (index) {
+  %origin = index.constant 0 : offset
+  %header = buffer.view %spans[%origin] : buffer -> view<4xi32>
+  %word = view.load %header[1] : view<4xi32> -> i32
+  %live = index.cast %word : i32 to index
+  func.return %live : index
+}
+
+kernel.def export("inkling_ctrl_down") @inkling_ctrl_down(%cap: index, %nc: index) {
+  %one = index.constant 1 : index
+  %chunk = config.get @inkling.mix.ctrl_chunk : index
+  %tokens = config.get @inkling.mix.ctrl_tokens : index
+  %full = index.constant 4608 : index
+  %chunks = index.div %full, %chunk : index
+  %cap_up = index.add %cap, %tokens : index
+  %cap_dec = index.constant 1 : index
+  %cap_m1 = index.sub %cap_up, %cap_dec : index
+  %tiles = index.div %cap_m1, %tokens : index
+  %threads = index.constant 256 : index
+  kernel.launch.config workgroups(%chunks, %tiles, %nc) workgroup_size(%threads, %one, %one) : index
+} launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %spans: buffer, %x: buffer, %m: buffer, %down0: buffer, %down1: buffer, %down2: buffer, %part: buffer) {
+  %x_col0 = index.assume %x_col0_in [range(%x_col0_in, 0, 3)] : index
+  %x_col_step = index.assume %x_col_step_in [range(%x_col_step_in, 0, 1)] : index
+  %m_col0 = index.assume %m_col0_in [range(%m_col0_in, 0, 3)] : index
+  %col_stride = index.assume %col_stride_in [range(%col_stride_in, 0, 2147483647)] : index
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c4 = index.constant 4 : index
+  %c16 = index.constant 16 : index
+  %c64 = index.constant 64 : index
+  %embd = index.constant 2304 : index
+  %full = index.constant 4608 : index
+  %four = index.constant 4 : offset
+  %chunk = config.get @inkling.mix.ctrl_chunk : index
+  %tokens = config.get @inkling.mix.ctrl_tokens : index
+  %bf16_cfg = config.get @inkling.mix.ctrl_bf16 : index
+  %bf16 = index.cmp ne, %bf16_cfg, %c0 : index
+  %f0 = scalar.constant 0.0 : f32
+  %zero4 = vector.splatf 0.0 : vector<4xf32>
+  %kc = kernel.workgroup.id<x> : index
+  %tile = kernel.workgroup.id<y> : index
+  %c = kernel.workgroup.id<z> : index
+  %tid = kernel.workitem.id<x> : index
+  %live = func.call @inkling_ctrl_live(%spans) : (buffer) -> (index)
+  %first_token = index.mul %tile, %tokens : index
+  %tile_active = index.cmp ult, %first_token, %live : index
+  scf.if %tile_active {
+    %row = index.div %tid, %c4 : index
+    %kl = index.rem %tid, %c4 : index
+    %chunk_x = index.div %embd, %chunk : index
+    %in_x = index.cmp ult, %kc, %chunk_x : index
+    %x_col = index.madd %c, %x_col_step, %x_col0 : index
+    %m_col = index.add %m_col0, %c : index
+    %chunk_start = index.mul %kc, %chunk : index
+    %m_start = index.sub %chunk_start, %embd : index
+    %src = scf.select %in_x, %x, %m : buffer
+    %col = scf.select %in_x, %x_col, %m_col : index
+    %local = scf.select %in_x, %chunk_start, %m_start : index
+    %col_base = index.mul %col, %col_stride : index
+    %down = func.call @inkling_ctrl_pick(%c, %down0, %down1, %down2) : (index, buffer, buffer, buffer) -> (buffer)
+    %row_base = index.mul %row, %full : index
+    %w_base = index.add %row_base, %chunk_start : index
+    %nj = index.div %chunk, %c16 : index
+    %bank0 = vector.splatf 0.0 : vector<[%nj]x4xf32>
+    %bank = scf.for %j = [%c0 to %nj step %c1](%b = %bank0 : vector<[%nj]x4xf32>) -> (vector<[%nj]x4xf32>) unroll {
+      %vec = index.madd %j, %c4, %kl : index
+      %e = index.mul %vec, %c4 : index
+      %we = index.add %w_base, %e : index
+      %w4 = func.call @inkling_ctrl_weights4(%down, %we, %bf16) : (buffer, index, i1) -> (vector<4xf32>)
+      %b_next = vector.insert %w4 into %b[%j] : vector<4xf32>, vector<[%nj]x4xf32>
+      scf.yield %b_next : vector<[%nj]x4xf32>
+    }
+    %kcs = index.div %full, %chunk : index
+    %writer = index.cmp eq, %kl, %c0 : index
+    scf.for %tb = [%c0 to %tokens step %c1] {
+      %token = index.add %first_token, %tb : index
+      %token_live = index.cmp ult, %token, %live : index
+      scf.if %token_live {
+        %tok_base = index.madd %token, %embd, %col_base : index
+        %in_base = index.add %tok_base, %local : index
+        %in_bytes = index.scale %in_base, %four : index, offset -> offset
+        %in_view = buffer.view %src[%in_bytes] : buffer -> view<512xf32>
+        %acc = scf.for %j = [%c0 to %nj step %c1](%a = %zero4 : vector<4xf32>) -> (vector<4xf32>) unroll {
+          %vec = index.madd %j, %c4, %kl : index
+          %e = index.mul %vec, %c4 : index
+          %xv = vector.load %in_view[%e] : view<512xf32> -> vector<4xf32>
+          %w4 = vector.extract %bank[%j] : vector<[%nj]x4xf32> -> vector<4xf32>
+          %s = vector.fmaf %w4, %xv, %a : vector<4xf32>
+          scf.yield %s : vector<4xf32>
+        }
+        %lane = vector.reduce<addf> %acc, %f0 : vector<4xf32>, f32
+        %sum = kernel.subgroup.reduce<addf> %lane {cluster_size = 4} : f32
+        scf.if %writer {
+          %pc = index.madd %c, %cap_in, %token : index
+          %pk = index.madd %pc, %kcs, %kc : index
+          %pe0 = index.madd %pk, %c64, %row : index
+          %pe = index.assume %pe0 [range(%pe0, 0, 2147483640)] : index
+          func.call @inkling_ctrl_store(%part, %pe, %sum) : (buffer, index, f32)
+        }
+      }
+    }
+  }
+  kernel.return
+}
+
+kernel.def export("inkling_ctrl_z") @inkling_ctrl_z(%cap: index, %nc: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 64 : index
+  kernel.launch.config workgroups(%cap, %nc, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %spans: buffer, %rinv_x: buffer, %rinv_m: buffer, %part: buffer, %z: buffer) {
+  %x_col0 = index.assume %x_col0_in [range(%x_col0_in, 0, 3)] : index
+  %x_col_step = index.assume %x_col_step_in [range(%x_col_step_in, 0, 1)] : index
+  %m_col0 = index.assume %m_col0_in [range(%m_col0_in, 0, 3)] : index
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c64 = index.constant 64 : index
+  %embd = index.constant 2304 : index
+  %full = index.constant 4608 : index
+  %chunk = config.get @inkling.mix.ctrl_chunk : index
+  %f0 = scalar.constant 0.0 : f32
+  %token = kernel.workgroup.id<x> : index
+  %c = kernel.workgroup.id<y> : index
+  %o = kernel.workitem.id<x> : index
+  %live = func.call @inkling_ctrl_live(%spans) : (buffer) -> (index)
+  %active = index.cmp ult, %token, %live : index
+  scf.if %active {
+    %x_col = index.madd %c, %x_col_step, %x_col0 : index
+    %m_col = index.add %m_col0, %c : index
+    %rx_i0 = index.madd %x_col, %cap_in, %token : index
+    %rm_i0 = index.madd %m_col, %cap_in, %token : index
+    %rx_i = index.assume %rx_i0 [range(%rx_i0, 0, 2147483640)] : index
+    %rm_i = index.assume %rm_i0 [range(%rm_i0, 0, 2147483640)] : index
+    %rx = func.call @inkling_ctrl_f32(%rinv_x, %rx_i) : (buffer, index) -> (f32)
+    %rm = func.call @inkling_ctrl_f32(%rinv_m, %rm_i) : (buffer, index) -> (f32)
+    %kcs = index.div %full, %chunk : index
+    %chunk_x = index.div %embd, %chunk : index
+    %pc = index.madd %c, %cap_in, %token : index
+    %pk0 = index.mul %pc, %kcs : index
+    %zx = scf.for %k = [%c0 to %chunk_x step %c1](%a = %f0 : f32) -> (f32) unroll {
+      %pk = index.add %pk0, %k : index
+      %pe0 = index.madd %pk, %c64, %o : index
+      %pe = index.assume %pe0 [range(%pe0, 0, 2147483640)] : index
+      %p = func.call @inkling_ctrl_f32(%part, %pe) : (buffer, index) -> (f32)
+      %s = scalar.addf %a, %p : f32
+      scf.yield %s : f32
+    }
+    %zm = scf.for %k = [%chunk_x to %kcs step %c1](%a = %f0 : f32) -> (f32) unroll {
+      %pk = index.add %pk0, %k : index
+      %pe0 = index.madd %pk, %c64, %o : index
+      %pe = index.assume %pe0 [range(%pe0, 0, 2147483640)] : index
+      %p = func.call @inkling_ctrl_f32(%part, %pe) : (buffer, index) -> (f32)
+      %s = scalar.addf %a, %p : f32
+      scf.yield %s : f32
+    }
+    %zx_s = scalar.mulf %zx, %rx : f32
+    %z_val = scalar.fmaf %zm, %rm, %zx_s : f32
+    %zi0 = index.madd %pc, %c64, %o : index
+    %zi = index.assume %zi0 [range(%zi0, 0, 2147483640)] : index
+    func.call @inkling_ctrl_store(%z, %zi, %z_val) : (buffer, index, f32)
+  }
+  kernel.return
+}
+
+kernel.def export("inkling_ctrl_apply") @inkling_ctrl_apply(%cap: index, %nc: index) {
+  %one = index.constant 1 : index
+  %groups = index.constant 72 : index
+  %tokens = config.get @inkling.mix.ctrl_tokens : index
+  %cap_up = index.add %cap, %tokens : index
+  %cap_dec = index.constant 1 : index
+  %cap_m1 = index.sub %cap_up, %cap_dec : index
+  %tiles = index.div %cap_m1, %tokens : index
+  %threads = index.constant 256 : index
+  kernel.launch.config workgroups(%groups, %tiles, %nc) workgroup_size(%threads, %one, %one) : index
+} launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %spans: buffer, %x: buffer, %m: buffer, %forget0: buffer, %forget1: buffer, %forget2: buffer, %gain0: buffer, %gain1: buffer, %gain2: buffer, %z: buffer, %out: buffer) {
+  %x_col0 = index.assume %x_col0_in [range(%x_col0_in, 0, 3)] : index
+  %x_col_step = index.assume %x_col_step_in [range(%x_col_step_in, 0, 1)] : index
+  %m_col0 = index.assume %m_col0_in [range(%m_col0_in, 0, 3)] : index
+  %col_stride = index.assume %col_stride_in [range(%col_stride_in, 0, 2147483647)] : index
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c4 = index.constant 4 : index
+  %c8 = index.constant 8 : index
+  %c32 = index.constant 32 : index
+  %c64 = index.constant 64 : index
+  %embd = index.constant 2304 : index
+  %origin = index.constant 0 : offset
+  %four = index.constant 4 : offset
+  %tokens = config.get @inkling.mix.ctrl_tokens : index
+  %bf16_cfg = config.get @inkling.mix.ctrl_bf16 : index
+  %bf16 = index.cmp ne, %bf16_cfg, %c0 : index
+  %f0 = scalar.constant 0.0 : f32
+  %group = kernel.workgroup.id<x> : index
+  %tile = kernel.workgroup.id<y> : index
+  %c = kernel.workgroup.id<z> : index
+  %tid = kernel.workitem.id<x> : index
+  %live = func.call @inkling_ctrl_live(%spans) : (buffer) -> (index)
+  %first_token = index.mul %tile, %tokens : index
+  %tile_active = index.cmp ult, %first_token, %live : index
+  scf.if %tile_active {
+    %x_col = index.madd %c, %x_col_step, %x_col0 : index
+    %m_col = index.add %m_col0, %c : index
+    %o_local = index.div %tid, %c8 : index
+    %l = index.rem %tid, %c8 : index
+    %o = index.madd %group, %c32, %o_local : index
+    %zi = index.mul %l, %c8 : index
+    %zi1 = index.add %zi, %c4 : index
+    %row = index.mul %o, %c64 : index
+    %we = index.add %row, %zi : index
+    %we1 = index.add %row, %zi1 : index
+    %forget = func.call @inkling_ctrl_pick(%c, %forget0, %forget1, %forget2) : (index, buffer, buffer, buffer) -> (buffer)
+    %gain = func.call @inkling_ctrl_pick(%c, %gain0, %gain1, %gain2) : (index, buffer, buffer, buffer) -> (buffer)
+    %f4a = func.call @inkling_ctrl_weights4(%forget, %we, %bf16) : (buffer, index, i1) -> (vector<4xf32>)
+    %f4b = func.call @inkling_ctrl_weights4(%forget, %we1, %bf16) : (buffer, index, i1) -> (vector<4xf32>)
+    %g4a = func.call @inkling_ctrl_weights4(%gain, %we, %bf16) : (buffer, index, i1) -> (vector<4xf32>)
+    %g4b = func.call @inkling_ctrl_weights4(%gain, %we1, %bf16) : (buffer, index, i1) -> (vector<4xf32>)
+    %lane0 = index.cmp eq, %l, %c0 : index
+    scf.for %tb = [%c0 to %tokens step %c1] {
+      %token = index.add %first_token, %tb : index
+      %token_live = index.cmp ult, %token, %live : index
+      scf.if %token_live {
+        %pc = index.madd %c, %cap_in, %token : index
+        %z_base = index.mul %pc, %c64 : index
+        %z_bytes = index.scale %z_base, %four : index, offset -> offset
+        %z_view = buffer.view %z[%z_bytes] : buffer -> view<64xf32>
+        %z0 = vector.load %z_view[%zi] : view<64xf32> -> vector<4xf32>
+        %z1 = vector.load %z_view[%zi1] : view<64xf32> -> vector<4xf32>
+        %fa = vector.mulf %f4a, %z0 : vector<4xf32>
+        %fb = vector.fmaf %f4b, %z1, %fa : vector<4xf32>
+        %ga = vector.mulf %g4a, %z0 : vector<4xf32>
+        %gb = vector.fmaf %g4b, %z1, %ga : vector<4xf32>
+        %fl = vector.reduce<addf> %fb, %f0 : vector<4xf32>, f32
+        %gl = vector.reduce<addf> %gb, %f0 : vector<4xf32>, f32
+        %fs = kernel.subgroup.reduce<addf> %fl {cluster_size = 8} : f32
+        %gs = kernel.subgroup.reduce<addf> %gl {cluster_size = 8} : f32
+        %ft = scalar.tanhf<afn> %fs : f32
+        %gt = scalar.tanhf<afn> %gs : f32
+        scf.if %lane0 {
+          %xo_base = index.madd %x_col, %col_stride, %o : index
+          %xo = index.madd %token, %embd, %xo_base : index
+          %mo_base = index.madd %m_col, %col_stride, %o : index
+          %mo = index.madd %token, %embd, %mo_base : index
+          %xe = func.call @inkling_ctrl_f32(%x, %xo) : (buffer, index) -> (f32)
+          %me = func.call @inkling_ctrl_f32(%m, %mo) : (buffer, index) -> (f32)
+          %fx = scalar.mulf %ft, %xe : f32
+          %gm = scalar.mulf %gt, %me : f32
+          %d = scalar.subf %xe, %fx : f32
+          %y = scalar.addf %d, %gm : f32
+          %oo_base = index.madd %c, %col_stride, %o : index
+          %oo = index.madd %token, %embd, %oo_base : index
+          func.call @inkling_ctrl_store(%out, %oo, %y) : (buffer, index, f32)
+        }
+      }
+    }
+  }
+  kernel.return
+}
+
+kernel.def export("inkling_mix_norm") @inkling_mix_norm(%cap: index, %nc: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 192 : index
+  kernel.launch.config workgroups(%cap, %nc, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%cap_in: index, %nc_in: index, %col_stride_in: index, %w_stride_in: index, %spans: buffer, %x: buffer, %w: buffer, %out: buffer) {
+  %col_stride = index.assume %col_stride_in [range(%col_stride_in, 0, 2147483647)] : index
+  %w_stride = index.assume %w_stride_in [range(%w_stride_in, 0, 2304)] : index
+  %c0 = index.constant 0 : index
+  %c4 = index.constant 4 : index
+  %c192 = index.constant 192 : index
+  %embd = index.constant 2304 : index
+  %four = index.constant 4 : offset
+  %f0 = scalar.constant 0.0 : f32
+  %eps = scalar.constant 1.0e-6 : f32
+  %inv_embd = scalar.constant 4.3402777777777777e-4 : f32
+  %token = kernel.workgroup.id<x> : index
+  %col = kernel.workgroup.id<y> : index
+  %tid = kernel.workitem.id<x> : index
+  %live = func.call @inkling_ctrl_live(%spans) : (buffer) -> (index)
+  %active = index.cmp ult, %token, %live : index
+  scf.if %active {
+    %base_e = index.mul %col, %col_stride : index
+    %base = index.madd %token, %embd, %base_e : index
+    %base_b = index.scale %base, %four : index, offset -> offset
+    %xv = buffer.view %x[%base_b] : buffer -> view<2304xf32>
+    %wo = index.mul %col, %w_stride : index
+    %wo_b = index.scale %wo, %four : index, offset -> offset
+    %wv = buffer.view %w[%wo_b] : buffer -> view<2304xf32>
+    %ov = buffer.view %out[%base_b] : buffer -> view<2304xf32>
+    %e0 = index.mul %tid, %c4 : index
+    %e1 = index.madd %c192, %c4, %e0 : index
+    %e2 = index.madd %c192, %c4, %e1 : index
+    %x0 = vector.load %xv[%e0] : view<2304xf32> -> vector<4xf32>
+    %x1 = vector.load %xv[%e1] : view<2304xf32> -> vector<4xf32>
+    %x2 = vector.load %xv[%e2] : view<2304xf32> -> vector<4xf32>
+    %s0 = vector.mulf %x0, %x0 : vector<4xf32>
+    %s1 = vector.fmaf %x1, %x1, %s0 : vector<4xf32>
+    %s2 = vector.fmaf %x2, %x2, %s1 : vector<4xf32>
+    %lane = vector.reduce<addf> %s2, %f0 : vector<4xf32>, f32
+    %total = kernel.workgroup.reduce<addf> %lane : f32
+    %mean = scalar.mulf %total, %inv_embd : f32
+    %biased = scalar.addf %mean, %eps : f32
+    %r = scalar.rsqrtf %biased : f32
+    %r4 = vector.splat %r : vector<4xf32>
+    %w0 = vector.load %wv[%e0] : view<2304xf32> -> vector<4xf32>
+    %w1 = vector.load %wv[%e1] : view<2304xf32> -> vector<4xf32>
+    %w2 = vector.load %wv[%e2] : view<2304xf32> -> vector<4xf32>
+    %y0 = vector.mulf %x0, %r4 : vector<4xf32>
+    %y1 = vector.mulf %x1, %r4 : vector<4xf32>
+    %y2 = vector.mulf %x2, %r4 : vector<4xf32>
+    %z0 = vector.mulf %y0, %w0 : vector<4xf32>
+    %z1 = vector.mulf %y1, %w1 : vector<4xf32>
+    %z2 = vector.mulf %y2, %w2 : vector<4xf32>
+    vector.store %z0, %ov[%e0] : vector<4xf32>, view<2304xf32>
+    vector.store %z1, %ov[%e1] : vector<4xf32>, view<2304xf32>
+    vector.store %z2, %ov[%e2] : vector<4xf32>, view<2304xf32>
+  }
+  kernel.return
+}

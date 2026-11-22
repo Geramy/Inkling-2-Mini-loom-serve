@@ -1,0 +1,170 @@
+func.decl import("input") @require(%condition: i32, %diagnostic: buffer)
+
+func.decl import("json") @members(%json: buffer) -> (buffer, i32, i64)
+
+func.decl import("prepare") @stage(%root: buffer, %tag: i64) -> (i32)
+
+func.decl import("prepare") @config_i64(%stage: i32, %key: buffer, %value: i64)
+
+func.decl import("prepare") @source(%directory: buffer, %path: buffer) -> (i32)
+
+func.decl import("prepare") @source_scope(%scope: buffer) -> (i32)
+
+func.decl import("prepare") @parameter(%stage: i32, %binding: i32, %input: i32, %source: i32, %policy: buffer)
+
+func.decl @inkling.packet_capacity(%shapes: buffer, %shape_count: i64, %prefill: i64) -> (i64)
+
+func.decl @inkling.control_create(%packet_capacity: i64, %context: i64, %pool: i64, %rows: i64, %pins: i64, %packed: i1, %enabled: i1, %dflash: i1) -> (buffer)
+
+func.decl @inkling.control_resize(%state: buffer, %rows: i64) -> (buffer, i64, i64, i64, i64, i1, i1, i1)
+
+config.decl @inkling.probes : %value: index where [range(%value, 0, 1)]
+config.decl @inkling.dense_type : %value: index where [range(%value, 0, 1)]
+
+func.decl @inkling.storage(%packet_capacity: i64, %context: i64, %pool: i64, %rows: i64, %pins: i64) -> (buffer, buffer, buffer, buffer, buffer)
+
+func.def public @text_resize_state_v1(%state: buffer, %rows: i64) -> (buffer, buffer, buffer, buffer, buffer, buffer) {
+  %grown, %packet_capacity, %context, %pool, %pins, %packed, %enabled, %dflash = func.call @inkling.control_resize(%state, %rows) : (buffer, i64) -> (buffer, i64, i64, i64, i64, i1, i1, i1)
+  %allocations, %views, %origins, %draft, %geometry = func.call @inkling.storage(%packet_capacity, %context, %pool, %rows, %pins) : (i64, i64, i64, i64, i64) -> (buffer, buffer, buffer, buffer, buffer)
+  func.return %grown, %allocations, %views, %origins, %draft, %geometry : buffer, buffer, buffer, buffer, buffer, buffer
+}
+
+func.def @declare_stage(%tokens: i64, %spans: i64, %context: i64, %pool: i64, %packet_capacity: i64, %source: i32) -> (i32) {
+  %root = buffer.constant utf8("inkling_model") : buffer
+  %stage = func.call @stage(%root, %tokens) : (buffer, i64) -> (i32)
+  %tokens_key = buffer.constant utf8("inkling.tokens") : buffer
+  func.call @config_i64(%stage, %tokens_key, %tokens) : (i32, buffer, i64)
+  %spans_key = buffer.constant utf8("inkling.spans") : buffer
+  %span_limit = scalar.constant 256 : i64
+  %spans_bounded = scalar.minui %spans, %span_limit : i64
+  func.call @config_i64(%stage, %spans_key, %spans_bounded) : (i32, buffer, i64)
+  %context_key = buffer.constant utf8("inkling.context") : buffer
+  func.call @config_i64(%stage, %context_key, %context) : (i32, buffer, i64)
+  %pool_key = buffer.constant utf8("inkling.pool") : buffer
+  func.call @config_i64(%stage, %pool_key, %pool) : (i32, buffer, i64)
+  %packet_key = buffer.constant utf8("inkling.packet_capacity") : buffer
+  func.call @config_i64(%stage, %packet_key, %packet_capacity) : (i32, buffer, i64)
+  func.call @config_kernels(%stage, %tokens) : (i32, i64)
+  %probes = config.get @inkling.probes : index
+  %c0 = index.constant 0 : index
+  %with_probes = index.cmp ne, %probes, %c0 : index
+  scf.if %with_probes {
+    func.call @config_pr1_probe(%stage) : (i32)
+  }
+  %zero32 = scalar.constant 0 : i32
+  %policy = buffer.constant utf8("weights.loom") : buffer
+  func.call @parameter(%stage, %zero32, %zero32, %source, %policy) : (i32, i32, i32, i32, buffer)
+  func.return %stage : i32
+}
+
+
+// Per-stage knobs of the kernel areas. Rows <= 8 use the decode shape of the GEMV and controller kernels.
+func.def @config_kernels(%stage: i32, %tokens: i64) {
+  %c8 = scalar.constant 8 : i64
+  %decode = scalar.cmpi ule, %tokens, %c8 : i64
+  %cols = scf.select %decode, %tokens, %c8 : i64
+  %cols_key = buffer.constant utf8("inkling.dense.gemv.cols") : buffer
+  func.call @config_i64(%stage, %cols_key, %cols) : (i32, buffer, i64)
+  %depth = scalar.constant 2 : i64
+  %depth_key = buffer.constant utf8("inkling.dense.gemv.xs_depth") : buffer
+  func.call @config_i64(%stage, %depth_key, %depth) : (i32, buffer, i64)
+  %waves = scalar.constant 4 : i64
+  %waves_key = buffer.constant utf8("inkling.dense.split.waves") : buffer
+  func.call @config_i64(%stage, %waves_key, %waves) : (i32, buffer, i64)
+  %f32_depth = scalar.constant 3 : i64
+  %f32_depth_key = buffer.constant utf8("inkling.dense.f32.depth") : buffer
+  func.call @config_i64(%stage, %f32_depth_key, %f32_depth) : (i32, buffer, i64)
+  %k_split = scalar.constant 8 : i64
+  %k_split_key = buffer.constant utf8("inkling.dense.f32.k_split") : buffer
+  func.call @config_i64(%stage, %k_split_key, %k_split) : (i32, buffer, i64)
+  %chunk_decode = scalar.constant 256 : i64
+  %chunk_prefill = scalar.constant 128 : i64
+  %chunk = scf.select %decode, %chunk_decode, %chunk_prefill : i64
+  %chunk_key = buffer.constant utf8("inkling.mix.ctrl_chunk") : buffer
+  func.call @config_i64(%stage, %chunk_key, %chunk) : (i32, buffer, i64)
+  %one = scalar.constant 1 : i64
+  %sixteen = scalar.constant 16 : i64
+  %ctrl_tokens = scf.select %decode, %one, %sixteen : i64
+  %ctrl_tokens_key = buffer.constant utf8("inkling.mix.ctrl_tokens") : buffer
+  func.call @config_i64(%stage, %ctrl_tokens_key, %ctrl_tokens) : (i32, buffer, i64)
+  %dense = config.get @inkling.dense_type : index
+  %dense_i64 = index.cast %dense : index to i64
+  %bf16_key = buffer.constant utf8("inkling.mix.ctrl_bf16") : buffer
+  func.call @config_i64(%stage, %bf16_key, %dense_i64) : (i32, buffer, i64)
+  func.return
+}
+
+// PR1 mul_mat configuration for the debug probe: Q8_0 weights, 8 input columns, one wave per weight row.
+func.def @config_pr1_probe(%stage: i32) {
+  %type_key = buffer.constant utf8("ggml.mul_mat.weight_type") : buffer
+  %type = scalar.constant 4 : i64
+  func.call @config_i64(%stage, %type_key, %type) : (i32, buffer, i64)
+  %cols_key = buffer.constant utf8("ggml.mul_mat.vec_cols") : buffer
+  %cols = scalar.constant 8 : i64
+  func.call @config_i64(%stage, %cols_key, %cols) : (i32, buffer, i64)
+  %rows_key = buffer.constant utf8("ggml.mul_mat.vec_rows") : buffer
+  %rows = scalar.constant 8 : i64
+  func.call @config_i64(%stage, %rows_key, %rows) : (i32, buffer, i64)
+  %ahead_key = buffer.constant utf8("ggml.mul_mat.vec_read_ahead_cols") : buffer
+  %ahead = scalar.constant 2 : i64
+  func.call @config_i64(%stage, %ahead_key, %ahead) : (i32, buffer, i64)
+  func.return
+}
+
+func.def public @text_prepare_v1(%prefill: i64, %context: i64, %pool: i64, %rows: i64, %pins: i64, %draft_depth: i32, %shapes: buffer, %shape_count: i64, %weights: buffer, %options: buffer) -> (i64, i32, buffer, buffer, buffer, buffer, buffer, buffer, buffer) {
+  %origin = index.constant 0 : offset
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c0_i32 = scalar.constant 0 : i32
+  %c0_i64 = scalar.constant 0 : i64
+  %c64 = scalar.constant 64 : i64
+  %pooled = scalar.cmpi ne, %pool, %c0_i64 : i64
+  %packed = scalar.cmpi ne, %shape_count, %c0_i64 : i64
+  %no_draft = scalar.cmpi eq, %draft_depth, %c0_i32 : i32
+  %context_tail = scalar.remui %context, %c64 : i64
+  %context_whole = scalar.cmpi eq, %context_tail, %c0_i64 : i64
+  %has_epochs = scalar.andi %pooled, %packed : i1
+  %supported_mode = scalar.andi %has_epochs, %no_draft : i1
+  %fields, %type, %field_count = func.call @members(%options) : (buffer) -> (buffer, i32, i64)
+  %object_type = scalar.constant 2 : i32
+  %object = scalar.cmpi eq, %type, %object_type : i32
+  %empty_options = scalar.cmpi eq, %field_count, %c0_i64 : i64
+  %valid_options = scalar.andi %object, %empty_options : i1
+  %valid_shape = scalar.andi %supported_mode, %context_whole : i1
+  %supported = scalar.andi %valid_shape, %valid_options : i1
+  %supported32 = scalar.extui %supported : i1 to i32
+  %error = buffer.constant utf8("inkling requires pooled packed epochs without MTP, context divisible by 64 and empty options") : buffer
+  func.call @require(%supported32, %error) : (i32, buffer)
+  %packet_capacity = func.call @inkling.packet_capacity(%shapes, %shape_count, %prefill) : (buffer, i64, i64) -> (i64)
+  %weights_bytes = buffer.length %weights
+  %external = index.cmp ne, %weights_bytes, %origin : offset
+  %empty = buffer.constant utf8("") : buffer
+  %source = scf.if %external -> (i32) {
+    %file = func.call @source(%empty, %weights) : (buffer, buffer) -> (i32)
+    scf.yield %file : i32
+  } else {
+    %scope = buffer.constant utf8("model") : buffer
+    %named = func.call @source_scope(%scope) : (buffer) -> (i32)
+    scf.yield %named : i32
+  }
+  %bounded_count = scalar.assume %shape_count [range(%shape_count, 1, 2147483647)] : i64
+  %count = index.cast %bounded_count : i64 to index
+  %shape_view = buffer.view %shapes[%origin] : buffer -> view<[%count]x2xi64>
+  %maximum = scf.for %i = [%c0 to %count step %c1](%previous = %c0_i64 : i64) -> (i64) {
+    %tokens = view.load %shape_view[%i, 0] : view<[%count]x2xi64> -> i64
+    %spans = view.load %shape_view[%i, 1] : view<[%count]x2xi64> -> i64
+    %stage = func.call @declare_stage(%tokens, %spans, %context, %pool, %packet_capacity, %source) : (i64, i64, i64, i64, i64, i32) -> (i32)
+    %larger = scalar.maxui %tokens, %previous : i64
+    scf.yield %larger : i64
+  }
+  %smaller = scalar.cmpi ult, %maximum, %prefill : i64
+  %effective = scf.select %smaller, %maximum, %prefill : i64
+  %enabled = scalar.constant false : i1
+  %state = func.call @inkling.control_create(%packet_capacity, %context, %pool, %rows, %pins, %packed, %enabled, %enabled) : (i64, i64, i64, i64, i64, i1, i1, i1) -> (buffer)
+  %state_view = buffer.view %state[%origin] : buffer -> view<10xi32>
+  %shared = scalar.trunci %shape_count : i64 to i32
+  view.store %shared, %state_view[2] : i32, view<10xi32>
+  %terminal = buffer.constant utf8("<|content_model_end_sampling|>") : buffer
+  %allocations, %views, %origins, %draft, %geometry = func.call @inkling.storage(%packet_capacity, %context, %pool, %rows, %pins) : (i64, i64, i64, i64, i64) -> (buffer, buffer, buffer, buffer, buffer)
+  func.return %effective, %shared, %state, %terminal, %allocations, %views, %origins, %draft, %geometry : i64, i32, buffer, buffer, buffer, buffer, buffer, buffer, buffer
+}

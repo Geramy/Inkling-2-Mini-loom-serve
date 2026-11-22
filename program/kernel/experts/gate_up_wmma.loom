@@ -1,0 +1,149 @@
+// gate_up with matrix operations (prefill). Same arguments and result as inkling_experts_gate_up. Needs routes records of 32 (tile = 32).
+// Workgroup: 4 waves, 64 pair rows (gate row r and up row r + 1152) times 32 routes. K runs in 36 blocks of 64 staged through workgroup memory.
+
+func.decl @inkling_experts_records_tile(%n: index, %tile: index) -> (index)
+func.decl @inkling_experts_row_bytes(%wtype: index, %units: index) -> (offset)
+func.decl @inkling_experts_stage_w(%wtype: index, %w: buffer, %row_byte: offset, %row_units: index, %kb: index, %w_stage: buffer, %stage_row: index)
+func.decl @inkling_experts_stage_x(%src: buffer, %rows: index, %cols: index, %src_row: index, %kb: index, %part: index, %x_stage: buffer, %stage_row: index)
+func.decl @inkling_x_slot(%e: index) -> (index)
+
+template.decl @inkling.mma.zero_acc() -> (vector<8xf32>)
+template.decl @inkling.mma.k64_2x2(%x_stage: buffer, %w_stage: buffer, %col0: index, %row0: index, %acc00: vector<8xf32>, %acc01: vector<8xf32>, %acc10: vector<8xf32>, %acc11: vector<8xf32>) -> (vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>)
+
+kernel.def export("inkling_experts_gate_up_wmma") @inkling_experts_gate_up_wmma(%n: index) {
+  %c1 = index.constant 1 : index
+  %c18 = index.constant 18 : index
+  %c32 = index.constant 32 : index
+  %c128 = index.constant 128 : index
+  %records = func.call pure @inkling_experts_records_tile(%n, %c32) : (index, index) -> (index)
+  kernel.launch.config workgroups(%c18, %records, %c1) workgroup_size(%c128, %c1, %c1) : index
+} launch(%n: index, %wtype: index, %x: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %act: buffer) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c2 = index.constant 2 : index
+  %c4 = index.constant 4 : index
+  %c8 = index.constant 8 : index
+  %c16 = index.constant 16 : index
+  %c32 = index.constant 32 : index
+  %c36 = index.constant 36 : index
+  %c64 = index.constant 64 : index
+  %c144 = index.constant 144 : index
+  %c1152 = index.constant 1152 : index
+  %c2304 = index.constant 2304 : index
+  %origin = index.constant 0 : offset
+  %records_origin = index.constant 16 : offset
+  %x_bytes = index.constant 9216 : offset
+  %w_bytes = index.constant 18432 : offset
+  %rec_raw = kernel.workgroup.id<y> : index
+  %gx = kernel.workgroup.id<x> : index
+  %tid = kernel.workitem.id<x> : index
+  %lane = kernel.subgroup.lane.id : index
+  %capacity = func.call pure @inkling_experts_records_tile(%n, %c32) : (index, index) -> (index)
+  %routes = index.mul %n, %c8 : index
+  %rec = index.assume %rec_raw [ge(%rec_raw, 0), lt(%rec_raw, %capacity)] : index
+  %header = buffer.view %tasks[%origin] : buffer -> view<1xi32>
+  %count32 = view.load %header[0] : view<1xi32> -> i32
+  %count = index.cast %count32 : i32 to index
+  %live_record = index.cmp ult, %rec, %count : index
+  scf.if %live_record {
+    %table = buffer.view %tasks[%records_origin] : buffer -> view<[%capacity]x34xi32>
+    %expert32 = view.load %table[%rec, 0] : view<[%capacity]x34xi32> -> i32
+    %live32 = view.load %table[%rec, 1] : view<[%capacity]x34xi32> -> i32
+    %expert_raw = index.cast %expert32 : i32 to index
+    %live_raw = index.cast %live32 : i32 to index
+    %expert = index.assume %expert_raw [ge(%expert_raw, 0), lt(%expert_raw, 128)] : index
+    %live = index.assume %live_raw [ge(%live_raw, 0), le(%live_raw, 32)] : index
+    %x_stage = buffer.alloca<workgroup> align(16) %x_bytes : buffer
+    %w_stage = buffer.alloca<workgroup> align(16) %w_bytes : buffer
+    %wave = index.div %tid, %c32 : index
+    %slot_in_wave = index.rem %tid, %c32 : index
+    %is_up = index.cmp uge, %slot_in_wave, %c16 : index
+    %within = index.rem %slot_in_wave, %c16 : index
+    %gx64 = index.mul %gx, %c64 : index
+    %wave16 = index.mul %wave, %c16 : index
+    %pair_base = index.add %gx64, %wave16 : index
+    %pair = index.add %pair_base, %within : index
+    %up_off = scf.select %is_up, %c1152, %c0 : index
+    %mrow = index.add %pair, %up_off : index
+    %row_bytes = func.call @inkling_experts_row_bytes(%wtype, %c144) : (index, index) -> (offset)
+    %expert_rows = index.mul %expert, %c2304 : index
+    %w_row = index.add %expert_rows, %mrow : index
+    %w_byte = index.scale %w_row, %row_bytes : index, offset -> offset
+    %xrow = index.div %tid, %c4 : index
+    %xpart = index.rem %tid, %c4 : index
+    %xvalid = index.cmp ult, %xrow, %live : index
+    %xfield_raw = index.add %xrow, %c2 : index
+    %xfield = index.assume %xfield_raw [ge(%xfield_raw, 2), le(%xfield_raw, 33)] : index
+    %route32 = view.load %table[%rec, %xfield] : view<[%capacity]x34xi32> -> i32
+    %route_raw = index.cast %route32 : i32 to index
+    %xroute_sel = scf.select %xvalid, %route_raw, %c0 : index
+    %xroute = index.assume %xroute_sel [ge(%xroute_sel, 0), lt(%xroute_sel, %routes)] : index
+    %xtoken_raw = index.div %xroute, %c8 : index
+    %xtoken = index.assume %xtoken_raw [ge(%xtoken_raw, 0), lt(%xtoken_raw, %n)] : index
+    %acc0 = template.apply<@inkling.mma.zero_acc>() : () -> (vector<8xf32>)
+    %a00, %a01, %a10, %a11 = scf.for %kb = [%c0 to %c36 step %c1](%p00 = %acc0 : vector<8xf32>, %p01 = %acc0 : vector<8xf32>, %p10 = %acc0 : vector<8xf32>, %p11 = %acc0 : vector<8xf32>) -> (vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>) {
+      kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+      func.call @inkling_experts_stage_w(%wtype, %w, %w_byte, %c144, %kb, %w_stage, %tid) : (index, buffer, offset, index, index, buffer, index) -> ()
+      scf.if %xvalid {
+        func.call @inkling_experts_stage_x(%x, %n, %c2304, %xtoken, %kb, %xpart, %x_stage, %xrow) : (buffer, index, index, index, index, index, buffer, index) -> ()
+      }
+      kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+      %wave_row = index.mul %wave, %c32 : index
+      %n00, %n01, %n10, %n11 = template.apply<@inkling.mma.k64_2x2>(%x_stage, %w_stage, %c0, %wave_row, %p00, %p01, %p10, %p11) : (buffer, buffer, index, index, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>) -> (vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>)
+      scf.yield %n00, %n01, %n10, %n11 : vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>
+    }
+    %is_fp4 = index.cmp eq, %wtype, %c0 : index
+    %sv = buffer.view %scales[%origin] : buffer -> view<128xf32>
+    %es = view.load %sv[%expert] : view<128xf32> -> f32
+    %one = scalar.constant 1.0 : f32
+    %outer = scf.select %is_fp4, %es, %one : f32
+    %av = buffer.view %act[%origin] : buffer -> view<[%routes]x[%c1152]xf16>
+    %b4 = scalar.constant 4.0 : f32
+    %b25 = scalar.constant 25.0 : f32
+    %q4 = scalar.constant 0.25 : f32
+    %q25 = scalar.constant 0.04 : f32
+    %lane_row = index.rem %lane, %c16 : index
+    %lane_col = index.div %lane, %c16 : index
+    %out_pair = index.add %pair_base, %lane_row : index
+    %unit = index.div %out_pair, %c16 : index
+    %slot = func.call @inkling_x_slot(%lane_row) : (index) -> (index)
+    %unit16 = index.mul %unit, %c16 : index
+    %column_raw = index.add %unit16, %slot : index
+    %column = index.assume %column_raw [ge(%column_raw, 0), lt(%column_raw, 1152)] : index
+    scf.for %f = [%c0 to %c2 step %c1] unroll schedule(linear) {
+      %fzero = index.cmp eq, %f, %c0 : index
+      %g = scf.select %fzero, %a00, %a10 : vector<8xf32>
+      %u = scf.select %fzero, %a01, %a11 : vector<8xf32>
+      scf.for %e = [%c0 to %c8 step %c1] unroll schedule(linear) {
+        %f16 = index.mul %f, %c16 : index
+        %e2 = index.mul %e, %c2 : index
+        %t0 = index.add %f16, %lane_col : index
+        %token = index.add %t0, %e2 : index
+        %active = index.cmp ult, %token, %live : index
+        scf.if %active {
+          %field_raw = index.add %token, %c2 : index
+          %field = index.assume %field_raw [ge(%field_raw, 2), le(%field_raw, 33)] : index
+          %rt32 = view.load %table[%rec, %field] : view<[%capacity]x34xi32> -> i32
+          %rt_raw = index.cast %rt32 : i32 to index
+          %rt = index.assume %rt_raw [ge(%rt_raw, 0), lt(%rt_raw, %routes)] : index
+          %graw = vector.extract %g[%e] : vector<8xf32> -> f32
+          %uraw = vector.extract %u[%e] : vector<8xf32> -> f32
+          %gs = scalar.mulf %graw, %outer : f32
+          %us = scalar.mulf %uraw, %outer : f32
+          %gq = scalar.mulf %gs, %q4 : f32
+          %gt = scalar.tanhf<afn> %gq : f32
+          %gl = scalar.logisticf<afn> %gs : f32
+          %g4 = scalar.mulf %gt, %b4 : f32
+          %gate = scalar.mulf %g4, %gl : f32
+          %uq = scalar.mulf %us, %q25 : f32
+          %ut = scalar.tanhf<afn> %uq : f32
+          %up = scalar.mulf %ut, %b25 : f32
+          %value = scalar.mulf %gate, %up : f32
+          %h = scalar.fptrunc %value : f32 to f16
+          view.store %h, %av[%rt, %column] : f16, view<[%routes]x[%c1152]xf16>
+        }
+      }
+    }
+  }
+  kernel.return
+}

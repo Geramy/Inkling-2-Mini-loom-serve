@@ -1,0 +1,33 @@
+{
+  "schema_version": 2,
+  "scope": "assets",
+  "origins": {
+    "checkpoint": {
+      "requested": {
+        "kind": "hf",
+        "repository": "unsloth/Inkling-2-Mini-GGUF",
+        "revision": "ea0c79b2ecd73669e774c8519b79bfabfddbc027"
+      },
+      "resolved": {
+        "revision": "ea0c79b2ecd73669e774c8519b79bfabfddbc027"
+      }
+    }
+  },
+  "files": [
+    {
+      "origin": "@checkpoint/Mainline_Support/Inkling-2-Mini-UD-Q4_K_XL.gguf_file",
+      "size": 17629760736,
+      "sha256": "e64276656f072e9b2197a61723667cbdb71da66a716ffd966e572c21088f3cd3"
+    },
+    {
+      "origin": "@checkpoint/Mainline_Support/Inkling-2-Mini-UD-Q8_K_XL.gguf_file",
+      "size": 22867452896,
+      "sha256": "2da51788d43a17e1f033bec420fa83ba9cb87ac1f0130dc9135a4d2ed2678b68"
+    },
+    {
+      "origin": "tokenizer.json",
+      "size": 12244587,
+      "sha256": "0c3b63b71f1fab0d1b4c39435e8bb6f0810b798b27f22d519b0404f508616e28"
+    }
+  ]
+}

@@ -1,0 +1,326 @@
+// Canonical JSON text for the Inkling chat template: compact separators, strings escaped as json.dumps with ensure_ascii=False, optional recursive key sorting. Numbers keep their source spelling.
+
+func.decl import("json") @members_range(%source: buffer, %begin: i64, %length: i64) -> (buffer, i32, i64)
+
+func.decl import("json") @unescape(%source: buffer, %offset: i64, %length: i64, %target: buffer, %target_offset: i64) -> (i64)
+
+func.def public @chat_put(%output: buffer, %position: offset, %text: buffer) -> (offset) {
+  %c0 = index.constant 0 : offset
+  %length = buffer.length %text
+  buffer.copy %text[%c0], %output[%position], %length
+  %end = index.add %position, %length : offset
+  func.return %end : offset
+}
+
+func.def @chat_put_byte(%output: buffer, %position: offset, %byte: i32) -> (offset) {
+  %c1 = index.constant 1 : offset
+  buffer.store.i8 %byte, %output[%position]
+  %end = index.add %position, %c1 : offset
+  func.return %end : offset
+}
+
+func.def @chat_hex(%value: i32) -> (i32) {
+  %c10 = scalar.constant 10 : i32
+  %c48 = scalar.constant 48 : i32
+  %c87 = scalar.constant 87 : i32
+  %letter = scalar.cmpi uge, %value, %c10 : i32
+  %base = scf.select %letter, %c87, %c48 : i32
+  %ascii = scalar.addi %value, %base : i32
+  func.return %ascii : i32
+}
+
+func.def @chat_escape_letter(%byte: i32) -> (i32) {
+  %c0 = scalar.constant 0 : i32
+  %c34 = scalar.constant 34 : i32
+  %c92 = scalar.constant 92 : i32
+  %c10 = scalar.constant 10 : i32
+  %c13 = scalar.constant 13 : i32
+  %c9 = scalar.constant 9 : i32
+  %c8 = scalar.constant 8 : i32
+  %c12 = scalar.constant 12 : i32
+  %c110 = scalar.constant 110 : i32
+  %c114 = scalar.constant 114 : i32
+  %c116 = scalar.constant 116 : i32
+  %c98 = scalar.constant 98 : i32
+  %c102 = scalar.constant 102 : i32
+  %is_quote = scalar.cmpi eq, %byte, %c34 : i32
+  %is_backslash = scalar.cmpi eq, %byte, %c92 : i32
+  %is_newline = scalar.cmpi eq, %byte, %c10 : i32
+  %is_return = scalar.cmpi eq, %byte, %c13 : i32
+  %is_tab = scalar.cmpi eq, %byte, %c9 : i32
+  %is_backspace = scalar.cmpi eq, %byte, %c8 : i32
+  %is_feed = scalar.cmpi eq, %byte, %c12 : i32
+  %l0 = scf.select %is_quote, %c34, %c0 : i32
+  %l1 = scf.select %is_backslash, %c92, %l0 : i32
+  %l2 = scf.select %is_newline, %c110, %l1 : i32
+  %l3 = scf.select %is_return, %c114, %l2 : i32
+  %l4 = scf.select %is_tab, %c116, %l3 : i32
+  %l5 = scf.select %is_backspace, %c98, %l4 : i32
+  %l6 = scf.select %is_feed, %c102, %l5 : i32
+  func.return %l6 : i32
+}
+
+func.def @chat_put_escaped_byte(%output: buffer, %position: offset, %byte: i32) -> (offset) {
+  %c0 = scalar.constant 0 : i32
+  %c32 = scalar.constant 32 : i32
+  %c92 = scalar.constant 92 : i32
+  %letter = func.call @chat_escape_letter(%byte) : (i32) -> (i32)
+  %short = scalar.cmpi ne, %letter, %c0 : i32
+  %result = scf.if %short -> (offset) {
+    %a = func.call @chat_put_byte(%output, %position, %c92) : (buffer, offset, i32) -> (offset)
+    %b = func.call @chat_put_byte(%output, %a, %letter) : (buffer, offset, i32) -> (offset)
+    scf.yield %b : offset
+  } else {
+    %control = scalar.cmpi ult, %byte, %c32 : i32
+    %next = scf.if %control -> (offset) {
+      %c117 = scalar.constant 117 : i32
+      %c48 = scalar.constant 48 : i32
+      %c4 = scalar.constant 4 : i32
+      %c15 = scalar.constant 15 : i32
+      %high = scalar.shrui %byte, %c4 : i32
+      %low = scalar.andi %byte, %c15 : i32
+      %high_digit = func.call @chat_hex(%high) : (i32) -> (i32)
+      %low_digit = func.call @chat_hex(%low) : (i32) -> (i32)
+      %a = func.call @chat_put_byte(%output, %position, %c92) : (buffer, offset, i32) -> (offset)
+      %b = func.call @chat_put_byte(%output, %a, %c117) : (buffer, offset, i32) -> (offset)
+      %c = func.call @chat_put_byte(%output, %b, %c48) : (buffer, offset, i32) -> (offset)
+      %d = func.call @chat_put_byte(%output, %c, %c48) : (buffer, offset, i32) -> (offset)
+      %e = func.call @chat_put_byte(%output, %d, %high_digit) : (buffer, offset, i32) -> (offset)
+      %f = func.call @chat_put_byte(%output, %e, %low_digit) : (buffer, offset, i32) -> (offset)
+      scf.yield %f : offset
+    } else {
+      %raw = func.call @chat_put_byte(%output, %position, %byte) : (buffer, offset, i32) -> (offset)
+      scf.yield %raw : offset
+    }
+    scf.yield %next : offset
+  }
+  func.return %result : offset
+}
+
+// Quoted and escaped copy of decoded bytes.
+func.def public @chat_put_quoted(%output: buffer, %position: offset, %bytes: buffer, %begin: offset, %length: offset) -> (offset) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %quote = scalar.constant 34 : i32
+  %count = index.cast %length : offset to index
+  %open = func.call @chat_put_byte(%output, %position, %quote) : (buffer, offset, i32) -> (offset)
+  %end = scf.for %i = [%c0 to %count step %c1](%at = %open : offset) -> (offset) {
+    %relative = index.cast %i : index to offset
+    %source_offset = index.add %begin, %relative : offset
+    %byte = buffer.load.i8.u %bytes[%source_offset]
+    %next = func.call @chat_put_escaped_byte(%output, %at, %byte) : (buffer, offset, i32) -> (offset)
+    scf.yield %next : offset
+  }
+  %close = func.call @chat_put_byte(%output, %end, %quote) : (buffer, offset, i32) -> (offset)
+  func.return %close : offset
+}
+
+// Raw JSON string range (escapes preserved) to a quoted canonical string.
+func.def public @chat_put_string(%output: buffer, %position: offset, %source: buffer, %begin: i64, %length: i64) -> (offset) {
+  %c0 = index.constant 0 : offset
+  %c0_i64 = scalar.constant 0 : i64
+  %bounded = scalar.assume %length [range(%length, 0, 9223372036854775807)] : i64
+  %size = index.cast %bounded : i64 to offset
+  %scratch = buffer.alloca<private> align(1) %size : buffer
+  %decoded = func.call @unescape(%source, %begin, %length, %scratch, %c0_i64) : (buffer, i64, i64, buffer, i64) -> (i64)
+  %decoded_bounded = scalar.assume %decoded [range(%decoded, 0, 9223372036854775807)] : i64
+  %decoded_size = index.cast %decoded_bounded : i64 to offset
+  %end = func.call @chat_put_quoted(%output, %position, %scratch, %c0, %decoded_size) : (buffer, offset, buffer, offset, offset) -> (offset)
+  func.return %end : offset
+}
+
+// Owned decoded copy of a raw JSON string range.
+func.def public @chat_decode(%source: buffer, %begin: i64, %length: i64) -> (buffer) {
+  %c0 = index.constant 0 : offset
+  %c0_i64 = scalar.constant 0 : i64
+  %bounded = scalar.assume %length [range(%length, 0, 9223372036854775807)] : i64
+  %size = index.cast %bounded : i64 to offset
+  %scratch = buffer.alloca<private> align(1) %size : buffer
+  %decoded = func.call @unescape(%source, %begin, %length, %scratch, %c0_i64) : (buffer, i64, i64, buffer, i64) -> (i64)
+  %decoded_bounded = scalar.assume %decoded [range(%decoded, 0, 9223372036854775807)] : i64
+  %decoded_size = index.cast %decoded_bounded : i64 to offset
+  %exact = buffer.alloca<private> align(1) %decoded_size : buffer
+  buffer.copy %scratch[%c0], %exact[%c0], %decoded_size
+  func.return %exact : buffer
+}
+
+// Order of two decoded keys: -1, 0 or 1 by byte value, then by length.
+func.def @chat_key_order(%keys: buffer, %a_begin: offset, %a_length: offset, %b_begin: offset, %b_length: offset) -> (i32) {
+  %c0_i32 = scalar.constant 0 : i32
+  %c1_i32 = scalar.constant 1 : i32
+  %minus = scalar.constant -1 : i32
+  %shorter = index.cmp ult, %a_length, %b_length : offset
+  %common = scf.select %shorter, %a_length, %b_length : offset
+  %compared = buffer.compare %keys[%a_begin], %keys[%b_begin], %common
+  %equal = scalar.cmpi eq, %compared, %c0_i32 : i32
+  %result = scf.if %equal -> (i32) {
+    %less = index.cmp ult, %a_length, %b_length : offset
+    %greater = index.cmp ugt, %a_length, %b_length : offset
+    %after = scf.select %greater, %c1_i32, %c0_i32 : i32
+    %order = scf.select %less, %minus, %after : i32
+    scf.yield %order : i32
+  } else {
+    scf.yield %compared : i32
+  }
+  func.return %result : i32
+}
+
+func.def @chat_put_array(%output: buffer, %position: offset, %source: buffer, %begin: i64, %length: i64, %sort: i1) -> (offset) {
+  %origin = index.constant 0 : offset
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c0_i64 = scalar.constant 0 : i64
+  %open_bracket = scalar.constant 91 : i32
+  %close_bracket = scalar.constant 93 : i32
+  %comma = scalar.constant 44 : i32
+  %records, %type, %count64 = func.call @members_range(%source, %begin, %length) : (buffer, i64, i64) -> (buffer, i32, i64)
+  %bounded = scalar.assume %count64 [range(%count64, 0, 33554431)] : i64
+  %count = index.cast %bounded : i64 to index
+  %fields = buffer.view %records[%origin] : buffer -> view<[%count]x5xi64>
+  %open = func.call @chat_put_byte(%output, %position, %open_bracket) : (buffer, offset, i32) -> (offset)
+  %end = scf.for %i = [%c0 to %count step %c1](%at = %open : offset) -> (offset) {
+    %first = index.cmp eq, %i, %c0 : index
+    %separated = scf.if %first -> (offset) {
+      scf.yield %at : offset
+    } else {
+      %next = func.call @chat_put_byte(%output, %at, %comma) : (buffer, offset, i32) -> (offset)
+      scf.yield %next : offset
+    }
+    %value_begin = view.load %fields[%i, 2] : view<[%count]x5xi64> -> i64
+    %value_length = view.load %fields[%i, 3] : view<[%count]x5xi64> -> i64
+    %value_type = view.load %fields[%i, 4] : view<[%count]x5xi64> -> i64
+    %after = func.call @chat_put_value(%output, %separated, %source, %value_begin, %value_length, %value_type, %sort) : (buffer, offset, buffer, i64, i64, i64, i1) -> (offset)
+    scf.yield %after : offset
+  }
+  %close = func.call @chat_put_byte(%output, %end, %close_bracket) : (buffer, offset, i32) -> (offset)
+  func.return %close : offset
+}
+
+// Members in key order when sort_self is set. Values keep their order and are sorted below only with sort_children.
+func.def public @chat_put_object(%output: buffer, %position: offset, %source: buffer, %begin: i64, %length: i64, %sort_self: i1, %sort_children: i1) -> (offset) {
+  %origin = index.constant 0 : offset
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c0_i64 = scalar.constant 0 : i64
+  %c1_i64 = scalar.constant 1 : i64
+  %c0_i32 = scalar.constant 0 : i32
+  %open_brace = scalar.constant 123 : i32
+  %close_brace = scalar.constant 125 : i32
+  %comma = scalar.constant 44 : i32
+  %colon = scalar.constant 58 : i32
+  %records, %type, %count64 = func.call @members_range(%source, %begin, %length) : (buffer, i64, i64) -> (buffer, i32, i64)
+  %bounded = scalar.assume %count64 [range(%count64, 0, 33554431)] : i64
+  %count = index.cast %bounded : i64 to index
+  %fields = buffer.view %records[%origin] : buffer -> view<[%count]x5xi64>
+  %length_bounded = scalar.assume %length [range(%length, 0, 9223372036854775807)] : i64
+  %key_bytes = index.cast %length_bounded : i64 to offset
+  %keys = buffer.alloca<private> align(1) %key_bytes : buffer
+  %c16 = index.constant 16 : offset
+  %slot_bytes = index.scale %count, %c16 : index, offset -> offset
+  %slot_storage = buffer.alloca<private> align(8) %slot_bytes : buffer
+  %slots = buffer.view %slot_storage[%origin] : buffer -> view<[%count]x2xi64>
+  %c8 = index.constant 8 : offset
+  %rank_bytes = index.scale %count, %c8 : index, offset -> offset
+  %rank_storage = buffer.alloca<private> align(8) %rank_bytes : buffer
+  %ranks = buffer.view %rank_storage[%origin] : buffer -> view<[%count]xi64>
+  %used = scf.for %i = [%c0 to %count step %c1](%cursor = %c0_i64 : i64) -> (i64) {
+    %key_begin = view.load %fields[%i, 0] : view<[%count]x5xi64> -> i64
+    %key_length = view.load %fields[%i, 1] : view<[%count]x5xi64> -> i64
+    %decoded = func.call @unescape(%source, %key_begin, %key_length, %keys, %cursor) : (buffer, i64, i64, buffer, i64) -> (i64)
+    view.store %cursor, %slots[%i, 0] : i64, view<[%count]x2xi64>
+    view.store %decoded, %slots[%i, 1] : i64, view<[%count]x2xi64>
+    %next = scalar.addi %cursor, %decoded : i64
+    scf.yield %next : i64
+  }
+  scf.for %i = [%c0 to %count step %c1] {
+    %i_begin64 = view.load %slots[%i, 0] : view<[%count]x2xi64> -> i64
+    %i_length64 = view.load %slots[%i, 1] : view<[%count]x2xi64> -> i64
+    %i_begin64_ok = scalar.assume %i_begin64 [range(%i_begin64, 0, 9223372036854775807)] : i64
+    %i_begin = index.cast %i_begin64_ok : i64 to offset
+    %i_length64_ok = scalar.assume %i_length64 [range(%i_length64, 0, 9223372036854775807)] : i64
+    %i_length = index.cast %i_length64_ok : i64 to offset
+    %rank = scf.for %j = [%c0 to %count step %c1](%below = %c0_i64 : i64) -> (i64) {
+      %j_begin64 = view.load %slots[%j, 0] : view<[%count]x2xi64> -> i64
+      %j_length64 = view.load %slots[%j, 1] : view<[%count]x2xi64> -> i64
+      %j_begin64_ok = scalar.assume %j_begin64 [range(%j_begin64, 0, 9223372036854775807)] : i64
+      %j_begin = index.cast %j_begin64_ok : i64 to offset
+      %j_length64_ok = scalar.assume %j_length64 [range(%j_length64, 0, 9223372036854775807)] : i64
+      %j_length = index.cast %j_length64_ok : i64 to offset
+      %order = func.call @chat_key_order(%keys, %j_begin, %j_length, %i_begin, %i_length) : (buffer, offset, offset, offset, offset) -> (i32)
+      %precedes_key = scalar.cmpi slt, %order, %c0_i32 : i32
+      %tied = scalar.cmpi eq, %order, %c0_i32 : i32
+      %earlier = index.cmp ult, %j, %i : index
+      %precedes_tied = scalar.andi %tied, %earlier : i1
+      %precedes = scalar.ori %precedes_key, %precedes_tied : i1
+      %step = scalar.extui %precedes : i1 to i64
+      %next = scalar.addi %below, %step : i64
+      scf.yield %next : i64
+    }
+    %position_rank = index.cast %i : index to i64
+    %final = scf.select %sort_self, %rank, %position_rank : i64
+    view.store %final, %ranks[%i] : i64, view<[%count]xi64>
+  }
+  %open = func.call @chat_put_byte(%output, %position, %open_brace) : (buffer, offset, i32) -> (offset)
+  %end = scf.for %r = [%c0 to %count step %c1](%at = %open : offset) -> (offset) {
+    %target = index.cast %r : index to i64
+    %found_member = scf.for %i = [%c0 to %count step %c1](%found = %c0 : index) -> (index) {
+      %rank = view.load %ranks[%i] : view<[%count]xi64> -> i64
+      %match = scalar.cmpi eq, %rank, %target : i64
+      %next = scf.select %match, %i, %found : index
+      scf.yield %next : index
+    }
+    %first = index.cmp eq, %r, %c0 : index
+    %separated = scf.if %first -> (offset) {
+      scf.yield %at : offset
+    } else {
+      %next = func.call @chat_put_byte(%output, %at, %comma) : (buffer, offset, i32) -> (offset)
+      scf.yield %next : offset
+    }
+    %member = index.assume %found_member [ge(%found_member, 0), lt(%found_member, %count)] : index
+    %key_begin = view.load %fields[%member, 0] : view<[%count]x5xi64> -> i64
+    %key_length = view.load %fields[%member, 1] : view<[%count]x5xi64> -> i64
+    %value_begin = view.load %fields[%member, 2] : view<[%count]x5xi64> -> i64
+    %value_length = view.load %fields[%member, 3] : view<[%count]x5xi64> -> i64
+    %value_type = view.load %fields[%member, 4] : view<[%count]x5xi64> -> i64
+    %after_key = func.call @chat_put_string(%output, %separated, %source, %key_begin, %key_length) : (buffer, offset, buffer, i64, i64) -> (offset)
+    %after_colon = func.call @chat_put_byte(%output, %after_key, %colon) : (buffer, offset, i32) -> (offset)
+    %after_value = func.call @chat_put_value(%output, %after_colon, %source, %value_begin, %value_length, %value_type, %sort_children) : (buffer, offset, buffer, i64, i64, i64, i1) -> (offset)
+    scf.yield %after_value : offset
+  }
+  %close = func.call @chat_put_byte(%output, %end, %close_brace) : (buffer, offset, i32) -> (offset)
+  func.return %close : offset
+}
+
+func.def @chat_put_value(%output: buffer, %position: offset, %source: buffer, %begin: i64, %length: i64, %type: i64, %sort: i1) -> (offset) {
+  %c0_i64 = scalar.constant 0 : i64
+  %c2_i64 = scalar.constant 2 : i64
+  %c3_i64 = scalar.constant 3 : i64
+  %is_string = scalar.cmpi eq, %type, %c0_i64 : i64
+  %is_object = scalar.cmpi eq, %type, %c2_i64 : i64
+  %is_array = scalar.cmpi eq, %type, %c3_i64 : i64
+  %result = scf.if %is_string -> (offset) {
+    %end = func.call @chat_put_string(%output, %position, %source, %begin, %length) : (buffer, offset, buffer, i64, i64) -> (offset)
+    scf.yield %end : offset
+  } else {
+    %other = scf.if %is_object -> (offset) {
+      %end = func.call @chat_put_object(%output, %position, %source, %begin, %length, %sort, %sort) : (buffer, offset, buffer, i64, i64, i1, i1) -> (offset)
+      scf.yield %end : offset
+    } else {
+      %rest = scf.if %is_array -> (offset) {
+        %end = func.call @chat_put_array(%output, %position, %source, %begin, %length, %sort) : (buffer, offset, buffer, i64, i64, i1) -> (offset)
+        scf.yield %end : offset
+      } else {
+        %begin_ok = scalar.assume %begin [range(%begin, 0, 9223372036854775807)] : i64
+        %begin_offset = index.cast %begin_ok : i64 to offset
+        %length_ok = scalar.assume %length [range(%length, 0, 9223372036854775807)] : i64
+        %size = index.cast %length_ok : i64 to offset
+        buffer.copy %source[%begin_offset], %output[%position], %size
+        %end = index.add %position, %size : offset
+        scf.yield %end : offset
+      }
+      scf.yield %rest : offset
+    }
+    scf.yield %other : offset
+  }
+  func.return %result : offset
+}

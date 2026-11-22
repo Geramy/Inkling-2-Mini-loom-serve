@@ -1,0 +1,234 @@
+{
+ "schema_version": 1,
+ "model": {
+  "id": "thinkingmachines/Inkling-2-Mini",
+  "name": "Inkling 2 Mini",
+  "description": "Looped mixture-of-experts text model (24 layers, 48 visits, 128 NVFP4 experts) served from an Unsloth GGUF.",
+  "license": "mit"
+ },
+ "programs": {
+  "source": {
+   "inputs": [
+    {
+     "path": "program/prepare.loom",
+     "data": [
+      "weights.loom",
+      "llm_config.json"
+     ]
+    },
+    "program/control/chat.loom"
+   ],
+   "libraries": [
+    "program/control/chat_json.loom",
+    "program/control/chat_sampler.loom",
+    "program/config.loom",
+    "program/card_defaults.loom",
+    "program/storage.loom",
+    "program/lib/vendor/epoch.loom",
+    "program/lib/vendor/storage.loom",
+    "program/lib/vendor/packet.loom",
+    "program/lib/vendor/feedback.loom",
+    "program/lib/vendor/span.loom",
+    "program/lib/vendor/q8_0.loom",
+    "program/lib/media_stub.loom",
+    "program/dispatch/targets.loom",
+    "program/dispatch/spans.loom",
+    "program/dispatch/capture.loom",
+    "program/dispatch/visit.loom",
+    "program/dispatch/layer.loom",
+    "program/dispatch/model.loom",
+    "program/lib/inkling/dense_common.loom",
+    "program/lib/inkling/dense_float.loom",
+    "program/lib/inkling/dense_q8_0.loom",
+    "program/lib/inkling/dense_abi.loom",
+    "program/lib/inkling/dense_vec.loom",
+    "program/lib/inkling/dense_mm_wmma.loom",
+    "program/lib/inkling/dense_wmma.loom",
+    "program/lib/inkling/dense_targets.loom",
+    "program/lib/inkling/attn_common.loom",
+    "program/lib/inkling/attn_matrix.loom",
+    "program/lib/inkling/attn_targets.loom",
+    "program/lib/inkling/experts_common.loom",
+    "program/lib/inkling/experts_stage.loom",
+    "program/lib/inkling/experts_wmma.loom",
+    "program/lib/inkling/nvfp4.loom",
+    "program/kernel/dense/norm.loom",
+    "program/kernel/dense/embed.loom",
+    "program/kernel/dense/gemv.loom",
+    "program/kernel/dense/gemv_split.loom",
+    "program/kernel/dense/gemm_q8_0.loom",
+    "program/kernel/dense/gemm_f32.loom",
+    "program/kernel/dense/gemm_bf16_wmma.loom",
+    "program/kernel/dense/head.loom",
+    "program/kernel/attn/attn_prep.loom",
+    "program/kernel/attn/attn_tile.loom",
+    "program/kernel/attn/attn_merge.loom",
+    "program/kernel/attn/attn_conv_commit.loom",
+    "program/kernel/attn/attn_kv_append.loom",
+    "program/kernel/experts/router.loom",
+    "program/kernel/experts/routes.loom",
+    "program/kernel/experts/gate_up.loom",
+    "program/kernel/experts/down.loom",
+    "program/kernel/experts/combine.loom",
+    "program/kernel/experts/gate_up_wmma.loom",
+    "program/kernel/experts/down_wmma.loom",
+    "program/kernel/mix/mix_states.loom",
+    "program/kernel/mix/ctrl.loom",
+    "program/kernel/mix/conv_res.loom",
+    "program/dispatch/hooks_dense.loom",
+    "program/dispatch/hooks_attn.loom",
+    "program/dispatch/hooks_mix.loom",
+    "program/dispatch/hooks_experts.loom",
+    "program/dispatch/stub_debug.loom",
+    "program/lib/vendor/sampling.loom",
+    "program/lib/vendor/random.loom",
+    "program/control/identity.loom"
+   ]
+  }
+ },
+ "services": {
+  "chat": {
+   "kind": "text",
+   "version": 1
+  }
+ },
+ "variants": {
+  "ud-q4-k-xl": {
+   "services": {
+    "chat": {
+     "programs": [
+      "source"
+     ],
+     "config": {
+      "inkling.dense_type": 0
+     },
+     "parameters": {
+      "model": {
+       "files": [
+        {
+         "path": "parameter/Inkling-2-Mini-UD-Q4_K_XL.gguf",
+         "format": "gguf",
+         "origin": "@checkpoint/Mainline_Support/Inkling-2-Mini-UD-Q4_K_XL.gguf_file"
+        }
+       ]
+      }
+     },
+     "tokenizers": {
+      "text": "tokenizer.json"
+     }
+    }
+   }
+  },
+  "ud-q8-k-xl": {
+   "services": {
+    "chat": {
+     "programs": [
+      "source"
+     ],
+     "config": {
+      "inkling.dense_type": 1
+     },
+     "parameters": {
+      "model": {
+       "files": [
+        {
+         "path": "parameter/Inkling-2-Mini-UD-Q8_K_XL.gguf",
+         "format": "gguf",
+         "origin": "@checkpoint/Mainline_Support/Inkling-2-Mini-UD-Q8_K_XL.gguf_file"
+        }
+       ]
+      }
+     },
+     "tokenizers": {
+      "text": "tokenizer.json"
+     }
+    }
+   }
+  }
+ },
+ "presets": {
+  "chat": {
+   "service": "chat",
+   "variant": "ud-q4-k-xl",
+   "programs": "source",
+   "execution": {
+    "rows": 4,
+    "context_capacity": 131072,
+    "prefill_capacity": 512,
+    "checkpoint_capacity": 4,
+    "max_tokens": 4096,
+    "session_cache_capacity": 0,
+    "prefix_cache_capacity": 0
+   },
+   "memory": {
+    "weights_bytes": 17617780736,
+    "transient_bytes": 7550000000,
+    "workload": "4 rows, 131072 context, 4 checkpoints; measured: 19.9 GB + 39.4 KB per context position, non-weight memory 3.6 GB at 32768 (docs/CONTEXT_TABLE.md)"
+   }
+  },
+  "chat-r9700": {
+   "service": "chat",
+   "variant": "ud-q4-k-xl",
+   "programs": "source",
+   "execution": {
+    "rows": 4,
+    "context_capacity": 131072,
+    "prefill_capacity": 512,
+    "checkpoint_capacity": 4,
+    "max_tokens": 4096,
+    "session_cache_capacity": 0,
+    "prefix_cache_capacity": 0
+   },
+   "memory": {
+    "weights_bytes": 17617780736,
+    "transient_bytes": 7550000000,
+    "workload": "4 rows, 131072 context, 4 checkpoints; measured: 19.9 GB + 39.4 KB per context position, non-weight memory 3.6 GB at 32768 (docs/CONTEXT_TABLE.md)"
+   }
+  },
+  "chat-q8": {
+   "service": "chat",
+   "variant": "ud-q8-k-xl",
+   "programs": "source",
+   "execution": {
+    "rows": 4,
+    "context_capacity": 32768,
+    "prefill_capacity": 512,
+    "checkpoint_capacity": 4,
+    "max_tokens": 4096,
+    "session_cache_capacity": 0,
+    "prefix_cache_capacity": 0
+   },
+   "memory": {
+    "weights_bytes": 22855473152,
+    "transient_bytes": 3600000000,
+    "workload": "4 rows, 32768 context, 4 checkpoints; measured: 19.9 GB + 39.4 KB per context position, non-weight memory 3.6 GB at 32768 (docs/CONTEXT_TABLE.md)"
+   }
+  },
+  "chat-q8-r9700": {
+   "service": "chat",
+   "variant": "ud-q8-k-xl",
+   "programs": "source",
+   "execution": {
+    "rows": 4,
+    "context_capacity": 32768,
+    "prefill_capacity": 512,
+    "checkpoint_capacity": 4,
+    "max_tokens": 4096,
+    "session_cache_capacity": 0,
+    "prefix_cache_capacity": 0
+   },
+   "memory": {
+    "weights_bytes": 22855473152,
+    "transient_bytes": 3600000000,
+    "workload": "4 rows, 32768 context, 4 checkpoints; measured: 19.9 GB + 39.4 KB per context position, non-weight memory 3.6 GB at 32768 (docs/CONTEXT_TABLE.md)"
+   }
+  }
+ },
+ "origins": {
+  "checkpoint": {
+   "kind": "hf",
+   "repository": "unsloth/Inkling-2-Mini-GGUF",
+   "revision": "ea0c79b2ecd73669e774c8519b79bfabfddbc027"
+  }
+ }
+}

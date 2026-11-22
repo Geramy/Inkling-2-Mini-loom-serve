@@ -1,0 +1,49 @@
+config.decl @inkling.dense_type : %value: index where [range(%value, 0, 1)]
+
+// Visits 5, 11, ... 47 are global attention; layers 5, 11, 17 and 23.
+func.def public pure inline @inkling_layer_is_global(%layer: index) -> (i1) {
+  %c6 = index.constant 6 : index
+  %c5 = index.constant 5 : index
+  %phase = index.rem %layer, %c6 : index
+  %global = index.cmp eq, %phase, %c5 : index
+  func.return %global : i1
+}
+
+// Layers 6 to 17 form the loop body; controllers exist from the second pass on.
+func.def public pure inline @inkling_layer_in_loop(%layer: index) -> (i1) {
+  %c6 = index.constant 6 : index
+  %c18 = index.constant 18 : index
+  %above = index.cmp uge, %layer, %c6 : index
+  %below = index.cmp ult, %layer, %c18 : index
+  %inside = scalar.andi %above, %below : i1
+  func.return %inside : i1
+}
+
+// Expert weight type of the experts launch scalar: 0 NVFP4, 1 Q8_0, 2 BF16. Layers 20 to 23 carry dense experts.
+func.def public pure inline @inkling_expert_wtype(%layer: index) -> (index) {
+  %c20 = index.constant 20 : index
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %dense = config.get @inkling.dense_type : index
+  %dense_wtype = index.add %dense, %c1 : index
+  %late = index.cmp uge, %layer, %c20 : index
+  %wtype = scf.select %late, %dense_wtype, %c0 : index
+  func.return %wtype : index
+}
+
+// Visit (cache slot) of layer L in loop pass P: prelude and postlude layers use L, pass 0 of the loop uses L, later passes use 24 + 12 (P - 1) + (L - 6).
+func.def public pure inline @inkling_visit_index(%layer: index, %pass: index) -> (index) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c6 = index.constant 6 : index
+  %c12 = index.constant 12 : index
+  %c24 = index.constant 24 : index
+  %later = index.cmp ugt, %pass, %c0 : index
+  %previous = index.sub %pass, %c1 : index
+  %base = index.mul %previous, %c12 : index
+  %offset = index.sub %layer, %c6 : index
+  %relative = index.add %base, %offset : index
+  %loop_visit = index.add %c24, %relative : index
+  %visit = scf.select %later, %loop_visit, %layer : index
+  func.return %visit : index
+}

@@ -1,0 +1,50 @@
+config.decl @inkling.tokens : %value: index where [range(%value, 1, 2147483647)]
+
+config.decl @inkling.capture_width : %value: index where [range(%value, 1, 1048576)]
+
+target.decl @target
+
+// Copies the live rows of a tensor [tokens][src_width] (F32, or F16 when half is 1) into columns col.. of the residual buffer, which the sequence service reads back. Columns beyond the capture width are dropped.
+kernel.def target(@target) @inkling_capture_rows() {
+  %tokens = config.get @inkling.tokens : index
+  %c1 = index.constant 1 : index
+  %c256 = index.constant 256 : index
+  kernel.launch.config workgroups(%tokens, %c1, %c1) workgroup_size(%c256, %c1, %c1) : index
+} launch(%src_width: index, %col: index, %half: index, %metadata: buffer, %src: buffer, %residual: buffer) {
+  %tokens = config.get @inkling.tokens : index
+  %width = config.get @inkling.capture_width : index
+  %token = kernel.workgroup.id<x> : index
+  %item = kernel.workitem.id<x> : index
+  %origin = index.constant 0 : offset
+  %c0 = index.constant 0 : index
+  %c256 = index.constant 256 : index
+  %header = buffer.view %metadata[%origin] : buffer -> view<3xi32>
+  %live32 = view.load %header[0] : view<3xi32> -> i32
+  %live = index.cast %live32 : i32 to index
+  %in = index.cmp ult, %token, %live : index
+  scf.if %in {
+    %room = index.sub %width, %col : index
+    %narrow = index.cmp ult, %src_width, %room : index
+    %columns = scf.select %narrow, %src_width, %room : index
+    %is_half = index.cmp ne, %half, %c0 : index
+    %target_rows = buffer.view %residual[%origin] : buffer -> view<[%tokens]x[%width]xf32>
+    %bounded = index.assume %token [lt(%token, %tokens)] : index
+    scf.for %k = [%item to %columns step %c256] {
+      %kb = index.assume %k [lt(%k, %src_width)] : index
+      %to0 = index.add %k, %col : index
+      %to = index.assume %to0 [lt(%to0, %width)] : index
+      %x = scf.if %is_half -> (f32) {
+        %half_rows = buffer.view %src[%origin] : buffer -> view<[%tokens]x[%src_width]xf16>
+        %h = view.load %half_rows[%bounded, %kb] : view<[%tokens]x[%src_width]xf16> -> f16
+        %wide = scalar.extf %h : f16 to f32
+        scf.yield %wide : f32
+      } else {
+        %source_rows = buffer.view %src[%origin] : buffer -> view<[%tokens]x[%src_width]xf32>
+        %f = view.load %source_rows[%bounded, %kb] : view<[%tokens]x[%src_width]xf32> -> f32
+        scf.yield %f : f32
+      }
+      view.store %x, %target_rows[%bounded, %to] : f32, view<[%tokens]x[%width]xf32>
+    }
+  }
+  kernel.return
+}

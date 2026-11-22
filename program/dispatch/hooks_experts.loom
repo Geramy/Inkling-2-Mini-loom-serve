@@ -1,0 +1,104 @@
+target.decl @inkling_execution
+
+kernel.decl @inkling_experts_combine(%n: index) launch(%n: index, %dout: buffer, %wts: buffer, %y: buffer)
+
+kernel.decl @inkling_experts_down(%n: index) launch(%n: index, %wtype: index, %act: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %dout: buffer)
+
+kernel.decl @inkling_experts_down_wmma(%n: index) launch(%n: index, %wtype: index, %act: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %dout: buffer)
+
+kernel.decl @inkling_experts_gate_up(%n: index) launch(%n: index, %wtype: index, %x: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %act: buffer)
+
+kernel.decl @inkling_experts_gate_up_wmma(%n: index) launch(%n: index, %wtype: index, %x: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %act: buffer)
+
+kernel.decl @inkling_experts_routes() launch(%n: index, %tile: index, %ids: buffer, %tasks: buffer)
+
+kernel.decl @inkling_router_logits(%n: index) launch(%n: index, %x: buffer, %rw: buffer, %logits: buffer, %x16: buffer)
+
+kernel.decl @inkling_router_select(%n: index) launch(%n: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer)
+
+config.decl @inkling.dense_type : %value: index where [range(%value, 0, 1)]
+
+config.decl @inkling.tokens : %value: index where [range(%value, 1, 2147483647)]
+
+func.decl pure @inkling_expert_wtype(%layer: index) -> (index)
+
+// Expert hooks. Router results live in shared buffers: logits in small ([cap][128]), ids in ab, weights in ob, f16 router input in gate (docs/DISPATCH.md aliasing table).
+
+command.def public target(@inkling_execution) @inkling_hook_router(%layer: index, %visit: index, %pass: index) launch(%parameters: buffer, %span_table: buffer, %token_map: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %cur: buffer, %blocks: buffer, %bank: buffer, %x: buffer, %xn: buffer, %small: buffer, %q: buffer, %k: buffer, %v: buffer, %r: buffer, %gate: buffer, %ab: buffer, %ob: buffer, %y: buffer) {
+  %cap = config.get @inkling.tokens : index
+  %w1 = command.parameter %parameters, "blk.{}.ffn_gate_inp.weight"[%layer] : view<294912xf32>
+  %wb2 = command.parameter.base %w1 : view<294912xf32> -> buffer
+  %w3 = command.parameter %parameters, "blk.{}.exp_probs_b.bias"[%layer] : view<128xf32>
+  %wb4 = command.parameter.base %w3 : view<128xf32> -> buffer
+  kernel.launch @inkling_router_logits[%cap](%cap, %xn, %wb2, %small, %gate) : [index](index, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_router_select[%cap](%cap, %small, %wb4, %ab, %ob) : [index](index, buffer, buffer, buffer, buffer)
+  command.return
+}
+
+command.def public target(@inkling_execution) @inkling_hook_experts(%layer: index, %visit: index, %pass: index) launch(%parameters: buffer, %span_table: buffer, %token_map: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %cur: buffer, %blocks: buffer, %bank: buffer, %x: buffer, %xn: buffer, %small: buffer, %q: buffer, %k: buffer, %v: buffer, %r: buffer, %gate: buffer, %ab: buffer, %ob: buffer, %y: buffer) {
+  %cap = config.get @inkling.tokens : index
+  %wtype = func.call pure @inkling_expert_wtype(%layer) : (index) -> (index)
+  %i0 = index.constant 0 : index
+  %is_fp4 = index.cmp eq, %wtype, %i0 : index
+  %i8 = index.constant 8 : index
+  %n8 = index.mul %cap, %i8 : index
+  %i128 = index.constant 128 : index
+  %nbound = index.add %cap, %i128 : index
+  %records = index.min %n8, %nbound : index
+  %o136 = index.constant 136 : offset
+  %tasks_bytes = index.scale %records, %o136 : index, offset -> offset
+  %o16 = index.constant 16 : offset
+  %tasks_total = index.add %tasks_bytes, %o16 : offset
+  %o2304 = index.constant 2304 : offset
+  %act_bytes = index.scale %n8, %o2304 : index, offset -> offset
+  %o9216 = index.constant 9216 : offset
+  %dout_bytes = index.scale %n8, %o9216 : index, offset -> offset
+  %dense = config.get @inkling.dense_type : index
+  %is_q8e = index.cmp eq, %dense, %i0 : index
+  %i48 = index.constant 48 : index
+  %wide = index.cmp uge, %cap, %i48 : index
+  %i32 = index.constant 32 : index
+  %tasks = buffer.alloca<global> align(256) %tasks_total : buffer
+  %act = buffer.alloca<global> align(256) %act_bytes : buffer
+  %dout = buffer.alloca<global> align(256) %dout_bytes : buffer
+  %w1 = command.parameter %parameters, "blk.{}.exp_probs_b.bias"[%layer] : view<128xf32>
+  %wb2 = command.parameter.base %w1 : view<128xf32> -> buffer
+  %gu3, %dn4, %gus5, %dns6 = scf.if %is_fp4 -> (buffer, buffer, buffer, buffer) {
+  %w7 = command.parameter %parameters, "blk.{}.ffn_gate_up_exps.weight"[%layer] : view<382205952xi8>
+  %wb8 = command.parameter.base %w7 : view<382205952xi8> -> buffer
+  %w9 = command.parameter %parameters, "blk.{}.ffn_down_exps.weight"[%layer] : view<191102976xi8>
+  %wb10 = command.parameter.base %w9 : view<191102976xi8> -> buffer
+  %w11 = command.parameter %parameters, "blk.{}.ffn_gate_up_exps.scale"[%layer] : view<128xf32>
+  %wb12 = command.parameter.base %w11 : view<128xf32> -> buffer
+  %w13 = command.parameter %parameters, "blk.{}.ffn_down_exps.scale"[%layer] : view<128xf32>
+  %wb14 = command.parameter.base %w13 : view<128xf32> -> buffer
+    scf.yield %wb8, %wb10, %wb12, %wb14 : buffer, buffer, buffer, buffer
+  } else {
+  %q8gu, %q8dn = scf.if %is_q8e -> (buffer, buffer) {
+  %w15 = command.parameter %parameters, "blk.{}.ffn_gate_up_exps.weight"[%layer] : view<721944576xi8>
+  %wb16 = command.parameter.base %w15 : view<721944576xi8> -> buffer
+  %w17 = command.parameter %parameters, "blk.{}.ffn_down_exps.weight"[%layer] : view<360972288xi8>
+  %wb18 = command.parameter.base %w17 : view<360972288xi8> -> buffer
+    scf.yield %wb16, %wb18 : buffer, buffer
+  } else {
+  %w19 = command.parameter %parameters, "blk.{}.ffn_gate_up_exps.weight"[%layer] : view<1358954496xi8>
+  %wb20 = command.parameter.base %w19 : view<1358954496xi8> -> buffer
+  %w21 = command.parameter %parameters, "blk.{}.ffn_down_exps.weight"[%layer] : view<679477248xi8>
+  %wb22 = command.parameter.base %w21 : view<679477248xi8> -> buffer
+    scf.yield %wb20, %wb22 : buffer, buffer
+  }
+    scf.yield %q8gu, %q8dn, %wb2, %wb2 : buffer, buffer, buffer, buffer
+  }
+  scf.if %wide {
+  kernel.launch @inkling_experts_routes(%cap, %i32, %ab, %tasks) : (index, index, buffer, buffer)
+  kernel.launch @inkling_experts_gate_up_wmma[%cap](%cap, %wtype, %gate, %tasks, %gu3, %gus5, %act) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_experts_down_wmma[%cap](%cap, %wtype, %act, %tasks, %dn4, %dns6, %dout) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+  } else {
+  kernel.launch @inkling_experts_routes(%cap, %i8, %ab, %tasks) : (index, index, buffer, buffer)
+  kernel.launch @inkling_experts_gate_up[%cap](%cap, %wtype, %gate, %tasks, %gu3, %gus5, %act) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_experts_down[%cap](%cap, %wtype, %act, %tasks, %dn4, %dns6, %dout) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+  }
+  kernel.launch @inkling_experts_combine[%cap](%cap, %dout, %ob, %y) : [index](index, buffer, buffer, buffer)
+  command.return
+}
+
