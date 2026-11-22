@@ -1,0 +1,524 @@
+target.decl @inkling_execution
+
+kernel.decl @inkling_embed_bf16(%rows: index) launch(%control: buffer, %count_origin: offset, %vocab: index, %tokens: buffer, %tokens_origin: offset, %d_origin: offset, %d_stride: index, %epsilon: f32, %embedding: buffer, %norm_weight: buffer, %output: buffer)
+
+kernel.decl @inkling_embed_q8_0(%rows: index) launch(%control: buffer, %count_origin: offset, %vocab: index, %tokens: buffer, %tokens_origin: offset, %d_origin: offset, %d_stride: index, %epsilon: f32, %embedding: buffer, %norm_weight: buffer, %output: buffer)
+
+kernel.decl @inkling_gemm_bf16(%n_rows: index, %cols_cap: index) launch(%control: buffer, %count_origin: offset, %k_size: index, %n_rows: index, %w_origin: offset, %x_origin: offset, %x_stride: index, %d_origin: offset, %d_stride: index, %act: index, %cap: f32, %weight: buffer, %input: buffer, %output: buffer)
+
+kernel.decl @inkling_gemm_q8_0(%n_rows: index, %cols_cap: index) launch(%control: buffer, %count_origin: offset, %k_size_in: index, %n_rows_in: index, %w_origin: offset, %x_origin: offset, %x_stride: index, %d_origin: offset, %d_stride: index, %act: index, %cap: f32, %weight: buffer, %input: buffer, %dst: buffer)
+
+kernel.decl @inkling_gemm_wmma_bf16(%n_rows: index, %cols_cap: index) launch(%control: buffer, %count_origin: offset, %k_size_in: index, %n_rows_in: index, %w_origin: offset, %x_origin: offset, %x_stride: index, %d_origin: offset, %d_stride: index, %act: index, %cap: f32, %weight: buffer, %input: buffer, %dst: buffer)
+
+kernel.decl @inkling_gemv_bf16(%n_rows: index, %k_size: index, %per_unit: index) launch(%control: buffer, %count_origin: offset, %k_size: index, %n_rows: index, %w_origin: offset, %x_origin: offset, %x_stride: index, %d_origin: offset, %d_stride: index, %act: index, %cap: f32, %weight: buffer, %input: buffer, %output: buffer)
+
+kernel.decl @inkling_gemv_q8_0(%n_rows: index, %k_size: index, %per_unit: index) launch(%control: buffer, %count_origin: offset, %k_size: index, %n_rows: index, %w_origin: offset, %x_origin: offset, %x_stride: index, %d_origin: offset, %d_stride: index, %act: index, %cap: f32, %weight: buffer, %input: buffer, %output: buffer)
+
+kernel.decl @inkling_gemv_split_bf16(%n_rows: index) launch(%control: buffer, %count_origin: offset, %k_size: index, %n_rows: index, %w_origin: offset, %x_origin: offset, %x_stride: index, %d_origin: offset, %d_stride: index, %act: index, %cap: f32, %weight: buffer, %input: buffer, %output: buffer)
+
+kernel.decl @inkling_head_norm(%spans_cap: index) launch(%sel: buffer, %sel_origin: offset, %spans_cap: index, %width: index, %x_origin: offset, %x_stride: index, %d_origin: offset, %d_stride: index, %epsilon: f32, %logit_valid: index, %logit_stride: index, %logits: buffer, %logits_origin: offset, %input: buffer, %weight: buffer, %output: buffer)
+
+kernel.decl @inkling_head_select(%spans_cap: index) launch(%spans_cap: index, %all_rows: index, %metadata: buffer, %sel: buffer, %sel_origin: offset)
+
+kernel.decl @inkling_mix_states(%cap: index, %ncommit: index, %nq: index) launch(%cap_in: index, %ncommit_in: index, %nq: index, %nb_in: index, %block_stride_in: index, %col_stride_in: index, %mode_in: index, %w_stride_in: index, %sel_on_in: index, %blocks_off: index, %cur_off: index, %out_off: index, %commit_site_in: index, %commit_visit_in: index, %spans: buffer, %sel: buffer, %blocks: buffer, %cur: buffer, %query: buffer, %norm_w: buffer, %out: buffer, %rinv_out: buffer, %commit_state: buffer, %commit_a: buffer)
+
+kernel.decl @inkling_rms_norm(%rows: index) launch(%control: buffer, %count_origin: offset, %width: index, %x_origin: offset, %x_stride: index, %d_origin: offset, %d_stride: index, %epsilon: f32, %input: buffer, %weight: buffer, %output: buffer)
+
+kernel.decl @inkling_rms_norm_cols(%rows: index) launch(%control: buffer, %count_origin: offset, %width: index, %origin: offset, %col_step: offset, %epsilon: f32, %input: buffer, %w0: buffer, %w1: buffer, %w2: buffer, %output: buffer)
+
+config.decl @inkling.capture_id : %value: index where [range(%value, 0, 1024)]
+
+config.decl @inkling.spans : %value: index where [range(%value, 1, 2147483647)]
+
+config.decl @inkling.tokens : %value: index where [range(%value, 1, 2147483647)]
+
+func.decl pure @inkling_layer_in_loop(%layer: index) -> (i1)
+
+func.decl pure @inkling_layer_is_global(%layer: index) -> (i1)
+
+kernel.decl @inkling_sample_stats(%rows_value: index) launch(%rows_value: index, %logit_stride: index, %epoch: buffer, %logits: buffer, %scratch: buffer)
+
+kernel.decl @inkling_sample_draw(%rows_value: index) launch(%rows_value: index, %logit_stride: index, %epoch: buffer, %logits: buffer, %scratch: buffer)
+
+kernel.decl @inkling_sample_rows(%rows_value: index) launch(%rows_value: index, %logit_stride: index, %epoch: buffer, %logits: buffer, %outputs: buffer, %scratch: buffer)
+
+kernel.decl @inkling_capture_rows() launch(%src_width: index, %col: index, %half: index, %metadata: buffer, %src: buffer, %residual: buffer)
+
+config.decl @inkling.dense_type : %value: index where [range(%value, 0, 1)]
+
+template.decl @inkling.dense.gemv.xs_wg_per_unit() -> (index)
+
+// Dense area hooks (embedding, head, projections and norms).
+command.def public target(@inkling_execution) @inkling_hook_embed() launch(%parameters: buffer, %metadata: buffer, %tokens: buffer, %embd: buffer, %cur: buffer) {
+  %cap = config.get @inkling.tokens : index
+  %dense = config.get @inkling.dense_type : index
+  %i0 = index.constant 0 : index
+  %isq8 = index.cmp eq, %dense, %i0 : index
+  %eps = scalar.constant 9.9999999999999995e-07 : f32
+  %o0 = index.constant 0 : offset
+  %i201024 = index.constant 201024 : index
+  %i2304 = index.constant 2304 : index
+  %w1 = command.parameter %parameters, "token_embd_norm.weight" : view<2304xf32>
+  %wb2 = command.parameter.base %w1 : view<2304xf32> -> buffer
+  %pick3 = scf.if %isq8 -> (buffer) {
+  %w4 = command.parameter %parameters, "token_embd.weight" : view<201024x72x34xi8>
+  %wb5 = command.parameter.base %w4 : view<201024x72x34xi8> -> buffer
+    scf.yield %wb5 : buffer
+  } else {
+  %w6 = command.parameter %parameters, "token_embd.weight" : view<201024x2304xbf16>
+  %wb7 = command.parameter.base %w6 : view<201024x2304xbf16> -> buffer
+    scf.yield %wb7 : buffer
+  }
+  scf.if %isq8 {
+  kernel.launch @inkling_embed_q8_0[%cap](%metadata, %o0, %i201024, %tokens, %o0, %o0, %i2304, %eps, %pick3, %wb2, %cur) : [index](buffer, offset, index, buffer, offset, offset, index, f32, buffer, buffer, buffer)
+  } else {
+  kernel.launch @inkling_embed_bf16[%cap](%metadata, %o0, %i201024, %tokens, %o0, %o0, %i2304, %eps, %pick3, %wb2, %cur) : [index](buffer, offset, index, buffer, offset, offset, index, f32, buffer, buffer, buffer)
+  }
+  command.return
+}
+
+command.def public target(@inkling_execution) @inkling_hook_head() launch(%parameters: buffer, %span_table: buffer, %token_map: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %cur: buffer, %blocks: buffer, %bank: buffer, %x: buffer, %xn: buffer, %small: buffer, %q: buffer, %k: buffer, %v: buffer, %r: buffer, %gate: buffer, %ab: buffer, %ob: buffer, %y: buffer, %outputs: buffer, %residual: buffer) {
+  %cap = config.get @inkling.tokens : index
+  %span_cap = config.get @inkling.spans : index
+  %capid = config.get @inkling.capture_id : index
+  %i30 = index.constant 30 : index
+  %is30 = index.cmp eq, %capid, %i30 : index
+  %i31 = index.constant 31 : index
+  %is31 = index.cmp eq, %capid, %i31 : index
+  %every = scalar.ori %is30, %is31 : i1
+  %i1 = index.constant 1 : index
+  %i0 = index.constant 0 : index
+  %all_rows = scf.select %every, %i1, %i0 : index
+  %sel_rows = scf.select %every, %cap, %span_cap : index
+  %o8 = index.constant 8 : offset
+  %sel_words = index.scale %sel_rows, %o8 : index, offset -> offset
+  %o16 = index.constant 16 : offset
+  %sel_bytes = index.add %sel_words, %o16 : offset
+  %o800256 = index.constant 800256 : offset
+  %logit_bytes = index.scale %sel_rows, %o800256 : index, offset -> offset
+  %o2560 = index.constant 2560 : offset
+  %scratch_bytes = index.scale %sel_rows, %o2560 : index, offset -> offset
+  %i4 = index.constant 4 : index
+  %i2304 = index.constant 2304 : index
+  %cE = index.mul %cap, %i2304 : index
+  %o0 = index.constant 0 : offset
+  %eps = scalar.constant 9.9999999999999995e-07 : f32
+  %i200058 = index.constant 200058 : index
+  %i200064 = index.constant 200064 : index
+  %i8 = index.constant 8 : index
+  %per_unit = template.apply<@inkling.dense.gemv.xs_wg_per_unit>() : () -> (index)
+  %dense = config.get @inkling.dense_type : index
+  %i2 = index.constant 2 : index
+  %c30 = scalar.constant 30.0 : f32
+  %cap30 = index.cmp eq, %capid, %i30 : index
+  %cap31 = index.cmp eq, %capid, %i31 : index
+  %sel = buffer.alloca<global> align(256) %sel_bytes : buffer
+  %logits = buffer.alloca<global> align(256) %logit_bytes : buffer
+  %scratch = buffer.alloca<global> align(256) %scratch_bytes : buffer
+  %w1 = command.parameter %parameters, "output_res_query.weight" : view<2304xf32>
+  %wb2 = command.parameter.base %w1 : view<2304xf32> -> buffer
+  kernel.launch @inkling_mix_states[%cap, %i0, %i1](%cap, %i0, %i1, %i4, %cE, %cE, %i0, %i0, %i0, %i0, %i0, %i0, %i0, %i0, %span_table, %xn, %blocks, %cur, %wb2, %xn, %x, %small, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_head_select[%sel_rows](%sel_rows, %all_rows, %metadata, %sel, %o0) : [index](index, index, buffer, buffer, offset)
+  %w3 = command.parameter %parameters, "output_norm.weight" : view<2304xf32>
+  %wb4 = command.parameter.base %w3 : view<2304xf32> -> buffer
+  kernel.launch @inkling_head_norm[%sel_rows](%sel, %o0, %sel_rows, %i2304, %o0, %i2304, %o0, %i2304, %eps, %i200058, %i200064, %logits, %o0, %x, %wb4, %xn) : [index](buffer, offset, index, index, offset, index, offset, index, f32, index, index, buffer, offset, buffer, buffer, buffer)
+  %small5 = index.cmp ule, %sel_rows, %i8 : index
+  %isq86 = index.cmp eq, %dense, %i0 : index
+  %pick7 = scf.if %isq86 -> (buffer) {
+  %w8 = command.parameter %parameters, "output.weight" : view<201024x72x34xi8>
+  %wb9 = command.parameter.base %w8 : view<201024x72x34xi8> -> buffer
+    scf.yield %wb9 : buffer
+  } else {
+  %w10 = command.parameter %parameters, "output.weight" : view<201024x2304xbf16>
+  %wb11 = command.parameter.base %w10 : view<201024x2304xbf16> -> buffer
+    scf.yield %wb11 : buffer
+  }
+  scf.if %small5 {
+    scf.if %isq86 {
+  kernel.launch @inkling_gemv_q8_0[%i200058, %i2304, %per_unit](%sel, %o0, %i2304, %i200058, %o0, %o0, %i2304, %o0, %i200064, %i2, %c30, %pick7, %xn, %logits) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemv_bf16[%i200058, %i2304, %per_unit](%sel, %o0, %i2304, %i200058, %o0, %o0, %i2304, %o0, %i200064, %i2, %c30, %pick7, %xn, %logits) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  } else {
+    scf.if %isq86 {
+  kernel.launch @inkling_gemm_q8_0[%i200058, %sel_rows](%sel, %o0, %i2304, %i200058, %o0, %o0, %i2304, %o0, %i200064, %i2, %c30, %pick7, %xn, %logits) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemm_wmma_bf16[%i200058, %sel_rows](%sel, %o0, %i2304, %i200058, %o0, %o0, %i2304, %o0, %i200064, %i2, %c30, %pick7, %xn, %logits) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  }
+  scf.if %cap30 {
+  kernel.launch @inkling_capture_rows(%i2304, %i0, %i0, %metadata, %xn, %residual) : (index, index, index, buffer, buffer, buffer)
+  }
+  scf.if %cap31 {
+  kernel.launch @inkling_capture_rows(%i200064, %i0, %i0, %metadata, %logits, %residual) : (index, index, index, buffer, buffer, buffer)
+  }
+  kernel.launch @inkling_sample_stats[%sel_rows](%sel_rows, %i200064, %metadata, %logits, %scratch) : [index](index, index, buffer, buffer, buffer)
+  kernel.launch @inkling_sample_draw[%sel_rows](%sel_rows, %i200064, %metadata, %logits, %scratch) : [index](index, index, buffer, buffer, buffer)
+  kernel.launch @inkling_sample_rows[%sel_rows](%sel_rows, %i200064, %metadata, %logits, %outputs, %scratch) : [index](index, index, buffer, buffer, buffer, buffer)
+  command.return
+}
+
+command.def public target(@inkling_execution) @inkling_hook_norm_in(%layer: index, %visit: index, %pass: index) launch(%parameters: buffer, %span_table: buffer, %token_map: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %cur: buffer, %blocks: buffer, %bank: buffer, %x: buffer, %xn: buffer, %small: buffer, %q: buffer, %k: buffer, %v: buffer, %r: buffer, %gate: buffer, %ab: buffer, %ob: buffer, %y: buffer) {
+  %g = func.call pure @inkling_layer_is_global(%layer) : (index) -> (i1)
+  %i0 = index.constant 0 : index
+  %is0 = index.cmp eq, %layer, %i0 : index
+  %o0 = index.constant 0 : offset
+  %cap = config.get @inkling.tokens : index
+  %i2304 = index.constant 2304 : index
+  %eps = scalar.constant 9.9999999999999995e-07 : f32
+  %o9216 = index.constant 9216 : offset
+  %colbytes = index.scale %cap, %o9216 : index, offset -> offset
+  %in_loop = func.call pure @inkling_layer_in_loop(%layer) : (index) -> (i1)
+  %later = index.cmp ugt, %pass, %i0 : index
+  %controlled = scalar.andi %in_loop, %later : i1
+  scf.if %is0 {
+  %w1 = command.parameter %parameters, "blk.{}.attn_norm.weight"[%layer] : view<2304xf32>
+  %wb2 = command.parameter.base %w1 : view<2304xf32> -> buffer
+  kernel.launch @inkling_rms_norm[%cap](%metadata, %o0, %i2304, %o0, %i2304, %o0, %i2304, %eps, %cur, %wb2, %xn) : [index](buffer, offset, index, offset, index, offset, index, f32, buffer, buffer, buffer)
+  } else {
+  scf.if %g {
+  %w3 = command.parameter %parameters, "blk.{}.attn_q_inp_norm.weight"[%layer] : view<2304xf32>
+  %wb4 = command.parameter.base %w3 : view<2304xf32> -> buffer
+  %w5 = command.parameter %parameters, "blk.{}.attn_k_inp_norm.weight"[%layer] : view<2304xf32>
+  %wb6 = command.parameter.base %w5 : view<2304xf32> -> buffer
+  %w7 = command.parameter %parameters, "blk.{}.attn_v_inp_norm.weight"[%layer] : view<2304xf32>
+  %wb8 = command.parameter.base %w7 : view<2304xf32> -> buffer
+  kernel.launch @inkling_rms_norm_cols[%cap](%metadata, %o0, %i2304, %o0, %colbytes, %eps, %x, %wb4, %wb6, %wb8, %xn) : [index](buffer, offset, index, offset, offset, f32, buffer, buffer, buffer, buffer, buffer)
+  } else {
+  scf.if %controlled {
+  %w9 = command.parameter %parameters, "blk.{}.attn_norm.weight"[%layer] : view<2304xf32>
+  %wb10 = command.parameter.base %w9 : view<2304xf32> -> buffer
+  kernel.launch @inkling_rms_norm_cols[%cap](%metadata, %o0, %i2304, %o0, %colbytes, %eps, %x, %wb10, %wb10, %wb10, %xn) : [index](buffer, offset, index, offset, offset, f32, buffer, buffer, buffer, buffer, buffer)
+  }
+  }
+  }
+  command.return
+}
+
+command.def public target(@inkling_execution) @inkling_hook_proj(%layer: index, %visit: index, %pass: index) launch(%parameters: buffer, %span_table: buffer, %token_map: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %cur: buffer, %blocks: buffer, %bank: buffer, %x: buffer, %xn: buffer, %small: buffer, %q: buffer, %k: buffer, %v: buffer, %r: buffer, %gate: buffer, %ab: buffer, %ob: buffer, %y: buffer) {
+  %g = func.call pure @inkling_layer_is_global(%layer) : (index) -> (i1)
+  %o0 = index.constant 0 : offset
+  %cap = config.get @inkling.tokens : index
+  %i8 = index.constant 8 : index
+  %i3072 = index.constant 3072 : index
+  %i2304 = index.constant 2304 : index
+  %per_unit = template.apply<@inkling.dense.gemv.xs_wg_per_unit>() : () -> (index)
+  %dense = config.get @inkling.dense_type : index
+  %i0 = index.constant 0 : index
+  %c30 = scalar.constant 30.0 : f32
+  %i384 = index.constant 384 : index
+  %i24 = index.constant 24 : index
+  %i1 = index.constant 1 : index
+  %o9216 = index.constant 9216 : offset
+  %colbytes = index.scale %cap, %o9216 : index, offset -> offset
+  %col1 = index.scale %i1, %colbytes : index, offset -> offset
+  %i1024 = index.constant 1024 : index
+  %i2 = index.constant 2 : index
+  %col2 = index.scale %i2, %colbytes : index, offset -> offset
+  %i32 = index.constant 32 : index
+  %in_loop = func.call pure @inkling_layer_in_loop(%layer) : (index) -> (i1)
+  %later = index.cmp ugt, %pass, %i0 : index
+  %controlled = scalar.andi %in_loop, %later : i1
+  %small1 = index.cmp ule, %cap, %i8 : index
+  %isq82 = index.cmp eq, %dense, %i0 : index
+  %pick3 = scf.if %isq82 -> (buffer) {
+  %w4 = command.parameter %parameters, "blk.{}.attn_q.weight"[%layer] : view<3072x72x34xi8>
+  %wb5 = command.parameter.base %w4 : view<3072x72x34xi8> -> buffer
+    scf.yield %wb5 : buffer
+  } else {
+  %w6 = command.parameter %parameters, "blk.{}.attn_q.weight"[%layer] : view<3072x2304xbf16>
+  %wb7 = command.parameter.base %w6 : view<3072x2304xbf16> -> buffer
+    scf.yield %wb7 : buffer
+  }
+  scf.if %small1 {
+    scf.if %isq82 {
+  kernel.launch @inkling_gemv_q8_0[%i3072, %i2304, %per_unit](%metadata, %o0, %i2304, %i3072, %o0, %o0, %i2304, %o0, %i3072, %i0, %c30, %pick3, %xn, %q) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemv_bf16[%i3072, %i2304, %per_unit](%metadata, %o0, %i2304, %i3072, %o0, %o0, %i2304, %o0, %i3072, %i0, %c30, %pick3, %xn, %q) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  } else {
+    scf.if %isq82 {
+  kernel.launch @inkling_gemm_q8_0[%i3072, %cap](%metadata, %o0, %i2304, %i3072, %o0, %o0, %i2304, %o0, %i3072, %i0, %c30, %pick3, %xn, %q) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemm_wmma_bf16[%i3072, %cap](%metadata, %o0, %i2304, %i3072, %o0, %o0, %i2304, %o0, %i3072, %i0, %c30, %pick3, %xn, %q) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  }
+  %small8 = index.cmp ule, %cap, %i8 : index
+  %isq89 = index.cmp eq, %dense, %i0 : index
+  %pick10 = scf.if %isq89 -> (buffer) {
+  %w11 = command.parameter %parameters, "blk.{}.attn_rel.weight"[%layer] : view<384x72x34xi8>
+  %wb12 = command.parameter.base %w11 : view<384x72x34xi8> -> buffer
+    scf.yield %wb12 : buffer
+  } else {
+  %w13 = command.parameter %parameters, "blk.{}.attn_rel.weight"[%layer] : view<384x2304xbf16>
+  %wb14 = command.parameter.base %w13 : view<384x2304xbf16> -> buffer
+    scf.yield %wb14 : buffer
+  }
+  scf.if %small8 {
+    scf.if %isq89 {
+  kernel.launch @inkling_gemv_q8_0[%i384, %i2304, %per_unit](%metadata, %o0, %i2304, %i384, %o0, %o0, %i2304, %o0, %i384, %i0, %c30, %pick10, %xn, %r) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemv_bf16[%i384, %i2304, %per_unit](%metadata, %o0, %i2304, %i384, %o0, %o0, %i2304, %o0, %i384, %i0, %c30, %pick10, %xn, %r) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  } else {
+    scf.if %isq89 {
+  kernel.launch @inkling_gemm_q8_0[%i384, %cap](%metadata, %o0, %i2304, %i384, %o0, %o0, %i2304, %o0, %i384, %i0, %c30, %pick10, %xn, %r) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemm_wmma_bf16[%i384, %cap](%metadata, %o0, %i2304, %i384, %o0, %o0, %i2304, %o0, %i384, %i0, %c30, %pick10, %xn, %r) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  }
+  %small15 = index.cmp ule, %cap, %i8 : index
+  %isq816 = index.cmp eq, %dense, %i0 : index
+  %pick17 = scf.if %isq816 -> (buffer) {
+  %w18 = command.parameter %parameters, "blk.{}.attn_gate.weight"[%layer] : view<3072x72x34xi8>
+  %wb19 = command.parameter.base %w18 : view<3072x72x34xi8> -> buffer
+    scf.yield %wb19 : buffer
+  } else {
+  %w20 = command.parameter %parameters, "blk.{}.attn_gate.weight"[%layer] : view<3072x2304xbf16>
+  %wb21 = command.parameter.base %w20 : view<3072x2304xbf16> -> buffer
+    scf.yield %wb21 : buffer
+  }
+  scf.if %small15 {
+    scf.if %isq816 {
+  kernel.launch @inkling_gemv_q8_0[%i3072, %i2304, %per_unit](%metadata, %o0, %i2304, %i3072, %o0, %o0, %i2304, %o0, %i3072, %i0, %c30, %pick17, %xn, %gate) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemv_bf16[%i3072, %i2304, %per_unit](%metadata, %o0, %i2304, %i3072, %o0, %o0, %i2304, %o0, %i3072, %i0, %c30, %pick17, %xn, %gate) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  } else {
+    scf.if %isq816 {
+  kernel.launch @inkling_gemm_q8_0[%i3072, %cap](%metadata, %o0, %i2304, %i3072, %o0, %o0, %i2304, %o0, %i3072, %i0, %c30, %pick17, %xn, %gate) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemm_wmma_bf16[%i3072, %cap](%metadata, %o0, %i2304, %i3072, %o0, %o0, %i2304, %o0, %i3072, %i0, %c30, %pick17, %xn, %gate) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  }
+  %small22 = index.cmp ule, %cap, %i8 : index
+  %w23 = command.parameter %parameters, "blk.{}.attn_sink_proj.weight"[%layer] : view<24x2304xbf16>
+  %wb24 = command.parameter.base %w23 : view<24x2304xbf16> -> buffer
+  scf.if %small22 {
+  kernel.launch @inkling_gemv_split_bf16[%i24](%metadata, %o0, %i2304, %i24, %o0, %o0, %i2304, %o0, %i24, %i0, %c30, %wb24, %xn, %small) : [index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+  } else {
+  kernel.launch @inkling_gemm_bf16[%i24, %cap](%metadata, %o0, %i2304, %i24, %o0, %o0, %i2304, %o0, %i24, %i0, %c30, %wb24, %xn, %small) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+  }
+  scf.if %g {
+  %small25 = index.cmp ule, %cap, %i8 : index
+  %isq826 = index.cmp eq, %dense, %i0 : index
+  %pick27 = scf.if %isq826 -> (buffer) {
+  %w28 = command.parameter %parameters, "blk.{}.attn_k.weight"[%layer] : view<1024x72x34xi8>
+  %wb29 = command.parameter.base %w28 : view<1024x72x34xi8> -> buffer
+    scf.yield %wb29 : buffer
+  } else {
+  %w30 = command.parameter %parameters, "blk.{}.attn_k.weight"[%layer] : view<1024x2304xbf16>
+  %wb31 = command.parameter.base %w30 : view<1024x2304xbf16> -> buffer
+    scf.yield %wb31 : buffer
+  }
+  scf.if %small25 {
+    scf.if %isq826 {
+  kernel.launch @inkling_gemv_q8_0[%i1024, %i2304, %per_unit](%metadata, %o0, %i2304, %i1024, %o0, %col1, %i2304, %o0, %i1024, %i0, %c30, %pick27, %xn, %k) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemv_bf16[%i1024, %i2304, %per_unit](%metadata, %o0, %i2304, %i1024, %o0, %col1, %i2304, %o0, %i1024, %i0, %c30, %pick27, %xn, %k) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  } else {
+    scf.if %isq826 {
+  kernel.launch @inkling_gemm_q8_0[%i1024, %cap](%metadata, %o0, %i2304, %i1024, %o0, %col1, %i2304, %o0, %i1024, %i0, %c30, %pick27, %xn, %k) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemm_wmma_bf16[%i1024, %cap](%metadata, %o0, %i2304, %i1024, %o0, %col1, %i2304, %o0, %i1024, %i0, %c30, %pick27, %xn, %k) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  }
+  %small32 = index.cmp ule, %cap, %i8 : index
+  %isq833 = index.cmp eq, %dense, %i0 : index
+  %pick34 = scf.if %isq833 -> (buffer) {
+  %w35 = command.parameter %parameters, "blk.{}.attn_v.weight"[%layer] : view<1024x72x34xi8>
+  %wb36 = command.parameter.base %w35 : view<1024x72x34xi8> -> buffer
+    scf.yield %wb36 : buffer
+  } else {
+  %w37 = command.parameter %parameters, "blk.{}.attn_v.weight"[%layer] : view<1024x2304xbf16>
+  %wb38 = command.parameter.base %w37 : view<1024x2304xbf16> -> buffer
+    scf.yield %wb38 : buffer
+  }
+  scf.if %small32 {
+    scf.if %isq833 {
+  kernel.launch @inkling_gemv_q8_0[%i1024, %i2304, %per_unit](%metadata, %o0, %i2304, %i1024, %o0, %col2, %i2304, %o0, %i1024, %i0, %c30, %pick34, %xn, %v) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemv_bf16[%i1024, %i2304, %per_unit](%metadata, %o0, %i2304, %i1024, %o0, %col2, %i2304, %o0, %i1024, %i0, %c30, %pick34, %xn, %v) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  } else {
+    scf.if %isq833 {
+  kernel.launch @inkling_gemm_q8_0[%i1024, %cap](%metadata, %o0, %i2304, %i1024, %o0, %col2, %i2304, %o0, %i1024, %i0, %c30, %pick34, %xn, %v) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemm_wmma_bf16[%i1024, %cap](%metadata, %o0, %i2304, %i1024, %o0, %col2, %i2304, %o0, %i1024, %i0, %c30, %pick34, %xn, %v) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  }
+  %small39 = index.cmp ule, %cap, %i8 : index
+  %w40 = command.parameter %parameters, "blk.{}.attn_k_conv_proj.weight"[%layer] : view<32x2304xbf16>
+  %wb41 = command.parameter.base %w40 : view<32x2304xbf16> -> buffer
+  scf.if %small39 {
+  kernel.launch @inkling_gemv_split_bf16[%i32](%metadata, %o0, %i2304, %i32, %o0, %col1, %i2304, %o0, %i32, %i0, %c30, %wb41, %xn, %ob) : [index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+  } else {
+  kernel.launch @inkling_gemm_bf16[%i32, %cap](%metadata, %o0, %i2304, %i32, %o0, %col1, %i2304, %o0, %i32, %i0, %c30, %wb41, %xn, %ob) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+  }
+  %small42 = index.cmp ule, %cap, %i8 : index
+  %w43 = command.parameter %parameters, "blk.{}.attn_v_conv_proj.weight"[%layer] : view<32x2304xbf16>
+  %wb44 = command.parameter.base %w43 : view<32x2304xbf16> -> buffer
+  scf.if %small42 {
+  kernel.launch @inkling_gemv_split_bf16[%i32](%metadata, %o0, %i2304, %i32, %o0, %col2, %i2304, %o0, %i32, %i0, %c30, %wb44, %xn, %y) : [index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+  } else {
+  kernel.launch @inkling_gemm_bf16[%i32, %cap](%metadata, %o0, %i2304, %i32, %o0, %col2, %i2304, %o0, %i32, %i0, %c30, %wb44, %xn, %y) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+  }
+  } else {
+  scf.if %controlled {
+  %small45 = index.cmp ule, %cap, %i8 : index
+  %isq846 = index.cmp eq, %dense, %i0 : index
+  %pick47 = scf.if %isq846 -> (buffer) {
+  %w48 = command.parameter %parameters, "blk.{}.attn_k.weight"[%layer] : view<1024x72x34xi8>
+  %wb49 = command.parameter.base %w48 : view<1024x72x34xi8> -> buffer
+    scf.yield %wb49 : buffer
+  } else {
+  %w50 = command.parameter %parameters, "blk.{}.attn_k.weight"[%layer] : view<1024x2304xbf16>
+  %wb51 = command.parameter.base %w50 : view<1024x2304xbf16> -> buffer
+    scf.yield %wb51 : buffer
+  }
+  scf.if %small45 {
+    scf.if %isq846 {
+  kernel.launch @inkling_gemv_q8_0[%i1024, %i2304, %per_unit](%metadata, %o0, %i2304, %i1024, %o0, %col1, %i2304, %o0, %i1024, %i0, %c30, %pick47, %xn, %k) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemv_bf16[%i1024, %i2304, %per_unit](%metadata, %o0, %i2304, %i1024, %o0, %col1, %i2304, %o0, %i1024, %i0, %c30, %pick47, %xn, %k) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  } else {
+    scf.if %isq846 {
+  kernel.launch @inkling_gemm_q8_0[%i1024, %cap](%metadata, %o0, %i2304, %i1024, %o0, %col1, %i2304, %o0, %i1024, %i0, %c30, %pick47, %xn, %k) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemm_wmma_bf16[%i1024, %cap](%metadata, %o0, %i2304, %i1024, %o0, %col1, %i2304, %o0, %i1024, %i0, %c30, %pick47, %xn, %k) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  }
+  %small52 = index.cmp ule, %cap, %i8 : index
+  %isq853 = index.cmp eq, %dense, %i0 : index
+  %pick54 = scf.if %isq853 -> (buffer) {
+  %w55 = command.parameter %parameters, "blk.{}.attn_v.weight"[%layer] : view<1024x72x34xi8>
+  %wb56 = command.parameter.base %w55 : view<1024x72x34xi8> -> buffer
+    scf.yield %wb56 : buffer
+  } else {
+  %w57 = command.parameter %parameters, "blk.{}.attn_v.weight"[%layer] : view<1024x2304xbf16>
+  %wb58 = command.parameter.base %w57 : view<1024x2304xbf16> -> buffer
+    scf.yield %wb58 : buffer
+  }
+  scf.if %small52 {
+    scf.if %isq853 {
+  kernel.launch @inkling_gemv_q8_0[%i1024, %i2304, %per_unit](%metadata, %o0, %i2304, %i1024, %o0, %col2, %i2304, %o0, %i1024, %i0, %c30, %pick54, %xn, %v) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemv_bf16[%i1024, %i2304, %per_unit](%metadata, %o0, %i2304, %i1024, %o0, %col2, %i2304, %o0, %i1024, %i0, %c30, %pick54, %xn, %v) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  } else {
+    scf.if %isq853 {
+  kernel.launch @inkling_gemm_q8_0[%i1024, %cap](%metadata, %o0, %i2304, %i1024, %o0, %col2, %i2304, %o0, %i1024, %i0, %c30, %pick54, %xn, %v) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemm_wmma_bf16[%i1024, %cap](%metadata, %o0, %i2304, %i1024, %o0, %col2, %i2304, %o0, %i1024, %i0, %c30, %pick54, %xn, %v) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  }
+  } else {
+  %small59 = index.cmp ule, %cap, %i8 : index
+  %isq860 = index.cmp eq, %dense, %i0 : index
+  %pick61 = scf.if %isq860 -> (buffer) {
+  %w62 = command.parameter %parameters, "blk.{}.attn_k.weight"[%layer] : view<1024x72x34xi8>
+  %wb63 = command.parameter.base %w62 : view<1024x72x34xi8> -> buffer
+    scf.yield %wb63 : buffer
+  } else {
+  %w64 = command.parameter %parameters, "blk.{}.attn_k.weight"[%layer] : view<1024x2304xbf16>
+  %wb65 = command.parameter.base %w64 : view<1024x2304xbf16> -> buffer
+    scf.yield %wb65 : buffer
+  }
+  scf.if %small59 {
+    scf.if %isq860 {
+  kernel.launch @inkling_gemv_q8_0[%i1024, %i2304, %per_unit](%metadata, %o0, %i2304, %i1024, %o0, %o0, %i2304, %o0, %i1024, %i0, %c30, %pick61, %xn, %k) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemv_bf16[%i1024, %i2304, %per_unit](%metadata, %o0, %i2304, %i1024, %o0, %o0, %i2304, %o0, %i1024, %i0, %c30, %pick61, %xn, %k) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  } else {
+    scf.if %isq860 {
+  kernel.launch @inkling_gemm_q8_0[%i1024, %cap](%metadata, %o0, %i2304, %i1024, %o0, %o0, %i2304, %o0, %i1024, %i0, %c30, %pick61, %xn, %k) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemm_wmma_bf16[%i1024, %cap](%metadata, %o0, %i2304, %i1024, %o0, %o0, %i2304, %o0, %i1024, %i0, %c30, %pick61, %xn, %k) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  }
+  %small66 = index.cmp ule, %cap, %i8 : index
+  %isq867 = index.cmp eq, %dense, %i0 : index
+  %pick68 = scf.if %isq867 -> (buffer) {
+  %w69 = command.parameter %parameters, "blk.{}.attn_v.weight"[%layer] : view<1024x72x34xi8>
+  %wb70 = command.parameter.base %w69 : view<1024x72x34xi8> -> buffer
+    scf.yield %wb70 : buffer
+  } else {
+  %w71 = command.parameter %parameters, "blk.{}.attn_v.weight"[%layer] : view<1024x2304xbf16>
+  %wb72 = command.parameter.base %w71 : view<1024x2304xbf16> -> buffer
+    scf.yield %wb72 : buffer
+  }
+  scf.if %small66 {
+    scf.if %isq867 {
+  kernel.launch @inkling_gemv_q8_0[%i1024, %i2304, %per_unit](%metadata, %o0, %i2304, %i1024, %o0, %o0, %i2304, %o0, %i1024, %i0, %c30, %pick68, %xn, %v) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemv_bf16[%i1024, %i2304, %per_unit](%metadata, %o0, %i2304, %i1024, %o0, %o0, %i2304, %o0, %i1024, %i0, %c30, %pick68, %xn, %v) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  } else {
+    scf.if %isq867 {
+  kernel.launch @inkling_gemm_q8_0[%i1024, %cap](%metadata, %o0, %i2304, %i1024, %o0, %o0, %i2304, %o0, %i1024, %i0, %c30, %pick68, %xn, %v) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemm_wmma_bf16[%i1024, %cap](%metadata, %o0, %i2304, %i1024, %o0, %o0, %i2304, %o0, %i1024, %i0, %c30, %pick68, %xn, %v) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  }
+  }
+  }
+  command.return
+}
+
+command.def public target(@inkling_execution) @inkling_hook_oproj(%layer: index, %visit: index, %pass: index) launch(%parameters: buffer, %span_table: buffer, %token_map: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %cur: buffer, %blocks: buffer, %bank: buffer, %x: buffer, %xn: buffer, %small: buffer, %q: buffer, %k: buffer, %v: buffer, %r: buffer, %gate: buffer, %ab: buffer, %ob: buffer, %y: buffer) {
+  %o0 = index.constant 0 : offset
+  %cap = config.get @inkling.tokens : index
+  %i8 = index.constant 8 : index
+  %i2304 = index.constant 2304 : index
+  %i3072 = index.constant 3072 : index
+  %per_unit = template.apply<@inkling.dense.gemv.xs_wg_per_unit>() : () -> (index)
+  %dense = config.get @inkling.dense_type : index
+  %i0 = index.constant 0 : index
+  %c30 = scalar.constant 30.0 : f32
+  %small1 = index.cmp ule, %cap, %i8 : index
+  %isq82 = index.cmp eq, %dense, %i0 : index
+  %pick3 = scf.if %isq82 -> (buffer) {
+  %w4 = command.parameter %parameters, "blk.{}.attn_output.weight"[%layer] : view<2304x96x34xi8>
+  %wb5 = command.parameter.base %w4 : view<2304x96x34xi8> -> buffer
+    scf.yield %wb5 : buffer
+  } else {
+  %w6 = command.parameter %parameters, "blk.{}.attn_output.weight"[%layer] : view<2304x3072xbf16>
+  %wb7 = command.parameter.base %w6 : view<2304x3072xbf16> -> buffer
+    scf.yield %wb7 : buffer
+  }
+  scf.if %small1 {
+    scf.if %isq82 {
+  kernel.launch @inkling_gemv_q8_0[%i2304, %i3072, %per_unit](%metadata, %o0, %i3072, %i2304, %o0, %o0, %i3072, %o0, %i2304, %i0, %c30, %pick3, %ab, %ob) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemv_bf16[%i2304, %i3072, %per_unit](%metadata, %o0, %i3072, %i2304, %o0, %o0, %i3072, %o0, %i2304, %i0, %c30, %pick3, %ab, %ob) : [index, index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  } else {
+    scf.if %isq82 {
+  kernel.launch @inkling_gemm_q8_0[%i2304, %cap](%metadata, %o0, %i3072, %i2304, %o0, %o0, %i3072, %o0, %i2304, %i0, %c30, %pick3, %ab, %ob) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    } else {
+  kernel.launch @inkling_gemm_wmma_bf16[%i2304, %cap](%metadata, %o0, %i3072, %i2304, %o0, %o0, %i3072, %o0, %i2304, %i0, %c30, %pick3, %ab, %ob) : [index, index](buffer, offset, index, index, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer)
+    }
+  }
+  command.return
+}
+
+command.def public target(@inkling_execution) @inkling_hook_norm_ffn(%layer: index, %visit: index, %pass: index) launch(%parameters: buffer, %span_table: buffer, %token_map: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %cur: buffer, %blocks: buffer, %bank: buffer, %x: buffer, %xn: buffer, %small: buffer, %q: buffer, %k: buffer, %v: buffer, %r: buffer, %gate: buffer, %ab: buffer, %ob: buffer, %y: buffer) {
+  %in_loop = func.call pure @inkling_layer_in_loop(%layer) : (index) -> (i1)
+  %i0 = index.constant 0 : index
+  %later = index.cmp ugt, %pass, %i0 : index
+  %controlled = scalar.andi %in_loop, %later : i1
+  %o0 = index.constant 0 : offset
+  %cap = config.get @inkling.tokens : index
+  %i2304 = index.constant 2304 : index
+  %eps = scalar.constant 9.9999999999999995e-07 : f32
+  scf.if %controlled {
+  %w1 = command.parameter %parameters, "blk.{}.ffn_norm.weight"[%layer] : view<2304xf32>
+  %wb2 = command.parameter.base %w1 : view<2304xf32> -> buffer
+  kernel.launch @inkling_rms_norm[%cap](%metadata, %o0, %i2304, %o0, %i2304, %o0, %i2304, %eps, %x, %wb2, %xn) : [index](buffer, offset, index, offset, index, offset, index, f32, buffer, buffer, buffer)
+  }
+  command.return
+}
+

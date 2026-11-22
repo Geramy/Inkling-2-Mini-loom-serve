@@ -1,0 +1,145 @@
+slot 0: sink check max abs 2.86e-06
+slot 5: sink check max abs 1.91e-06
+test                                         dev            NMSE      tol result
+A slot 0 1chunk q                            gfx1151   0.000e+00    1e-06 PASS
+A slot 0 1chunk r                            gfx1151   3.723e-15    1e-06 PASS
+A slot 0 1chunk k_act                        gfx1151   4.517e-08    2e-07 PASS
+A slot 0 1chunk v_act                        gfx1151   4.479e-08    2e-07 PASS
+A slot 0 1chunk out                          gfx1151   2.608e-08    1e-06 PASS
+A slot 0 2chunks q                           gfx1151   0.000e+00    1e-06 PASS
+A slot 0 2chunks r                           gfx1151   3.723e-15    1e-06 PASS
+A slot 0 2chunks k_act                       gfx1151   4.517e-08    2e-07 PASS
+A slot 0 2chunks v_act                       gfx1151   4.479e-08    2e-07 PASS
+A slot 0 2chunks out                         gfx1151   2.608e-08    1e-06 PASS
+A slot 0 decode q                            gfx1151   0.000e+00    1e-06 PASS
+A slot 0 decode r                            gfx1151   3.723e-15    1e-06 PASS
+A slot 0 decode k_act                        gfx1151   4.517e-08    2e-07 PASS
+A slot 0 decode v_act                        gfx1151   4.479e-08    2e-07 PASS
+A slot 0 decode out                          gfx1151   2.456e-08    1e-06 PASS
+A slot 5 1chunk q                            gfx1151   1.342e-15    1e-06 PASS
+A slot 5 1chunk r                            gfx1151   3.241e-15    1e-06 PASS
+A slot 5 1chunk k_act                        gfx1151   4.272e-08    2e-07 PASS
+A slot 5 1chunk v_act                        gfx1151   4.116e-08    2e-07 PASS
+A slot 5 1chunk out                          gfx1151   3.148e-08    1e-06 PASS
+A slot 5 2chunks q                           gfx1151   1.342e-15    1e-06 PASS
+A slot 5 2chunks r                           gfx1151   3.241e-15    1e-06 PASS
+A slot 5 2chunks k_act                       gfx1151   4.272e-08    2e-07 PASS
+A slot 5 2chunks v_act                       gfx1151   4.116e-08    2e-07 PASS
+A slot 5 2chunks out                         gfx1151   3.148e-08    1e-06 PASS
+A slot 5 decode q                            gfx1151   1.342e-15    1e-06 PASS
+A slot 5 decode r                            gfx1151   3.241e-15    1e-06 PASS
+A slot 5 decode k_act                        gfx1151   4.272e-08    2e-07 PASS
+A slot 5 decode v_act                        gfx1151   4.116e-08    2e-07 PASS
+A slot 5 decode out                          gfx1151   3.139e-08    1e-06 PASS
+L slot 0 1chunk q                            gfx1151   0.000e+00    1e-06 PASS
+L slot 0 1chunk r                            gfx1151   3.672e-15    1e-06 PASS
+L slot 0 1chunk k_act                        gfx1151   4.331e-08    2e-07 PASS
+L slot 0 1chunk v_act                        gfx1151   4.704e-08    2e-07 PASS
+L slot 0 1chunk out                          gfx1151   1.304e-08    1e-06 PASS
+L slot 0 3chunks q                           gfx1151   0.000e+00    1e-06 PASS
+L slot 0 3chunks r                           gfx1151   3.672e-15    1e-06 PASS
+L slot 0 3chunks k_act                       gfx1151   4.331e-08    2e-07 PASS
+L slot 0 3chunks v_act                       gfx1151   4.704e-08    2e-07 PASS
+L slot 0 3chunks out                         gfx1151   1.304e-08    1e-06 PASS
+L slot 0 512+rest q                          gfx1151   0.000e+00    1e-06 PASS
+L slot 0 512+rest r                          gfx1151   3.672e-15    1e-06 PASS
+L slot 0 512+rest k_act                      gfx1151   4.331e-08    2e-07 PASS
+L slot 0 512+rest v_act                      gfx1151   4.704e-08    2e-07 PASS
+L slot 0 512+rest out                        gfx1151   1.304e-08    1e-06 PASS
+L slot 0 decode q                            gfx1151   0.000e+00    1e-06 PASS
+L slot 0 decode r                            gfx1151   3.672e-15    1e-06 PASS
+L slot 0 decode k_act                        gfx1151   4.331e-08    2e-07 PASS
+L slot 0 decode v_act                        gfx1151   4.704e-08    2e-07 PASS
+L slot 0 decode out                          gfx1151   1.302e-08    1e-06 PASS
+L slot 0 mixed q                             gfx1151   0.000e+00    1e-06 PASS
+L slot 0 mixed r                             gfx1151   3.682e-15    1e-06 PASS
+L slot 0 mixed k_act                         gfx1151   4.337e-08    2e-07 PASS
+L slot 0 mixed v_act                         gfx1151   4.713e-08    2e-07 PASS
+L slot 0 mixed out                           gfx1151   1.493e-08    1e-06 PASS
+L slot 5 1chunk q                            gfx1151   1.593e-15    1e-06 PASS
+L slot 5 1chunk r                            gfx1151   3.208e-15    1e-06 PASS
+L slot 5 1chunk k_act                        gfx1151   4.317e-08    2e-07 PASS
+L slot 5 1chunk v_act                        gfx1151   4.298e-08    2e-07 PASS
+L slot 5 1chunk out                          gfx1151   1.689e-08    1e-06 PASS
+L slot 5 3chunks q                           gfx1151   1.593e-15    1e-06 PASS
+L slot 5 3chunks r                           gfx1151   3.208e-15    1e-06 PASS
+L slot 5 3chunks k_act                       gfx1151   4.317e-08    2e-07 PASS
+L slot 5 3chunks v_act                       gfx1151   4.298e-08    2e-07 PASS
+L slot 5 3chunks out                         gfx1151   1.689e-08    1e-06 PASS
+L slot 5 512+rest q                          gfx1151   1.593e-15    1e-06 PASS
+L slot 5 512+rest r                          gfx1151   3.208e-15    1e-06 PASS
+L slot 5 512+rest k_act                      gfx1151   4.317e-08    2e-07 PASS
+L slot 5 512+rest v_act                      gfx1151   4.298e-08    2e-07 PASS
+L slot 5 512+rest out                        gfx1151   1.689e-08    1e-06 PASS
+L slot 5 decode q                            gfx1151   1.593e-15    1e-06 PASS
+L slot 5 decode r                            gfx1151   3.208e-15    1e-06 PASS
+L slot 5 decode k_act                        gfx1151   4.317e-08    2e-07 PASS
+L slot 5 decode v_act                        gfx1151   4.298e-08    2e-07 PASS
+L slot 5 decode out                          gfx1151   1.685e-08    1e-06 PASS
+L slot 5 mixed q                             gfx1151   1.664e-15    1e-06 PASS
+L slot 5 mixed r                             gfx1151   3.209e-15    1e-06 PASS
+L slot 5 mixed k_act                         gfx1151   4.327e-08    2e-07 PASS
+L slot 5 mixed v_act                         gfx1151   4.287e-08    2e-07 PASS
+L slot 5 mixed out                           gfx1151   2.031e-08    1e-06 PASS
+L slot 6 1chunk q                            gfx1151   0.000e+00    1e-06 PASS
+L slot 6 1chunk r                            gfx1151   3.281e-15    1e-06 PASS
+L slot 6 1chunk k_act                        gfx1151   4.308e-08    2e-07 PASS
+L slot 6 1chunk v_act                        gfx1151   4.970e-08    2e-07 PASS
+L slot 6 1chunk out                          gfx1151   1.076e-08    1e-06 PASS
+L slot 6 3chunks q                           gfx1151   0.000e+00    1e-06 PASS
+L slot 6 3chunks r                           gfx1151   3.281e-15    1e-06 PASS
+L slot 6 3chunks k_act                       gfx1151   4.308e-08    2e-07 PASS
+L slot 6 3chunks v_act                       gfx1151   4.970e-08    2e-07 PASS
+L slot 6 3chunks out                         gfx1151   1.076e-08    1e-06 PASS
+L slot 6 512+rest q                          gfx1151   0.000e+00    1e-06 PASS
+L slot 6 512+rest r                          gfx1151   3.281e-15    1e-06 PASS
+L slot 6 512+rest k_act                      gfx1151   4.308e-08    2e-07 PASS
+L slot 6 512+rest v_act                      gfx1151   4.970e-08    2e-07 PASS
+L slot 6 512+rest out                        gfx1151   1.076e-08    1e-06 PASS
+L slot 6 decode q                            gfx1151   0.000e+00    1e-06 PASS
+L slot 6 decode r                            gfx1151   3.281e-15    1e-06 PASS
+L slot 6 decode k_act                        gfx1151   4.308e-08    2e-07 PASS
+L slot 6 decode v_act                        gfx1151   4.970e-08    2e-07 PASS
+L slot 6 decode out                          gfx1151   1.073e-08    1e-06 PASS
+L slot 6 mixed q                             gfx1151   0.000e+00    1e-06 PASS
+L slot 6 mixed r                             gfx1151   3.366e-15    1e-06 PASS
+L slot 6 mixed k_act                         gfx1151   4.309e-08    2e-07 PASS
+L slot 6 mixed v_act                         gfx1151   4.974e-08    2e-07 PASS
+L slot 6 mixed out                           gfx1151   1.241e-08    1e-06 PASS
+L slot 11 1chunk q                           gfx1151   1.738e-15    1e-06 PASS
+L slot 11 1chunk r                           gfx1151   3.417e-15    1e-06 PASS
+L slot 11 1chunk k_act                       gfx1151   4.319e-08    2e-07 PASS
+L slot 11 1chunk v_act                       gfx1151   4.251e-08    2e-07 PASS
+L slot 11 1chunk out                         gfx1151   1.679e-07    1e-06 PASS
+L slot 11 3chunks q                          gfx1151   1.738e-15    1e-06 PASS
+L slot 11 3chunks r                          gfx1151   3.417e-15    1e-06 PASS
+L slot 11 3chunks k_act                      gfx1151   4.319e-08    2e-07 PASS
+L slot 11 3chunks v_act                      gfx1151   4.251e-08    2e-07 PASS
+L slot 11 3chunks out                        gfx1151   1.679e-07    1e-06 PASS
+L slot 11 512+rest q                         gfx1151   1.738e-15    1e-06 PASS
+L slot 11 512+rest r                         gfx1151   3.417e-15    1e-06 PASS
+L slot 11 512+rest k_act                     gfx1151   4.319e-08    2e-07 PASS
+L slot 11 512+rest v_act                     gfx1151   4.251e-08    2e-07 PASS
+L slot 11 512+rest out                       gfx1151   1.679e-07    1e-06 PASS
+L slot 11 decode q                           gfx1151   1.738e-15    1e-06 PASS
+L slot 11 decode r                           gfx1151   3.417e-15    1e-06 PASS
+L slot 11 decode k_act                       gfx1151   4.319e-08    2e-07 PASS
+L slot 11 decode v_act                       gfx1151   4.251e-08    2e-07 PASS
+L slot 11 decode out                         gfx1151   1.679e-07    1e-06 PASS
+L slot 11 mixed q                            gfx1151   1.781e-15    1e-06 PASS
+L slot 11 mixed r                            gfx1151   3.723e-15    1e-06 PASS
+L slot 11 mixed k_act                        gfx1151   4.323e-08    2e-07 PASS
+L slot 11 mixed v_act                        gfx1151   4.270e-08    2e-07 PASS
+L slot 11 mixed out                          gfx1151   2.272e-07    1e-06 PASS
+chunk invariance L slot 0 3chunks vs 1chunk         max abs diff 1.118e-08 bitwise False
+chunk invariance L slot 0 512+rest vs 1chunk        max abs diff 0.000e+00 bitwise True
+chunk invariance L slot 0 decode vs 1chunk          max abs diff 8.836e-04 bitwise False
+chunk invariance L slot 5 3chunks vs 1chunk         max abs diff 0.000e+00 bitwise True
+chunk invariance L slot 5 512+rest vs 1chunk        max abs diff 0.000e+00 bitwise True
+chunk invariance L slot 5 decode vs 1chunk          max abs diff 4.959e-04 bitwise False
+chunk invariance L slot 6 3chunks vs 1chunk         max abs diff 5.960e-08 bitwise False
+chunk invariance L slot 6 512+rest vs 1chunk        max abs diff 0.000e+00 bitwise True
+chunk invariance L slot 6 decode vs 1chunk          max abs diff 1.340e-03 bitwise False
+chunk invariance L slot 11 3chunks vs 1chunk        max abs diff 0.000e+00 bitwise True
+chunk invariance L slot 11 512+rest vs 1chunk       max abs diff 0.000e+00 bitwise True
+chunk invariance L slot 11 decode vs 1chunk         max abs diff 6.285e-04 bitwise False

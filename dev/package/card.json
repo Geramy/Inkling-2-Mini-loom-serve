@@ -1,0 +1,311 @@
+{
+  "schema_version": 1,
+  "model": {
+    "id": "thinking-machines/inkling-2-mini",
+    "name": "Inkling 2 Mini",
+    "description": "Looped mixture-of-experts text model (24 layers, 48 visits, 128 NVFP4 experts) served from an Unsloth GGUF."
+  },
+  "programs": {
+    "source": {
+      "inputs": [
+        "prepare.loom",
+        "control/chat.loom"
+      ],
+      "libraries": [
+        "control/chat_json.loom",
+        "control/chat_sampler.loom",
+        "config.loom",
+        "card_defaults.loom",
+        "storage.loom",
+        "lib/vendor/epoch.loom",
+        "lib/vendor/storage.loom",
+        "lib/vendor/packet.loom",
+        "lib/vendor/feedback.loom",
+        "lib/vendor/span.loom",
+        "lib/vendor/q8_0.loom",
+        "lib/media_stub.loom",
+        "dispatch/targets.loom",
+        "dispatch/spans.loom",
+        "dispatch/capture.loom",
+        "dispatch/visit.loom",
+        "dispatch/layer.loom",
+        "dispatch/model.loom",
+        "lib/inkling/dense_common.loom",
+        "lib/inkling/dense_float.loom",
+        "lib/inkling/dense_q8_0.loom",
+        "lib/inkling/dense_abi.loom",
+        "lib/inkling/dense_vec.loom",
+        "lib/inkling/dense_mm_wmma.loom",
+        "lib/inkling/dense_wmma.loom",
+        "lib/inkling/dense_targets.loom",
+        "lib/inkling/attn_common.loom",
+        "lib/inkling/attn_matrix.loom",
+        "lib/inkling/attn_targets.loom",
+        "lib/inkling/experts_common.loom",
+        "lib/inkling/experts_stage.loom",
+        "lib/inkling/experts_wmma.loom",
+        "lib/inkling/nvfp4.loom",
+        "kernel/dense/norm.loom",
+        "kernel/dense/embed.loom",
+        "kernel/dense/gemv.loom",
+        "kernel/dense/gemv_split.loom",
+        "kernel/dense/gemm_q8_0.loom",
+        "kernel/dense/gemm_f32.loom",
+        "kernel/dense/gemm_bf16_wmma.loom",
+        "kernel/dense/head.loom",
+        "kernel/attn/attn_prep.loom",
+        "kernel/attn/attn_tile.loom",
+        "kernel/attn/attn_merge.loom",
+        "kernel/attn/attn_conv_commit.loom",
+        "kernel/attn/attn_kv_append.loom",
+        "kernel/experts/router.loom",
+        "kernel/experts/routes.loom",
+        "kernel/experts/gate_up.loom",
+        "kernel/experts/down.loom",
+        "kernel/experts/combine.loom",
+        "kernel/experts/gate_up_wmma.loom",
+        "kernel/experts/down_wmma.loom",
+        "kernel/mix/mix_states.loom",
+        "kernel/mix/ctrl.loom",
+        "kernel/mix/conv_res.loom",
+        "dispatch/hooks_dense.loom",
+        "dispatch/hooks_attn.loom",
+        "dispatch/hooks_mix.loom",
+        "dispatch/hooks_experts.loom",
+        "dispatch/stub_debug.loom",
+        "lib/vendor/sampling.loom",
+        "lib/vendor/random.loom",
+        "control/identity.loom"
+      ]
+    },
+    "capture": {
+      "inputs": [
+        "prepare.loom",
+        "dispatch/sequence.loom"
+      ],
+      "libraries": [
+        "dispatch/sequence_v1.loom",
+        "config.loom",
+        "card_defaults.loom",
+        "storage.loom",
+        "lib/vendor/epoch.loom",
+        "lib/vendor/storage.loom",
+        "lib/vendor/packet.loom",
+        "lib/vendor/feedback.loom",
+        "lib/vendor/span.loom",
+        "lib/vendor/q8_0.loom",
+        "lib/media_stub.loom",
+        "dispatch/targets.loom",
+        "dispatch/spans.loom",
+        "dispatch/capture.loom",
+        "dispatch/visit.loom",
+        "dispatch/layer.loom",
+        "dispatch/model.loom",
+        "lib/inkling/dense_common.loom",
+        "lib/inkling/dense_float.loom",
+        "lib/inkling/dense_q8_0.loom",
+        "lib/inkling/dense_abi.loom",
+        "lib/inkling/dense_vec.loom",
+        "lib/inkling/dense_mm_wmma.loom",
+        "lib/inkling/dense_wmma.loom",
+        "lib/inkling/dense_targets.loom",
+        "lib/inkling/attn_common.loom",
+        "lib/inkling/attn_matrix.loom",
+        "lib/inkling/attn_targets.loom",
+        "lib/inkling/experts_common.loom",
+        "lib/inkling/experts_stage.loom",
+        "lib/inkling/experts_wmma.loom",
+        "lib/inkling/nvfp4.loom",
+        "kernel/dense/norm.loom",
+        "kernel/dense/embed.loom",
+        "kernel/dense/gemv.loom",
+        "kernel/dense/gemv_split.loom",
+        "kernel/dense/gemm_q8_0.loom",
+        "kernel/dense/gemm_f32.loom",
+        "kernel/dense/gemm_bf16_wmma.loom",
+        "kernel/dense/head.loom",
+        "kernel/attn/attn_prep.loom",
+        "kernel/attn/attn_tile.loom",
+        "kernel/attn/attn_merge.loom",
+        "kernel/attn/attn_conv_commit.loom",
+        "kernel/attn/attn_kv_append.loom",
+        "kernel/experts/router.loom",
+        "kernel/experts/routes.loom",
+        "kernel/experts/gate_up.loom",
+        "kernel/experts/down.loom",
+        "kernel/experts/combine.loom",
+        "kernel/experts/gate_up_wmma.loom",
+        "kernel/experts/down_wmma.loom",
+        "kernel/mix/mix_states.loom",
+        "kernel/mix/ctrl.loom",
+        "kernel/mix/conv_res.loom",
+        "dispatch/hooks_dense.loom",
+        "dispatch/hooks_attn.loom",
+        "dispatch/hooks_mix.loom",
+        "dispatch/hooks_experts.loom",
+        "dispatch/stub_debug.loom",
+        "lib/vendor/sampling.loom",
+        "lib/vendor/random.loom",
+        "control/chat_sampler.loom"
+      ],
+      "config": {
+        "inkling.capture_id": 2,
+        "inkling.capture_width": 2304
+      }
+    }
+  },
+  "services": {
+    "chat": {
+      "kind": "text",
+      "version": 1
+    },
+    "capture": {
+      "kind": "sequence",
+      "version": 1
+    }
+  },
+  "variants": {
+    "ud-q4-k-xl": {
+      "services": {
+        "chat": {
+          "programs": [
+            "source"
+          ],
+          "config": {
+            "inkling.dense_type": 0
+          },
+          "parameters": {
+            "model": {
+              "files": [
+                {
+                  "path": "Inkling-2-Mini-UD-Q4_K_XL.gguf",
+                  "format": "gguf"
+                }
+              ]
+            }
+          },
+          "tokenizers": {
+            "text": {
+              "path": "tokenizer.json",
+              "format": "huggingface-json"
+            }
+          }
+        },
+        "capture": {
+          "programs": [
+            "capture"
+          ],
+          "config": {
+            "inkling.dense_type": 0
+          },
+          "parameters": {
+            "model": {
+              "files": [
+                {
+                  "path": "Inkling-2-Mini-UD-Q4_K_XL.gguf",
+                  "format": "gguf"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "ud-q8-k-xl": {
+      "services": {
+        "chat": {
+          "programs": [
+            "source"
+          ],
+          "config": {
+            "inkling.dense_type": 1
+          },
+          "parameters": {
+            "model": {
+              "files": [
+                {
+                  "path": "Inkling-2-Mini-UD-Q8_K_XL.gguf",
+                  "format": "gguf"
+                }
+              ]
+            }
+          },
+          "tokenizers": {
+            "text": {
+              "path": "tokenizer.json",
+              "format": "huggingface-json"
+            }
+          }
+        },
+        "capture": {
+          "programs": [
+            "capture"
+          ],
+          "config": {
+            "inkling.dense_type": 1
+          },
+          "parameters": {
+            "model": {
+              "files": [
+                {
+                  "path": "Inkling-2-Mini-UD-Q8_K_XL.gguf",
+                  "format": "gguf"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "presets": {
+    "interactive-q4": {
+      "service": "chat",
+      "variant": "ud-q4-k-xl",
+      "programs": "source",
+      "execution": {
+        "rows": 4,
+        "context_capacity": 32768,
+        "prefill_capacity": 512,
+        "checkpoint_capacity": 4,
+        "max_tokens": 4096,
+        "session_cache_capacity": 0,
+        "prefix_cache_capacity": 0
+      },
+      "memory": {
+        "weights_bytes": 17617780736,
+        "transient_bytes": 6700000000,
+        "workload": "4 rows, 32768 context, 4 checkpoints; slots 12 x 171.6 MB, KV pool 131072 tokens x 32 KiB, workspace at 512 tokens"
+      }
+    },
+    "interactive-q8": {
+      "service": "chat",
+      "variant": "ud-q8-k-xl",
+      "programs": "source",
+      "execution": {
+        "rows": 4,
+        "context_capacity": 32768,
+        "prefill_capacity": 512,
+        "checkpoint_capacity": 4,
+        "max_tokens": 4096,
+        "session_cache_capacity": 0,
+        "prefix_cache_capacity": 0
+      },
+      "memory": {
+        "weights_bytes": 22855473152,
+        "transient_bytes": 6700000000,
+        "workload": "4 rows, 32768 context, 4 checkpoints; slots 12 x 171.6 MB, KV pool 131072 tokens x 32 KiB, workspace at 512 tokens"
+      }
+    },
+    "capture-q8": {
+      "service": "capture",
+      "variant": "ud-q8-k-xl",
+      "programs": "capture",
+      "execution": {
+        "rows": 2,
+        "context_capacity": 4096,
+        "prefill_capacity": 512
+      }
+    }
+  }
+}

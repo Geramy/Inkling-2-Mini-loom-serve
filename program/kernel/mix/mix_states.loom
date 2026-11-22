@@ -1,5 +1,7 @@
 // Attention-residual mix: states are blocks[0..nb) and cur. One workgroup per token.
 
+func.decl @inkling_conv_commit_item(%spans: buffer, %state: buffer, %a: buffer, %site: index, %visit: index, %span: index, %c: index)
+
 func.def public inline @inkling_mix_load(%blocks: buffer, %cur: buffer, %s: index, %nb: index, %token: index, %block_stride: index, %blocks_off: index, %cur_off: index, %e: index) -> (vector<4xf32>) {
   %four = index.constant 4 : offset
   %embd = index.constant 2304 : index
@@ -77,13 +79,15 @@ func.def public inline @inkling_mix_axpy(%acc: vector<4xf32>, %c: f32, %x: vecto
   func.return %r : vector<4xf32>
 }
 
-kernel.def export("inkling_mix_states") @inkling_mix_states(%cap: index) {
+kernel.def export("inkling_mix_states") @inkling_mix_states(%cap: index, %ncommit: index, %nq: index) {
   %one = index.constant 1 : index
   %threads = index.constant 288 : index
-  kernel.launch.config workgroups(%cap, %one, %one) workgroup_size(%threads, %one, %one) : index
-} launch(%cap_in: index, %nb_in: index, %nq_in: index, %block_stride_in: index, %col_stride_in: index, %mode_in: index, %w_stride_in: index, %sel_on_in: index, %blocks_off: index, %cur_off: index, %out_off: index, %spans: buffer, %sel: buffer, %blocks: buffer, %cur: buffer, %query: buffer, %norm_w: buffer, %out: buffer, %rinv_out: buffer) {
+  %nine = index.constant 9 : index
+  %grid = index.madd %ncommit, %nine, %cap : index
+  kernel.launch.config workgroups(%grid, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%cap_in: index, %ncommit_in: index, %nq: index, %nb_in: index, %block_stride_in: index, %col_stride_in: index, %mode_in: index, %w_stride_in: index, %sel_on_in: index, %blocks_off: index, %cur_off: index, %out_off: index, %commit_site_in: index, %commit_visit_in: index, %spans: buffer, %sel: buffer, %blocks: buffer, %cur: buffer, %query: buffer, %norm_w: buffer, %out: buffer, %rinv_out: buffer, %commit_state: buffer, %commit_a: buffer) {
+  %nq_r = index.assume %nq [range(%nq, 1, 4)] : index
   %nb = index.assume %nb_in [range(%nb_in, 0, 8)] : index
-  %nq = index.assume %nq_in [range(%nq_in, 1, 4)] : index
   %block_stride = index.assume %block_stride_in [range(%block_stride_in, 0, 2147483647)] : index
   %col_stride = index.assume %col_stride_in [range(%col_stride_in, 0, 2147483647)] : index
   %w_stride = index.assume %w_stride_in [range(%w_stride_in, 0, 2304)] : index
@@ -120,7 +124,9 @@ kernel.def export("inkling_mix_states") @inkling_mix_states(%cap: index) {
   %sel_word = view.load %sel_view[0] : view<4194304xi32> -> i32
   %sel_count = index.cast %sel_word : i32 to index
   %live_final = scf.select %sel_on, %sel_count, %live : index
-  %active = index.cmp ult, %token, %live_final : index
+  %in_cap = index.cmp ult, %token, %cap_in : index
+  %in_live = index.cmp ult, %token, %live_final : index
+  %active = scalar.andi %in_cap, %in_live : i1
   scf.if %active {
     %slot_raw = index.add %token, %c1 : index
     %slot_ix = index.assume %slot_raw [range(%slot_raw, 1, 4194303)] : index
@@ -134,7 +140,7 @@ kernel.def export("inkling_mix_states") @inkling_mix_states(%cap: index) {
     %lds_bytes = index.constant 512 : offset
     %lds = buffer.alloca<workgroup> align(16) %lds_bytes : buffer
     %lds_view = buffer.view %lds[%origin] : buffer -> view<96xf32>
-    %nq_last = index.sub %nq, %c1 : index
+    %nq_last = index.sub %nq_r, %c1 : index
     %r1 = index.min %c1, %nq_last : index
     %r2 = index.min %c2, %nq_last : index
     %r3 = index.min %c3, %nq_last : index
@@ -175,9 +181,9 @@ kernel.def export("inkling_mix_states") @inkling_mix_states(%cap: index) {
     %dot2_lane = vector.reduce<addf> %d2, %f0 : vector<4xf32>, f32
     %dot3_lane = vector.reduce<addf> %d3, %f0 : vector<4xf32>, f32
     %dot0 = kernel.subgroup.reduce<addf> %dot0_lane {cluster_size = 32} : f32
-    %has1 = index.cmp ugt, %nq, %c1 : index
-    %has2 = index.cmp ugt, %nq, %c2 : index
-    %has3 = index.cmp ugt, %nq, %c3 : index
+    %has1 = index.cmp ugt, %nq_r, %c1 : index
+    %has2 = index.cmp ugt, %nq_r, %c2 : index
+    %has3 = index.cmp ugt, %nq_r, %c3 : index
     %dot1 = scf.if %has1 -> (f32) {
       %r = kernel.subgroup.reduce<addf> %dot1_lane {cluster_size = 32} : f32
       scf.yield %r : f32
@@ -295,7 +301,7 @@ kernel.def export("inkling_mix_states") @inkling_mix_states(%cap: index) {
     %cap_q = index.mul %cap_in, %c4 : index
     %rv = buffer.view %rinv_out[%origin] : buffer -> view<[%cap_q]xf32>
     %token_off = index.mul %token, %embd : index
-    scf.for %q = [%c0 to %nq step %c1] {
+    scf.for %q = [%c0 to %nq_r step %c1] {
       %is0 = index.cmp eq, %q, %c0 : index
       %is1 = index.cmp eq, %q, %c1 : index
       %is2 = index.cmp eq, %q, %c2 : index
@@ -347,6 +353,19 @@ kernel.def export("inkling_mix_states") @inkling_mix_states(%cap: index) {
         %ri = index.assume %ri_raw [range(%ri_raw, 0, 2147483640), lt(%ri_raw, %cap_q)] : index
         view.store %inv_out, %rv[%ri] : f32, view<[%cap_q]xf32>
       }
+    }
+  }
+  %is_commit = index.cmp uge, %token, %cap_in : index
+  scf.if %is_commit {
+    %commit_site = index.assume %commit_site_in [range(%commit_site_in, 0, 6656)] : index
+    %commit_visit = index.assume %commit_visit_in [range(%commit_visit_in, 0, 2147483647)] : index
+    %item = index.sub %token, %cap_in : index
+    %commit_span = index.div %item, %c9 : index
+    %commit_group = index.rem %item, %c9 : index
+    %commit_c = index.madd %commit_group, %c256, %tid : index
+    %commit_lane = index.cmp ult, %tid, %c256 : index
+    scf.if %commit_lane {
+      func.call @inkling_conv_commit_item(%spans, %commit_state, %commit_a, %commit_site, %commit_visit, %commit_span, %commit_c) : (buffer, buffer, buffer, index, index, index, index)
     }
   }
   kernel.return

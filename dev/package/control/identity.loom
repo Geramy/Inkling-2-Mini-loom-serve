@@ -1,0 +1,6 @@
+global.rodata.def @model_name = bytes("696e6b6c696e672d322d6d696e69")
+
+func.def public @text_model_name_v1() -> (buffer) {
+  %name = global.load @model_name : buffer
+  func.return %name : buffer
+}

@@ -1,0 +1,372 @@
+// Attention-residual mix: states are blocks[0..nb) and cur. One workgroup per token.
+
+func.decl @inkling_conv_commit_item(%spans: buffer, %state: buffer, %a: buffer, %site: index, %visit: index, %span: index, %c: index)
+
+func.def public inline @inkling_mix_load(%blocks: buffer, %cur: buffer, %s: index, %nb: index, %token: index, %block_stride: index, %blocks_off: index, %cur_off: index, %e: index) -> (vector<4xf32>) {
+  %four = index.constant 4 : offset
+  %embd = index.constant 2304 : index
+  %is_cur = index.cmp eq, %s, %nb : index
+  %token_off = index.mul %token, %embd : index
+  %block_off0 = index.madd %s, %block_stride, %token_off : index
+  %block_off = index.add %block_off0, %blocks_off : index
+  %cur_at = index.add %token_off, %cur_off : index
+  %token_bytes = index.scale %cur_at, %four : index, offset -> offset
+  %block_bytes = index.scale %block_off, %four : index, offset -> offset
+  %x = scf.if %is_cur -> (vector<4xf32>) {
+    %view = buffer.view %cur[%token_bytes] : buffer -> view<2304xf32>
+    %v = vector.load %view[%e] : view<2304xf32> -> vector<4xf32>
+    scf.yield %v : vector<4xf32>
+  } else {
+    %view = buffer.view %blocks[%block_bytes] : buffer -> view<2304xf32>
+    %v = vector.load %view[%e] : view<2304xf32> -> vector<4xf32>
+    scf.yield %v : vector<4xf32>
+  }
+  func.return %x : vector<4xf32>
+}
+
+func.def public inline @inkling_mix_lds(%lds: buffer, %slot: index) -> (f32) {
+  %zero = index.constant 0 : offset
+  %view = buffer.view %lds[%zero] : buffer -> view<96xf32>
+  %v = view.load %view[%slot] : view<96xf32> -> f32
+  func.return %v : f32
+}
+
+func.def public inline @inkling_mix_coeff(%lds: buffer, %q: index, %s: index, %max_q: f32, %inv_q: f32, %single: i1) -> (f32) {
+  %c9 = index.constant 9 : index
+  %c36 = index.constant 36 : index
+  %one = scalar.constant 1.0 : f32
+  %row = index.madd %q, %c9, %s : index
+  %score = func.call @inkling_mix_lds(%lds, %row) : (buffer, index) -> (f32)
+  %rslot = index.add %c36, %s : index
+  %rinv = func.call @inkling_mix_lds(%lds, %rslot) : (buffer, index) -> (f32)
+  %shifted = scalar.subf %score, %max_q : f32
+  %e = scalar.expf<afn> %shifted : f32
+  %p = scalar.mulf %e, %inv_q : f32
+  %w = scalar.mulf %p, %rinv : f32
+  %c = scf.select %single, %one, %w : f32
+  func.return %c : f32
+}
+
+func.def public inline @inkling_mix_softmax(%lds: buffer, %q: index, %nb: index) -> (f32, f32) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c9 = index.constant 9 : index
+  %low = scalar.constant -1.0e30 : f32
+  %zero = scalar.constant 0.0 : f32
+  %one = scalar.constant 1.0 : f32
+  %count = index.add %nb, %c1 : index
+  %max_q = scf.for %s = [%c0 to %count step %c1](%m = %low : f32) -> (f32) {
+    %row = index.madd %q, %c9, %s : index
+    %score = func.call @inkling_mix_lds(%lds, %row) : (buffer, index) -> (f32)
+    %next = scalar.maxnumf %m, %score : f32
+    scf.yield %next : f32
+  }
+  %denom = scf.for %s = [%c0 to %count step %c1](%d = %zero : f32) -> (f32) {
+    %row = index.madd %q, %c9, %s : index
+    %score = func.call @inkling_mix_lds(%lds, %row) : (buffer, index) -> (f32)
+    %shifted = scalar.subf %score, %max_q : f32
+    %e = scalar.expf<afn> %shifted : f32
+    %next = scalar.addf %d, %e : f32
+    scf.yield %next : f32
+  }
+  %inv = scalar.divf %one, %denom : f32
+  func.return %max_q, %inv : f32, f32
+}
+
+func.def public inline @inkling_mix_axpy(%acc: vector<4xf32>, %c: f32, %x: vector<4xf32>) -> (vector<4xf32>) {
+  %cv = vector.splat %c : vector<4xf32>
+  %r = vector.fmaf %cv, %x, %acc : vector<4xf32>
+  func.return %r : vector<4xf32>
+}
+
+kernel.def export("inkling_mix_states") @inkling_mix_states(%cap: index, %ncommit: index, %nq: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 288 : index
+  %nine = index.constant 9 : index
+  %grid = index.madd %ncommit, %nine, %cap : index
+  kernel.launch.config workgroups(%grid, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%cap_in: index, %ncommit_in: index, %nq: index, %nb_in: index, %block_stride_in: index, %col_stride_in: index, %mode_in: index, %w_stride_in: index, %sel_on_in: index, %blocks_off: index, %cur_off: index, %out_off: index, %commit_site_in: index, %commit_visit_in: index, %spans: buffer, %sel: buffer, %blocks: buffer, %cur: buffer, %query: buffer, %norm_w: buffer, %out: buffer, %rinv_out: buffer, %commit_state: buffer, %commit_a: buffer) {
+  %nq_r = index.assume %nq [range(%nq, 1, 4)] : index
+  %nb = index.assume %nb_in [range(%nb_in, 0, 8)] : index
+  %block_stride = index.assume %block_stride_in [range(%block_stride_in, 0, 2147483647)] : index
+  %col_stride = index.assume %col_stride_in [range(%col_stride_in, 0, 2147483647)] : index
+  %w_stride = index.assume %w_stride_in [range(%w_stride_in, 0, 2304)] : index
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c2 = index.constant 2 : index
+  %c3 = index.constant 3 : index
+  %c4 = index.constant 4 : index
+  %c9 = index.constant 9 : index
+  %c18 = index.constant 18 : index
+  %c32 = index.constant 32 : index
+  %c36 = index.constant 36 : index
+  %c48 = index.constant 48 : index
+  %c128 = index.constant 128 : index
+  %c256 = index.constant 256 : index
+  %embd = index.constant 2304 : index
+  %origin = index.constant 0 : offset
+  %four = index.constant 4 : offset
+  %f0 = scalar.constant 0.0 : f32
+  %f1 = scalar.constant 1.0 : f32
+  %eps = scalar.constant 1.0e-6 : f32
+  %inv_embd = scalar.constant 4.3402777777777777e-4 : f32
+  %inv_scale = scalar.constant 2.0833333333333332e-2 : f32
+  %zero4 = vector.splatf 0.0 : vector<4xf32>
+  %token = kernel.workgroup.id<x> : index
+  %tid = kernel.workitem.id<x> : index
+  %wave = index.div %tid, %c32 : index
+  %lane = index.rem %tid, %c32 : index
+  %header = buffer.view %spans[%origin] : buffer -> view<4xi32>
+  %live_word = view.load %header[1] : view<4xi32> -> i32
+  %live = index.cast %live_word : i32 to index
+  %sel_on = index.cmp ne, %sel_on_in, %c0 : index
+  %sel_view = buffer.view %sel[%origin] : buffer -> view<4194304xi32>
+  %sel_word = view.load %sel_view[0] : view<4194304xi32> -> i32
+  %sel_count = index.cast %sel_word : i32 to index
+  %live_final = scf.select %sel_on, %sel_count, %live : index
+  %in_cap = index.cmp ult, %token, %cap_in : index
+  %in_live = index.cmp ult, %token, %live_final : index
+  %active = scalar.andi %in_cap, %in_live : i1
+  scf.if %active {
+    %slot_raw = index.add %token, %c1 : index
+    %slot_ix = index.assume %slot_raw [range(%slot_raw, 1, 4194303)] : index
+    %src_token = scf.if %sel_on -> (index) {
+      %w = view.load %sel_view[%slot_ix] : view<4194304xi32> -> i32
+      %i = index.cast %w : i32 to index
+      scf.yield %i : index
+    } else {
+      scf.yield %token : index
+    }
+    %lds_bytes = index.constant 512 : offset
+    %lds = buffer.alloca<workgroup> align(16) %lds_bytes : buffer
+    %lds_view = buffer.view %lds[%origin] : buffer -> view<96xf32>
+    %nq_last = index.sub %nq_r, %c1 : index
+    %r1 = index.min %c1, %nq_last : index
+    %r2 = index.min %c2, %nq_last : index
+    %r3 = index.min %c3, %nq_last : index
+    %qv = buffer.view %query[%origin] : buffer -> view<9216xf32>
+    %wave_s = index.min %wave, %nb : index
+    %bank0 = vector.splatf 0.0 : vector<18x4xf32>
+    %bank, %ss, %d0, %d1, %d2, %d3 = scf.for %j = [%c0 to %c18 step %c1](%b = %bank0 : vector<18x4xf32>, %a = %zero4 : vector<4xf32>, %a0 = %zero4 : vector<4xf32>, %a1 = %zero4 : vector<4xf32>, %a2 = %zero4 : vector<4xf32>, %a3 = %zero4 : vector<4xf32>) -> (vector<18x4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>) unroll {
+      %packet = index.madd %j, %c32, %lane : index
+      %e = index.mul %packet, %c4 : index
+      %x = func.call @inkling_mix_load(%blocks, %cur, %wave_s, %nb, %src_token, %block_stride, %blocks_off, %cur_off, %e) : (buffer, buffer, index, index, index, index, index, index, index) -> (vector<4xf32>)
+      %b_next = vector.insert %x into %b[%j] : vector<4xf32>, vector<18x4xf32>
+      %a_next = vector.fmaf %x, %x, %a : vector<4xf32>
+      %o0 = index.mul %c0, %embd : index
+      %o1 = index.mul %r1, %embd : index
+      %o2 = index.mul %r2, %embd : index
+      %o3 = index.mul %r3, %embd : index
+      %i0 = index.add %o0, %e : index
+      %i1 = index.add %o1, %e : index
+      %i2 = index.add %o2, %e : index
+      %i3 = index.add %o3, %e : index
+      %u0 = vector.load %qv[%i0] : view<9216xf32> -> vector<4xf32>
+      %u1 = vector.load %qv[%i1] : view<9216xf32> -> vector<4xf32>
+      %u2 = vector.load %qv[%i2] : view<9216xf32> -> vector<4xf32>
+      %u3 = vector.load %qv[%i3] : view<9216xf32> -> vector<4xf32>
+      %n0 = vector.fmaf %x, %u0, %a0 : vector<4xf32>
+      %n1 = vector.fmaf %x, %u1, %a1 : vector<4xf32>
+      %n2 = vector.fmaf %x, %u2, %a2 : vector<4xf32>
+      %n3 = vector.fmaf %x, %u3, %a3 : vector<4xf32>
+      scf.yield %b_next, %a_next, %n0, %n1, %n2, %n3 : vector<18x4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>
+    }
+    %ss_lane = vector.reduce<addf> %ss, %f0 : vector<4xf32>, f32
+    %sumsq = kernel.subgroup.reduce<addf> %ss_lane {cluster_size = 32} : f32
+    %mean = scalar.mulf %sumsq, %inv_embd : f32
+    %biased = scalar.addf %mean, %eps : f32
+    %rinv = scalar.rsqrtf %biased : f32
+    %dot0_lane = vector.reduce<addf> %d0, %f0 : vector<4xf32>, f32
+    %dot1_lane = vector.reduce<addf> %d1, %f0 : vector<4xf32>, f32
+    %dot2_lane = vector.reduce<addf> %d2, %f0 : vector<4xf32>, f32
+    %dot3_lane = vector.reduce<addf> %d3, %f0 : vector<4xf32>, f32
+    %dot0 = kernel.subgroup.reduce<addf> %dot0_lane {cluster_size = 32} : f32
+    %has1 = index.cmp ugt, %nq_r, %c1 : index
+    %has2 = index.cmp ugt, %nq_r, %c2 : index
+    %has3 = index.cmp ugt, %nq_r, %c3 : index
+    %dot1 = scf.if %has1 -> (f32) {
+      %r = kernel.subgroup.reduce<addf> %dot1_lane {cluster_size = 32} : f32
+      scf.yield %r : f32
+    } else {
+      scf.yield %f0 : f32
+    }
+    %dot2 = scf.if %has2 -> (f32) {
+      %r = kernel.subgroup.reduce<addf> %dot2_lane {cluster_size = 32} : f32
+      scf.yield %r : f32
+    } else {
+      scf.yield %f0 : f32
+    }
+    %dot3 = scf.if %has3 -> (f32) {
+      %r = kernel.subgroup.reduce<addf> %dot3_lane {cluster_size = 32} : f32
+      scf.yield %r : f32
+    } else {
+      scf.yield %f0 : f32
+    }
+    %scale = scalar.mulf %rinv, %inv_scale : f32
+    %lane0 = index.cmp eq, %lane, %c0 : index
+    scf.if %lane0 {
+      %s0 = scalar.mulf %dot0, %scale : f32
+      %s1 = scalar.mulf %dot1, %scale : f32
+      %s2 = scalar.mulf %dot2, %scale : f32
+      %s3 = scalar.mulf %dot3, %scale : f32
+      %k0 = index.madd %c0, %c9, %wave : index
+      %k1 = index.madd %c1, %c9, %wave : index
+      %k2 = index.madd %c2, %c9, %wave : index
+      %k3 = index.madd %c3, %c9, %wave : index
+      %rk = index.add %c36, %wave : index
+      view.store %s0, %lds_view[%k0] : f32, view<96xf32>
+      view.store %s1, %lds_view[%k1] : f32, view<96xf32>
+      view.store %s2, %lds_view[%k2] : f32, view<96xf32>
+      view.store %s3, %lds_view[%k3] : f32, view<96xf32>
+      view.store %rinv, %lds_view[%rk] : f32, view<96xf32>
+    }
+    kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+    %max0, %inv0 = func.call @inkling_mix_softmax(%lds, %c0, %nb) : (buffer, index, index) -> (f32, f32)
+    %max1, %inv1 = func.call @inkling_mix_softmax(%lds, %c1, %nb) : (buffer, index, index) -> (f32, f32)
+    %max2, %inv2 = func.call @inkling_mix_softmax(%lds, %c2, %nb) : (buffer, index, index) -> (f32, f32)
+    %max3, %inv3 = func.call @inkling_mix_softmax(%lds, %c3, %nb) : (buffer, index, index) -> (f32, f32)
+    %single = index.cmp eq, %nb, %c0 : index
+    %count = index.add %nb, %c1 : index
+    %lane4 = index.mul %lane, %c4 : index
+    %wave_base = index.mul %wave, %c256 : index
+    %e0 = index.add %wave_base, %lane4 : index
+    %e1 = index.add %e0, %c128 : index
+    %y00, %y01, %y10, %y11, %y20, %y21, %y30, %y31 = scf.for %s = [%c0 to %count step %c1](%p00 = %zero4 : vector<4xf32>, %p01 = %zero4 : vector<4xf32>, %p10 = %zero4 : vector<4xf32>, %p11 = %zero4 : vector<4xf32>, %p20 = %zero4 : vector<4xf32>, %p21 = %zero4 : vector<4xf32>, %p30 = %zero4 : vector<4xf32>, %p31 = %zero4 : vector<4xf32>) -> (vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>) {
+      %x0 = func.call @inkling_mix_load(%blocks, %cur, %s, %nb, %src_token, %block_stride, %blocks_off, %cur_off, %e0) : (buffer, buffer, index, index, index, index, index, index, index) -> (vector<4xf32>)
+      %x1 = func.call @inkling_mix_load(%blocks, %cur, %s, %nb, %src_token, %block_stride, %blocks_off, %cur_off, %e1) : (buffer, buffer, index, index, index, index, index, index, index) -> (vector<4xf32>)
+      %w0 = func.call @inkling_mix_coeff(%lds, %c0, %s, %max0, %inv0, %single) : (buffer, index, index, f32, f32, i1) -> (f32)
+      %w1 = func.call @inkling_mix_coeff(%lds, %c1, %s, %max1, %inv1, %single) : (buffer, index, index, f32, f32, i1) -> (f32)
+      %w2 = func.call @inkling_mix_coeff(%lds, %c2, %s, %max2, %inv2, %single) : (buffer, index, index, f32, f32, i1) -> (f32)
+      %w3 = func.call @inkling_mix_coeff(%lds, %c3, %s, %max3, %inv3, %single) : (buffer, index, index, f32, f32, i1) -> (f32)
+      %n00 = func.call @inkling_mix_axpy(%p00, %w0, %x0) : (vector<4xf32>, f32, vector<4xf32>) -> (vector<4xf32>)
+      %n01 = func.call @inkling_mix_axpy(%p01, %w0, %x1) : (vector<4xf32>, f32, vector<4xf32>) -> (vector<4xf32>)
+      %n10 = func.call @inkling_mix_axpy(%p10, %w1, %x0) : (vector<4xf32>, f32, vector<4xf32>) -> (vector<4xf32>)
+      %n11 = func.call @inkling_mix_axpy(%p11, %w1, %x1) : (vector<4xf32>, f32, vector<4xf32>) -> (vector<4xf32>)
+      %n20 = func.call @inkling_mix_axpy(%p20, %w2, %x0) : (vector<4xf32>, f32, vector<4xf32>) -> (vector<4xf32>)
+      %n21 = func.call @inkling_mix_axpy(%p21, %w2, %x1) : (vector<4xf32>, f32, vector<4xf32>) -> (vector<4xf32>)
+      %n30 = func.call @inkling_mix_axpy(%p30, %w3, %x0) : (vector<4xf32>, f32, vector<4xf32>) -> (vector<4xf32>)
+      %n31 = func.call @inkling_mix_axpy(%p31, %w3, %x1) : (vector<4xf32>, f32, vector<4xf32>) -> (vector<4xf32>)
+      scf.yield %n00, %n01, %n10, %n11, %n20, %n21, %n30, %n31 : vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>
+    }
+    %q00 = vector.mulf %y00, %y00 : vector<4xf32>
+    %q01 = vector.fmaf %y01, %y01, %q00 : vector<4xf32>
+    %q10 = vector.mulf %y10, %y10 : vector<4xf32>
+    %q11 = vector.fmaf %y11, %y11, %q10 : vector<4xf32>
+    %q20 = vector.mulf %y20, %y20 : vector<4xf32>
+    %q21 = vector.fmaf %y21, %y21, %q20 : vector<4xf32>
+    %q30 = vector.mulf %y30, %y30 : vector<4xf32>
+    %q31 = vector.fmaf %y31, %y31, %q30 : vector<4xf32>
+    %t0 = vector.reduce<addf> %q01, %f0 : vector<4xf32>, f32
+    %t1 = vector.reduce<addf> %q11, %f0 : vector<4xf32>, f32
+    %t2 = vector.reduce<addf> %q21, %f0 : vector<4xf32>, f32
+    %t3 = vector.reduce<addf> %q31, %f0 : vector<4xf32>, f32
+    %z0 = kernel.subgroup.reduce<addf> %t0 {cluster_size = 32} : f32
+    %z1 = scf.if %has1 -> (f32) {
+      %r = kernel.subgroup.reduce<addf> %t1 {cluster_size = 32} : f32
+      scf.yield %r : f32
+    } else {
+      scf.yield %f0 : f32
+    }
+    %z2 = scf.if %has2 -> (f32) {
+      %r = kernel.subgroup.reduce<addf> %t2 {cluster_size = 32} : f32
+      scf.yield %r : f32
+    } else {
+      scf.yield %f0 : f32
+    }
+    %z3 = scf.if %has3 -> (f32) {
+      %r = kernel.subgroup.reduce<addf> %t3 {cluster_size = 32} : f32
+      scf.yield %r : f32
+    } else {
+      scf.yield %f0 : f32
+    }
+    scf.if %lane0 {
+      %k0 = index.madd %c0, %c9, %wave : index
+      %k1 = index.madd %c1, %c9, %wave : index
+      %k2 = index.madd %c2, %c9, %wave : index
+      %k3 = index.madd %c3, %c9, %wave : index
+      %base = index.constant 48 : index
+      %p0 = index.add %base, %k0 : index
+      %p1 = index.add %base, %k1 : index
+      %p2 = index.add %base, %k2 : index
+      %p3 = index.add %base, %k3 : index
+      view.store %z0, %lds_view[%p0] : f32, view<96xf32>
+      view.store %z1, %lds_view[%p1] : f32, view<96xf32>
+      view.store %z2, %lds_view[%p2] : f32, view<96xf32>
+      view.store %z3, %lds_view[%p3] : f32, view<96xf32>
+    }
+    kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+    %mode = index.assume %mode_in [range(%mode_in, 0, 1)] : index
+    %raw = index.cmp eq, %mode, %c0 : index
+    %nw = buffer.view %norm_w[%origin] : buffer -> view<9216xf32>
+    %cap_q = index.mul %cap_in, %c4 : index
+    %rv = buffer.view %rinv_out[%origin] : buffer -> view<[%cap_q]xf32>
+    %token_off = index.mul %token, %embd : index
+    scf.for %q = [%c0 to %nq_r step %c1] {
+      %is0 = index.cmp eq, %q, %c0 : index
+      %is1 = index.cmp eq, %q, %c1 : index
+      %is2 = index.cmp eq, %q, %c2 : index
+      %a23 = scf.select %is2, %y20, %y30 : vector<4xf32>
+      %b23 = scf.select %is2, %y21, %y31 : vector<4xf32>
+      %a123 = scf.select %is1, %y10, %a23 : vector<4xf32>
+      %b123 = scf.select %is1, %y11, %b23 : vector<4xf32>
+      %y_a = scf.select %is0, %y00, %a123 : vector<4xf32>
+      %y_b = scf.select %is0, %y01, %b123 : vector<4xf32>
+      %row = index.mul %q, %c9 : index
+      %total = scf.for %w = [%c0 to %c9 step %c1](%t = %f0 : f32) -> (f32) {
+        %slot0 = index.add %row, %w : index
+        %slot = index.add %slot0, %c48 : index
+        %part = view.load %lds_view[%slot] : view<96xf32> -> f32
+        %t_next = scalar.addf %t, %part : f32
+        scf.yield %t_next : f32
+      }
+      %m = scalar.mulf %total, %inv_embd : f32
+      %mb = scalar.addf %m, %eps : f32
+      %inv_out = scalar.rsqrtf %mb : f32
+      %factor = scf.select %raw, %f1, %inv_out : f32
+      %factor4 = vector.splat %factor : vector<4xf32>
+      %w_row = index.mul %q, %w_stride : index
+      %wi0 = index.add %w_row, %e0 : index
+      %wi1 = index.add %w_row, %e1 : index
+      %w_a, %w_b = scf.if %raw -> (vector<4xf32>, vector<4xf32>) {
+        scf.yield %zero4, %zero4 : vector<4xf32>, vector<4xf32>
+      } else {
+        %la = vector.load %nw[%wi0] : view<9216xf32> -> vector<4xf32>
+        %lb = vector.load %nw[%wi1] : view<9216xf32> -> vector<4xf32>
+        scf.yield %la, %lb : vector<4xf32>, vector<4xf32>
+      }
+      %sa = vector.mulf %y_a, %factor4 : vector<4xf32>
+      %sb = vector.mulf %y_b, %factor4 : vector<4xf32>
+      %fa = vector.mulf %sa, %w_a : vector<4xf32>
+      %fb = vector.mulf %sb, %w_b : vector<4xf32>
+      %ra = scf.select %raw, %sa, %fa : vector<4xf32>
+      %rb = scf.select %raw, %sb, %fb : vector<4xf32>
+      %col_off0 = index.madd %q, %col_stride, %token_off : index
+      %col_off = index.add %col_off0, %out_off : index
+      %col_bytes = index.scale %col_off, %four : index, offset -> offset
+      %ov = buffer.view %out[%col_bytes] : buffer -> view<2304xf32>
+      vector.store %ra, %ov[%e0] : vector<4xf32>, view<2304xf32>
+      vector.store %rb, %ov[%e1] : vector<4xf32>, view<2304xf32>
+      %write_rinv = index.cmp eq, %tid, %c0 : index
+      %need_rinv = scalar.andi %write_rinv, %raw : i1
+      scf.if %need_rinv {
+        %ri_raw = index.madd %q, %cap_in, %token : index
+        %ri = index.assume %ri_raw [range(%ri_raw, 0, 2147483640), lt(%ri_raw, %cap_q)] : index
+        view.store %inv_out, %rv[%ri] : f32, view<[%cap_q]xf32>
+      }
+    }
+  }
+  %is_commit = index.cmp uge, %token, %cap_in : index
+  scf.if %is_commit {
+    %commit_site = index.assume %commit_site_in [range(%commit_site_in, 0, 6656)] : index
+    %commit_visit = index.assume %commit_visit_in [range(%commit_visit_in, 0, 2147483647)] : index
+    %item = index.sub %token, %cap_in : index
+    %commit_span = index.div %item, %c9 : index
+    %commit_group = index.rem %item, %c9 : index
+    %commit_c = index.madd %commit_group, %c256, %tid : index
+    %commit_lane = index.cmp ult, %tid, %c256 : index
+    scf.if %commit_lane {
+      func.call @inkling_conv_commit_item(%spans, %commit_state, %commit_a, %commit_site, %commit_visit, %commit_span, %commit_c) : (buffer, buffer, buffer, index, index, index, index)
+    }
+  }
+  kernel.return
+}

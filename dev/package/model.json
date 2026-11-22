@@ -1,0 +1,17 @@
+{
+  "name": "inkling-2-mini",
+  "device": "gpu",
+  "pool": "main",
+  "definition": {
+    "kind": "text",
+    "prepare": "prepare.loom",
+    "control": "control.loom",
+    "sources": ["config.loom", "kernel.loom", "storage.loom"],
+    "weights": "weights.gguf",
+    "tokenizer": "tokenizer.json",
+    "rows": 4,
+    "context_capacity": 4096,
+    "prefill_capacity": 512,
+    "max_tokens": 64
+  }
+}

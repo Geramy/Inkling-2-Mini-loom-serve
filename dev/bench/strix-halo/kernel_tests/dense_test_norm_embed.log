@@ -1,0 +1,17 @@
+PASS gfx1151  rms_weighted_attn_norm0                      nmse=5.15e-15 untouched_ok=True oracle_nmse=3.44e-15 
+PASS gfx1151  rms_plain_cur0                               nmse=4.51e-15 untouched_ok=True oracle_nmse=3.48e-15 
+PASS gfx1151  rms_weighted_ffn_norm0                       nmse=4.22e-15 untouched_ok=True oracle_nmse=3.97e-15 
+PASS gfx1151  rms_weighted_global_q_inp_norm5              nmse=3.71e-15 untouched_ok=True oracle_nmse=1.86e-15 
+PASS gfx1151  rms_weighted_global_k_inp_norm5              nmse=3.52e-15 untouched_ok=True oracle_nmse=2.48e-15 
+PASS gfx1151  rms_weighted_global_v_inp_norm5              nmse=2.34e-15 untouched_ok=True oracle_nmse=1.97e-15 
+PASS gfx1151  rms_heads_v_norm0                            nmse=2.82e-15 untouched_ok=True oracle_nmse=2.44e-15 
+PASS gfx1151  rms_cols_global_inp_norm5                    nmse=3.46e-15 untouched_ok=True 
+PASS gfx1151  rms_cols_shared_weight_n9                    nmse=2.79e-15 untouched_ok=True 
+PASS gfx1151  rms_weighted_n40_live25_stride2312           nmse=3.75e-15 untouched_ok=True 
+PASS gfx1151  rms_plain_n1                                 nmse=2.14e-15 untouched_ok=True 
+PASS gfx1151  rms_heads_n7_group128                        nmse=2.70e-15 untouched_ok=True 
+PASS gfx1151  embed_bf16_full_table_n16                    nmse=4.44e-15 untouched_ok=True oracle_nmse=4.53e-15 
+PASS gfx1151  embed_q8_0_full_table_n16                    nmse=3.44e-15 untouched_ok=True 
+PASS gfx1151  embed_q8_0_edge_ids_n9_cap16                 nmse=2.87e-15 untouched_ok=True 
+PASS gfx1151  embed_bf16_edge_ids_n9_cap16                 nmse=7.59e-15 untouched_ok=True 
+16 cases, 0 failed

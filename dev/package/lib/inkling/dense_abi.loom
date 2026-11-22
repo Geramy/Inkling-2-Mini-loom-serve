@@ -1,0 +1,63 @@
+// Launch ABI helpers shared by the dense kernels. The live row count is the first i32 at count_origin in the control buffer.
+// Strides are in elements and origins in bytes.
+
+func.def public inline @inkling_dense_live_rows(%control: buffer, %count_origin: offset) -> (index) {
+  %header = buffer.view %control[%count_origin] : buffer -> view<1xi32>
+  %count32 = view.load %header[0] : view<1xi32> -> i32
+  %count = index.cast %count32 : i32 to index
+  func.return %count : index
+}
+
+func.def public inline @inkling_dense_row_origin(%origin: offset, %row: index, %stride: index) -> (offset) {
+  %b4 = index.constant 4 : offset
+  %elements = index.mul %row, %stride : index
+  %bytes = index.scale %elements, %b4 : index, offset -> offset
+  %at = index.add %origin, %bytes : offset
+  func.return %at : offset
+}
+
+// A column past the last live column reads the last live column.
+func.def public inline @inkling_dense_col_origin(%origin: offset, %col: index, %last: index, %stride: index) -> (offset) {
+  %clamped = index.min %col, %last : index
+  %at = func.call @inkling_dense_row_origin(%origin, %clamped, %stride) : (offset, index, index) -> (offset)
+  func.return %at : offset
+}
+
+// Activation codes: 0 none, 1 sigmoid, 2 soft cap (cap * tanh(value / cap)).
+func.def public inline @inkling_dense_epilogue(%value: f32, %act: index, %cap: f32) -> (f32) {
+  %c1 = index.constant 1 : index
+  %c2 = index.constant 2 : index
+  %is_sigmoid = index.cmp eq, %act, %c1 : index
+  %is_cap = index.cmp eq, %act, %c2 : index
+  %sigmoid = scalar.logisticf<afn> %value : f32
+  %scaled = scalar.divf %value, %cap : f32
+  %tanh = scalar.tanhf<afn> %scaled : f32
+  %capped = scalar.mulf %tanh, %cap : f32
+  %first = scf.select %is_sigmoid, %sigmoid, %value : f32
+  %result = scf.select %is_cap, %capped, %first : f32
+  func.return %result : f32
+}
+
+// The row is guarded. The caller guards the column.
+func.def public inline @inkling_dense_store(%dst: buffer, %col_origin: offset, %n_rows_in: index, %row_in: index, %value: f32) {
+  %n_rows = index.assume %n_rows_in [range(%n_rows_in, 1, 2147483647)] : index
+  %row = index.assume %row_in [range(%row_in, 0, 2147483646)] : index
+  %in = index.cmp ult, %row, %n_rows : index
+  scf.if %in {
+    %view = buffer.view %dst[%col_origin] : buffer -> view<[%n_rows]xf32>
+    view.store %value, %view[%row] : f32, view<[%n_rows]xf32>
+  }
+  func.return
+}
+
+// 1 / sqrt(mean of squares + epsilon) from the sum of squares of `width` values.
+func.def public inline @inkling_dense_rms_scale(%sum: f32, %width: index, %epsilon: f32) -> (f32) {
+  %c1 = scalar.constant 1.0 : f32
+  %width_i32 = index.cast %width : index to i32
+  %width_f32 = scalar.uitofp %width_i32 : i32 to f32
+  %mean = scalar.divf %sum, %width_f32 : f32
+  %biased = scalar.addf %mean, %epsilon : f32
+  %root = scalar.sqrtf %biased : f32
+  %scale = scalar.divf %c1, %root : f32
+  func.return %scale : f32
+}

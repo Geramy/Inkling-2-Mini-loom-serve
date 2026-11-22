@@ -1,0 +1,37 @@
+// y[t][c] = sum over the 8 slots of wts[t][s] * dout[t * 8 + s][c]. Workgroup (c / 256, t), 256 workitems.
+
+kernel.def export("inkling_experts_combine") @inkling_experts_combine(%n: index) {
+  %c1 = index.constant 1 : index
+  %c9 = index.constant 9 : index
+  %c256 = index.constant 256 : index
+  kernel.launch.config workgroups(%c9, %n, %c1) workgroup_size(%c256, %c1, %c1) : index
+} launch(%n: index, %dout: buffer, %wts: buffer, %y: buffer) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c8 = index.constant 8 : index
+  %c256 = index.constant 256 : index
+  %c2304 = index.constant 2304 : index
+  %origin = index.constant 0 : offset
+  %gx = kernel.workgroup.id<x> : index
+  %token_raw = kernel.workgroup.id<y> : index
+  %tid = kernel.workitem.id<x> : index
+  %token = index.assume %token_raw [ge(%token_raw, 0), lt(%token_raw, %n)] : index
+  %col_raw = index.madd %gx, %c256, %tid : index
+  %col = index.assume %col_raw [ge(%col_raw, 0), lt(%col_raw, 2304)] : index
+  %routes = index.mul %n, %c8 : index
+  %dv = buffer.view %dout[%origin] : buffer -> view<[%routes]x[%c2304]xf32>
+  %wv = buffer.view %wts[%origin] : buffer -> view<[%routes]xf32>
+  %yv = buffer.view %y[%origin] : buffer -> view<[%n]x[%c2304]xf32>
+  %zero = scalar.constant 0.0 : f32
+  %base = index.mul %token, %c8 : index
+  %sum = scf.for %s = [%c0 to %c8 step %c1](%acc = %zero : f32) -> (f32) unroll schedule(linear) {
+    %route_raw = index.add %base, %s : index
+    %route = index.assume %route_raw [ge(%route_raw, 0), lt(%route_raw, %routes)] : index
+    %w = view.load %wv[%route] : view<[%routes]xf32> -> f32
+    %d = view.load %dv[%route, %col] : view<[%routes]x[%c2304]xf32> -> f32
+    %next = scalar.fmaf %w, %d, %acc : f32
+    scf.yield %next : f32
+  }
+  view.store %sum, %yv[%token, %col] : f32, view<[%n]x[%c2304]xf32>
+  kernel.return
+}

@@ -1,0 +1,8 @@
+*.tgz
+*.pyc
+__pycache__/
+*.log.raw
+.loom-fetch.lock
+/dev/bench/**/raw/
+/dev/bench/**/profile/
+/dev/oracle/dumps*/

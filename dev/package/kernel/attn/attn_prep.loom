@@ -1,0 +1,176 @@
+// One workgroup per token and column: 24 query heads, 8 key heads, 8 value heads and 3 groups of 8 relative heads.
+func.decl @inkling_attn_span(%spans: buffer, %span_cap: index, %token: index) -> (index, index, index, index, offset)
+
+func.decl @inkling_attn_live_tokens(%spans: buffer, %span_cap: index) -> (index)
+
+kernel.def export("inkling_attn_prep") @inkling_attn_prep(%cap: index) {
+  %one = index.constant 1 : index
+  %columns = index.constant 43 : index
+  %threads = index.constant 128 : index
+  kernel.launch.config workgroups(%cap, %columns, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%cap_in: index, %span_cap: index, %global: index, %conv_origin: offset, %spans: buffer, %state: buffer, %q_raw: buffer, %k_raw: buffer, %v_raw: buffer, %r_raw: buffer, %dyn_k: buffer, %dyn_v: buffer, %w_q_clip: buffer, %w_rel_clip: buffer, %w_k_conv: buffer, %w_v_conv: buffer, %q_out: buffer, %r_out: buffer, %k_act: buffer, %v_act: buffer) {
+  %cap = index.assume %cap_in [range(%cap_in, 1, 32768)] : index
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c3 = index.constant 3 : index
+  %c4 = index.constant 4 : index
+  %c8 = index.constant 8 : index
+  %c16 = index.constant 16 : index
+  %c24 = index.constant 24 : index
+  %c32 = index.constant 32 : index
+  %c40 = index.constant 40 : index
+  %c128 = index.constant 128 : index
+  %c1024 = index.constant 1024 : index
+  %c6656 = index.constant 6656 : index
+  %zero = index.constant 0 : offset
+  %zero_f = scalar.constant 0.0 : f32
+  %one_f = scalar.constant 1.0 : f32
+  %eps = scalar.constant 9.9999999999999995e-07 : f32
+  %qk_clip = scalar.constant 22.627416610717773 : f32
+  %rel_clip = scalar.constant 8.0 : f32
+  %inv_floor = scalar.constant 0.0001220703125 : f32
+  %alpha = scalar.constant 0.10000000000000001 : f32
+  %inv_sqrt5 = scalar.constant 0.44721359549995793 : f32
+  %inv_sqrt9 = scalar.constant 0.33333333333333331 : f32
+  %inv_hd = scalar.constant 0.0078125 : f32
+  %token0 = kernel.workgroup.id<x> : index
+  %token = index.assume %token0 [range(%token0, 0, 16777214), lt(%token0, %cap)] : index
+  %column = kernel.workgroup.id<y> : index
+  %d = kernel.workitem.id<x> : index
+  %live = func.call @inkling_attn_live_tokens(%spans, %span_cap) : (buffer, index) -> (index)
+  %active = index.cmp ult, %token, %live : index
+  %lds_bytes = index.constant 512 : offset
+  %lds = buffer.alloca<workgroup> align(16) %lds_bytes : buffer
+  scf.if %active {
+    %begin, %len, %pos0, %row, %slot = func.call @inkling_attn_span(%spans, %span_cap, %token) : (buffer, index, index) -> (index, index, index, index, offset)
+    %rel = index.sub %token, %begin : index
+    %pos = index.add %pos0, %rel : index
+    %pos_i = index.cast %pos : index to i32
+    %pos_f = scalar.sitofp %pos_i : i32 to f32
+    %p1 = scalar.addf %pos_f, %one_f : f32
+    %ratio = scalar.mulf %p1, %inv_floor : f32
+    %clamped = scalar.maxnumf %ratio, %one_f : f32
+    %lg = scalar.logf<afn> %clamped : f32
+    %tau_g = scalar.fmaf %lg, %alpha, %one_f : f32
+    %is_global = index.cmp ne, %global, %c0 : index
+    %tau = scf.select %is_global, %tau_g, %one_f : f32
+    %is_r = index.cmp uge, %column, %c40 : index
+    scf.if %is_r {
+      %g = index.sub %column, %c40 : index
+      %idx = index.madd %g, %c128, %d : index
+      %r_view = buffer.view %r_raw[%zero] : buffer -> view<[%cap]x384xf32>
+      %clip_view = buffer.view %w_rel_clip[%zero] : buffer -> view<384xf32>
+      %r_out_view = buffer.view %r_out[%zero] : buffer -> view<[%cap]x384xf32>
+      %lds_view = buffer.view %lds[%zero] : buffer -> view<128xf32>
+      %raw = view.load %r_view[%token, %idx] : view<[%cap]x384xf32> -> f32
+      %scale = view.load %clip_view[%idx] : view<384xf32> -> f32
+      %x = scalar.mulf %raw, %scale : f32
+      %sq = scalar.mulf %x, %x : f32
+      view.store %sq, %lds_view[%d] : f32, view<128xf32>
+      kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+      %seg = index.div %d, %c16 : index
+      %seg_base = index.mul %seg, %c16 : index
+      %ss = scf.for %i = [%c0 to %c16 step %c1](%acc = %zero_f : f32) -> (f32) {
+        %at = index.add %seg_base, %i : index
+        %v = view.load %lds_view[%at] : view<128xf32> -> f32
+        %next = scalar.addf %acc, %v : f32
+        scf.yield %next : f32
+      }
+      %norm = scalar.sqrtf %ss : f32
+      %n = scalar.addf %norm, %eps : f32
+      %f0 = scalar.divf %rel_clip, %n : f32
+      %f1 = scalar.minnumf %f0, %one_f : f32
+      %f = scalar.mulf %f1, %tau : f32
+      %out = scalar.mulf %x, %f : f32
+      view.store %out, %r_out_view[%token, %idx] : f32, view<[%cap]x384xf32>
+    } else {
+      %is_q = index.cmp ult, %column, %c24 : index
+      %is_v = index.cmp uge, %column, %c32 : index
+      %kv_head0 = index.sub %column, %c24 : index
+      %kv_head1 = index.sub %kv_head0, %c8 : index
+      %kv_head = scf.select %is_v, %kv_head1, %kv_head0 : index
+      %chan = index.madd %kv_head, %c128, %d : index
+      %state_off = index.add %slot, %conv_origin : offset
+      %state_view = buffer.view %state[%state_off] : buffer -> view<19968xf32>
+      %raw_buf = scf.select %is_v, %v_raw, %k_raw : buffer
+      %dyn_buf = scf.select %is_v, %dyn_v, %dyn_k : buffer
+      %w_buf = scf.select %is_v, %w_v_conv, %w_k_conv : buffer
+      %row_chan0 = scf.select %is_v, %c1024, %c0 : index
+      %raw_view = buffer.view %raw_buf[%zero] : buffer -> view<[%cap]x1024xf32>
+      %dyn_view = buffer.view %dyn_buf[%zero] : buffer -> view<[%cap]x32xf32>
+      %w_view = buffer.view %w_buf[%zero] : buffer -> view<4096xf32>
+      %x = scf.if %is_q -> (f32) {
+        %q_view = buffer.view %q_raw[%zero] : buffer -> view<[%cap]x3072xf32>
+        %clip_view = buffer.view %w_q_clip[%zero] : buffer -> view<3072xf32>
+        %qi = index.madd %column, %c128, %d : index
+        %raw = view.load %q_view[%token, %qi] : view<[%cap]x3072xf32> -> f32
+        %scale = view.load %clip_view[%qi] : view<3072xf32> -> f32
+        %xq = scalar.mulf %raw, %scale : f32
+        scf.yield %xq : f32
+      } else {
+        %x0, %ys, %yd = scf.for %lag = [%c0 to %c4 step %c1](%xc = %zero_f : f32, %sa = %zero_f : f32, %da = %zero_f : f32) -> (f32, f32, f32) {
+          %in_span = index.cmp uge, %rel, %lag : index
+          %xl = scf.if %in_span -> (f32) {
+            %src0 = index.sub %token, %lag : index
+            %src = index.assume %src0 [range(%src0, 0, 32767), lt(%src0, %cap)] : index
+            %v = view.load %raw_view[%src, %chan] : view<[%cap]x1024xf32> -> f32
+            scf.yield %v : f32
+          } else {
+            %short = index.sub %lag, %rel : index
+            %srow = index.sub %c3, %short : index
+            %sbase = index.mul %srow, %c6656 : index
+            %sc = index.add %sbase, %row_chan0 : index
+            %at = index.add %sc, %chan : index
+            %v = view.load %state_view[%at] : view<19968xf32> -> f32
+            scf.yield %v : f32
+          }
+          %tap = index.sub %c3, %lag : index
+          %w_at = index.madd %chan, %c4, %tap : index
+          %w = view.load %w_view[%w_at] : view<4096xf32> -> f32
+          %sa_next = scalar.fmaf %w, %xl, %sa : f32
+          %dv = scf.if %is_global -> (f32) {
+            %dyn_at = index.madd %kv_head, %c4, %lag : index
+            %dd = view.load %dyn_view[%token, %dyn_at] : view<[%cap]x32xf32> -> f32
+            %t = scalar.mulf %dd, %xl : f32
+            scf.yield %t : f32
+          } else {
+            scf.yield %zero_f : f32
+          }
+          %da_next = scalar.addf %da, %dv : f32
+          %is_cur = index.cmp eq, %lag, %c0 : index
+          %xc_next = scf.select %is_cur, %xl, %xc : f32
+          scf.yield %xc_next, %sa_next, %da_next : f32, f32, f32
+        }
+        %s0 = scalar.addf %x0, %ys : f32
+        %s1 = scalar.addf %s0, %yd : f32
+        %div = scf.select %is_global, %inv_sqrt9, %inv_sqrt5 : f32
+        %xc = scalar.mulf %s1, %div : f32
+        scf.yield %xc : f32
+      }
+      %sq = scalar.mulf %x, %x : f32
+      %ss = kernel.workgroup.reduce<addf> %sq : f32
+      %norm = scalar.sqrtf %ss : f32
+      %n = scalar.addf %norm, %eps : f32
+      %clip0 = scalar.divf %qk_clip, %n : f32
+      %clip1 = scalar.minnumf %clip0, %one_f : f32
+      %clip_q = scalar.mulf %clip1, %tau : f32
+      %mean = scalar.mulf %ss, %inv_hd : f32
+      %mean_eps = scalar.addf %mean, %eps : f32
+      %rms = scalar.rsqrtf %mean_eps : f32
+      %f_qk = scf.select %is_q, %clip_q, %clip1 : f32
+      %f = scf.select %is_v, %rms, %f_qk : f32
+      %out = scalar.mulf %x, %f : f32
+      scf.if %is_q {
+        %q_out_view = buffer.view %q_out[%zero] : buffer -> view<[%cap]x3072xf32>
+        %qi = index.madd %column, %c128, %d : index
+        view.store %out, %q_out_view[%token, %qi] : f32, view<[%cap]x3072xf32>
+      } else {
+        %half = scalar.fptrunc %out : f32 to f16
+        %act = scf.select %is_v, %v_act, %k_act : buffer
+        %act_view = buffer.view %act[%zero] : buffer -> view<[%cap]x1024xf16>
+        view.store %half, %act_view[%token, %chan] : f16, view<[%cap]x1024xf16>
+      }
+    }
+  }
+  kernel.return
+}

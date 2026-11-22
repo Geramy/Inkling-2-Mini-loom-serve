@@ -1,0 +1,116 @@
+// Embedding gather with the token norm: x[r] = rms_norm(token_embd[tokens[r]]) * token_embd_norm for r < T.
+// One workgroup of 256 workitems for each row. The table has `vocab` rows of 2304 values (Q8_0 or BF16). Token ids are below `vocab`.
+
+template.decl @inkling.dense.weight.values4(%wtype: index, %weight: buffer, %w_span: index, %block_base: index, %j: index) -> (vector<4xf32>)
+
+func.decl @inkling_dense_live_rows(%control: buffer, %count_origin: offset) -> (index)
+
+func.decl @inkling_dense_row_origin(%origin: offset, %row: index, %stride: index) -> (offset)
+
+func.decl @inkling_dense_rms_scale(%sum: f32, %width: index, %epsilon: f32) -> (f32)
+
+// Four table values of the token row at element e (e % 4 = 0, e + 3 < 2304).
+func.def public inline @inkling_dense_embed_values(%q8: i1, %embedding: buffer, %vocab: index, %token: index, %e: index) -> (vector<4xf32>) {
+  %c17 = index.constant 17 : index
+  %c32 = index.constant 32 : index
+  %c1224 = index.constant 1224 : index
+  %c4608 = index.constant 4608 : offset
+  %v = scf.if %q8 -> (vector<4xf32>) {
+    %block = index.div %e, %c32 : index
+    %j = index.rem %e, %c32 : index
+    %row_halves = index.mul %token, %c1224 : index
+    %block_halves = index.mul %block, %c17 : index
+    %block_base = index.add %row_halves, %block_halves : index
+    %span = index.mul %vocab, %c1224 : index
+    %wtype = index.constant 4 : index
+    %values = template.apply<@inkling.dense.weight.values4>(%wtype, %embedding, %span, %block_base, %j) : (index, buffer, index, index, index) -> (vector<4xf32>)
+    scf.yield %values : vector<4xf32>
+  } else {
+    %row_origin = index.scale %token, %c4608 : index, offset -> offset
+    %view = buffer.view %embedding[%row_origin] : buffer -> view<2304xbf16>
+    %raw = vector.load %view[%e] : view<2304xbf16> -> vector<4xbf16>
+    %wide = vector.extf %raw : vector<4xbf16> to vector<4xf32>
+    scf.yield %wide : vector<4xf32>
+  }
+  func.return %v : vector<4xf32>
+}
+
+func.def public inline @inkling_dense_embed_body(%q8: i1, %vocab_in: index, %control: buffer, %count_origin: offset, %tokens: buffer, %tokens_origin: offset, %d_origin: offset, %d_stride: index, %epsilon: f32, %embedding: buffer, %norm_weight: buffer, %output: buffer) {
+  %row = kernel.workgroup.id<x> : index
+  %count = func.call @inkling_dense_live_rows(%control, %count_origin) : (buffer, offset) -> (index)
+  %live = index.cmp ult, %row, %count : index
+  scf.if %live {
+    %vocab = index.assume %vocab_in [range(%vocab_in, 1, 1000000)] : index
+    %c1 = index.constant 1 : index
+    %c3 = index.constant 3 : index
+    %c4 = index.constant 4 : index
+    %width = index.constant 2304 : index
+    %step = index.constant 1024 : index
+    %b0 = index.constant 0 : offset
+    %b4 = index.constant 4 : offset
+    %zero = scalar.constant 0.0 : f32
+    %t0 = kernel.workitem.id<x> : index
+    %t = index.assume %t0 [range(%t0, 0, 255)] : index
+    %first = index.mul %t, %c4 : index
+    %token_bytes = index.scale %row, %b4 : index, offset -> offset
+    %token_origin = index.add %tokens_origin, %token_bytes : offset
+    %token_view = buffer.view %tokens[%token_origin] : buffer -> view<1xi32>
+    %token_i32 = view.load %token_view[0] : view<1xi32> -> i32
+    %token_raw = index.cast %token_i32 : i32 to index
+    %vocab_last = index.sub %vocab, %c1 : index
+    %token = index.assume %token_raw [range(%token_raw, 0, %vocab_last)] : index
+    %dst_origin = func.call @inkling_dense_row_origin(%d_origin, %row, %d_stride) : (offset, index, index) -> (offset)
+    %dst = buffer.view %output[%dst_origin] : buffer -> view<2304xf32>
+    %scales = buffer.view %norm_weight[%b0] : buffer -> view<2304xf32>
+    %partial = scf.for %e_raw = [%first to %width step %step](%acc = %zero : f32) -> (f32) {
+      %e = index.assume %e_raw [range(%e_raw, 0, 2300)] : index
+      %last = index.add %e, %c3 : index
+      %fits = index.cmp ult, %last, %width : index
+      %next = scf.if %fits -> (f32) {
+        %x = func.call @inkling_dense_embed_values(%q8, %embedding, %vocab, %token, %e) : (i1, buffer, index, index, index) -> (vector<4xf32>)
+        %sq = vector.mulf %x, %x : vector<4xf32>
+        %r = vector.reduce<addf> %sq, %acc : vector<4xf32>, f32
+        scf.yield %r : f32
+      } else {
+        scf.yield %acc : f32
+      }
+      scf.yield %next : f32
+    }
+    %sum = kernel.workgroup.reduce<addf> %partial : f32
+    %scale = func.call @inkling_dense_rms_scale(%sum, %width, %epsilon) : (f32, index, f32) -> (f32)
+    %scale4 = vector.splat %scale : vector<4xf32>
+    scf.for %e_raw = [%first to %width step %step] {
+      %e = index.assume %e_raw [range(%e_raw, 0, 2300)] : index
+      %last = index.add %e, %c3 : index
+      %fits = index.cmp ult, %last, %width : index
+      scf.if %fits {
+        %x = func.call @inkling_dense_embed_values(%q8, %embedding, %vocab, %token, %e) : (i1, buffer, index, index, index) -> (vector<4xf32>)
+        %w = vector.load %scales[%e] : view<2304xf32> -> vector<4xf32>
+        %y = vector.mulf %x, %scale4 : vector<4xf32>
+        %yw = vector.mulf %y, %w : vector<4xf32>
+        vector.store %yw, %dst[%e] : vector<4xf32>, view<2304xf32>
+      }
+    }
+  }
+  func.return
+}
+
+kernel.def @inkling_embed_q8_0(%rows: index) {
+  %c1 = index.constant 1 : index
+  %threads = index.constant 256 : index
+  kernel.launch.config workgroups(%rows, %c1, %c1) workgroup_size(%threads, %c1, %c1) : index
+} launch(%control: buffer, %count_origin: offset, %vocab: index, %tokens: buffer, %tokens_origin: offset, %d_origin: offset, %d_stride: index, %epsilon: f32, %embedding: buffer, %norm_weight: buffer, %output: buffer) {
+  %q8 = scalar.constant true : i1
+  func.call @inkling_dense_embed_body(%q8, %vocab, %control, %count_origin, %tokens, %tokens_origin, %d_origin, %d_stride, %epsilon, %embedding, %norm_weight, %output) : (i1, index, buffer, offset, buffer, offset, offset, index, f32, buffer, buffer, buffer)
+  kernel.return
+}
+
+kernel.def @inkling_embed_bf16(%rows: index) {
+  %c1 = index.constant 1 : index
+  %threads = index.constant 256 : index
+  kernel.launch.config workgroups(%rows, %c1, %c1) workgroup_size(%threads, %c1, %c1) : index
+} launch(%control: buffer, %count_origin: offset, %vocab: index, %tokens: buffer, %tokens_origin: offset, %d_origin: offset, %d_stride: index, %epsilon: f32, %embedding: buffer, %norm_weight: buffer, %output: buffer) {
+  %q8 = scalar.constant false : i1
+  func.call @inkling_dense_embed_body(%q8, %vocab, %control, %count_origin, %tokens, %tokens_origin, %d_origin, %d_stride, %epsilon, %embedding, %norm_weight, %output) : (i1, index, buffer, offset, buffer, offset, offset, index, f32, buffer, buffer, buffer)
+  kernel.return
+}

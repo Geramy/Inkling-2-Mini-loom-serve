@@ -1,0 +1,34 @@
+== ud-q4-k-xl: roofline.py as shipped (no loop): 2315.2 MB/token
+   quantity                                                                                     roofline.py+loop             ours  diff %
+   weights bytes/token                                                                               4.01087e+09      4.01077e+09   -0.00
+   KV bytes ctx 2000 (roofline.py kv_read_bytes with 48 visits, window 1024)                         2.33308e+08      2.33308e+08    0.00
+   KV bytes ctx 8000 (roofline.py kv_read_bytes with 48 visits, window 1024)                         4.29916e+08      4.29916e+08    0.00
+   KV bytes ctx 32000 (roofline.py kv_read_bytes with 48 visits, window 1024)                        1.21635e+09      1.21635e+09    0.00
+   prefill flops/token P=1000 (roofline.py 2*(params-head)+attn, window clamp)                        9.1408e+09      9.13863e+09   -0.02
+   prefill flops/token P=8000 (roofline.py 2*(params-head)+attn, window clamp)                       9.74242e+09      9.70783e+09   -0.36
+   prefill flops/token P=32000 (roofline.py 2*(params-head)+attn, window clamp)                      1.09221e+10      1.09116e+10   -0.10
+   R9700 decode_tps (roofline.py ceilings() with loop-substituted bytes vs ours)                          154.58            154.3   -0.18
+   R9700 decode_tps_2k                                                                                   146.083            145.8   -0.19
+   R9700 decode_tps_32k                                                                                   118.61            118.4   -0.18
+   R9700 prefill_1000 compute-only                                                                       20939.1          20941.9    0.01
+   8060S decode_tps (roofline.py ceilings() with loop-substituted bytes vs ours)                         57.3442             57.2   -0.25
+   8060S decode_tps_2k                                                                                   54.1919             54.1   -0.17
+   8060S decode_tps_32k                                                                                  44.0005             43.9   -0.23
+   8060S prefill_1000 compute-only                                                                        4791.7           4792.4    0.01
+== ud-q8-k-xl: roofline.py as shipped (no loop): 3535.5 MB/token
+   quantity                                                                                     roofline.py+loop             ours  diff %
+   weights bytes/token                                                                               5.77838e+09      5.77828e+09   -0.00
+   KV bytes ctx 2000 (roofline.py kv_read_bytes with 48 visits, window 1024)                         2.33308e+08      2.33308e+08    0.00
+   KV bytes ctx 8000 (roofline.py kv_read_bytes with 48 visits, window 1024)                         4.29916e+08      4.29916e+08    0.00
+   KV bytes ctx 32000 (roofline.py kv_read_bytes with 48 visits, window 1024)                        1.21635e+09      1.21635e+09    0.00
+   prefill flops/token P=1000 (roofline.py 2*(params-head)+attn, window clamp)                        9.1408e+09      9.13863e+09   -0.02
+   prefill flops/token P=8000 (roofline.py 2*(params-head)+attn, window clamp)                       9.74242e+09      9.70783e+09   -0.36
+   prefill flops/token P=32000 (roofline.py 2*(params-head)+attn, window clamp)                      1.09221e+10      1.09116e+10   -0.10
+   R9700 decode_tps (roofline.py ceilings() with loop-substituted bytes vs ours)                         107.297            107.2   -0.09
+   R9700 decode_tps_2k                                                                                   103.132              103   -0.13
+   R9700 decode_tps_32k                                                                                  88.6382             88.5   -0.16
+   R9700 prefill_1000 compute-only                                                                       20939.1          20941.9    0.01
+   8060S decode_tps (roofline.py ceilings() with loop-substituted bytes vs ours)                         39.8036             39.8   -0.01
+   8060S decode_tps_2k                                                                                   38.2588             38.2   -0.15
+   8060S decode_tps_32k                                                                                  32.8819             32.8   -0.25
+   8060S prefill_1000 compute-only                                                                        4791.7           4792.4    0.01

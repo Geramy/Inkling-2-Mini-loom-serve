@@ -1,0 +1,14 @@
+PASS gfx1201  inkling_gemm_wmma_bf16:bf16_attn_q_n1        nmse=4.13e-08 pad_untouched=True 
+PASS gfx1201  inkling_gemm_wmma_bf16:bf16_attn_q_n9        nmse=4.30e-08 pad_untouched=True 
+PASS gfx1201  inkling_gemm_wmma_bf16:bf16_attn_q_n16       nmse=4.18e-08 pad_untouched=True 
+PASS gfx1201  inkling_gemm_wmma_bf16:bf16_attn_q_n100      nmse=4.32e-08 pad_untouched=True 
+PASS gfx1201  inkling_gemm_wmma_bf16:bf16_attn_q_n308      nmse=4.30e-08 pad_untouched=True 
+PASS gfx1201  inkling_gemm_wmma_bf16:bf16_attn_q_n512      nmse=4.30e-08 pad_untouched=True 
+PASS gfx1201  inkling_gemm_wmma_bf16:bf16_attn_o_n77       nmse=4.30e-08 pad_untouched=True 
+PASS gfx1201  inkling_gemm_wmma_bf16:bf16_gate_sig_n33     nmse=6.79e-09 pad_untouched=True 
+PASS gfx1201  inkling_gemm_wmma_bf16:bf16_conv_32_n20      nmse=4.95e-08 pad_untouched=True 
+PASS gfx1201  inkling_gemm_wmma_bf16:bf16_attn_q_oracle_n16 nmse=3.11e-08 pad_untouched=True oracle_relL2=1.41e-03 
+PASS gfx1201  inkling_gemm_wmma_bf16:bf16_small_rows_n20   nmse=3.56e-08 pad_untouched=True 
+PASS gfx1201  inkling_gemm_wmma_bf16:bf16_ctrl_down_4608_n12 nmse=3.79e-08 pad_untouched=True 
+PASS gfx1201  inkling_gemm_wmma_bf16:bf16_ctrl_gain_k64_n12 nmse=4.28e-08 pad_untouched=True 
+13 cases, 0 failed

@@ -24,7 +24,7 @@ target.decl @inkling_rdna3
 
 target.decl @inkling_rdna4
 
-// Decode split size in 64-key blocks. Local visits use 1 block, global visits grow with the context (docs/KERNELS_attn.md).
+// Smallest decode split in 64-key blocks. The kernels raise it so that a visit has at most 64 splits (docs/OPT_D4.md).
 template.decl @inkling.tune.attn.split_blocks(%context: index, %global: index) -> (index)
 
 template.def<@inkling.tune.attn.split_blocks> priority(-1) @inkling_attn_split_blocks_default(%context: index, %global: index) -> (index) {
@@ -37,36 +37,12 @@ template.def<@inkling.tune.attn.split_blocks> priority(-1) @inkling_attn_split_b
 }
 
 template.def<@inkling.tune.attn.split_blocks> target(@inkling_rdna3) @inkling_attn_split_blocks_gfx1151(%context: index, %global: index) -> (index) {
-  %c0 = index.constant 0 : index
-  %c1 = index.constant 1 : index
-  %c2 = index.constant 2 : index
-  %c4 = index.constant 4 : index
-  %c8 = index.constant 8 : index
-  %c4096 = index.constant 4096 : index
-  %c16384 = index.constant 16384 : index
-  %small = index.cmp ule, %context, %c4096 : index
-  %medium = index.cmp ule, %context, %c16384 : index
-  %upper = scf.select %medium, %c4, %c8 : index
-  %grown = scf.select %small, %c2, %upper : index
-  %is_global = index.cmp ne, %global, %c0 : index
-  %value = scf.select %is_global, %grown, %c1 : index
+  %value = index.constant 1 : index
   template.return %value : index
 }
 
 template.def<@inkling.tune.attn.split_blocks> target(@inkling_rdna4) @inkling_attn_split_blocks_gfx1201(%context: index, %global: index) -> (index) {
-  %c0 = index.constant 0 : index
-  %c1 = index.constant 1 : index
-  %c2 = index.constant 2 : index
-  %c4 = index.constant 4 : index
-  %c8 = index.constant 8 : index
-  %c4096 = index.constant 4096 : index
-  %c16384 = index.constant 16384 : index
-  %small = index.cmp ule, %context, %c4096 : index
-  %medium = index.cmp ule, %context, %c16384 : index
-  %upper = scf.select %medium, %c4, %c8 : index
-  %grown = scf.select %small, %c2, %upper : index
-  %is_global = index.cmp ne, %global, %c0 : index
-  %value = scf.select %is_global, %grown, %c1 : index
+  %value = index.constant 1 : index
   template.return %value : index
 }
 
@@ -134,7 +110,8 @@ command.def public target(@inkling_execution) @inkling_hook_attn(%layer: index, 
   %vis = scf.select %g, %vis_g, %i17 : index
   %splitm1 = index.sub %split, %i1 : index
   %vis_up = index.add %vis, %splitm1 : index
-  %max_splits = index.div %vis_up, %split : index
+  %max_splits0 = index.div %vis_up, %split : index
+  %max_splits = index.min %max_splits0, %i64 : index
   %i15 = index.constant 15 : index
   %cap15 = index.add %cap, %i15 : index
   %i16 = index.constant 16 : index

@@ -10,7 +10,7 @@ kernel.decl @inkling_ctrl_down(%cap: index, %nc: index) launch(%cap_in: index, %
 
 kernel.decl @inkling_ctrl_z(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %spans: buffer, %rinv_x: buffer, %rinv_m: buffer, %part: buffer, %z: buffer)
 
-kernel.decl @inkling_mix_states(%cap: index) launch(%cap_in: index, %nb_in: index, %nq_in: index, %block_stride_in: index, %col_stride_in: index, %mode_in: index, %w_stride_in: index, %sel_on_in: index, %blocks_off: index, %cur_off: index, %out_off: index, %spans: buffer, %sel: buffer, %blocks: buffer, %cur: buffer, %query: buffer, %norm_w: buffer, %out: buffer, %rinv_out: buffer)
+kernel.decl @inkling_mix_states(%cap: index, %ncommit: index, %nq: index) launch(%cap_in: index, %ncommit_in: index, %nq: index, %nb_in: index, %block_stride_in: index, %col_stride_in: index, %mode_in: index, %w_stride_in: index, %sel_on_in: index, %blocks_off: index, %cur_off: index, %out_off: index, %commit_site_in: index, %commit_visit_in: index, %spans: buffer, %sel: buffer, %blocks: buffer, %cur: buffer, %query: buffer, %norm_w: buffer, %out: buffer, %rinv_out: buffer, %commit_state: buffer, %commit_a: buffer)
 
 config.decl @inkling.dense_type : %value: index where [range(%value, 0, 1)]
 
@@ -23,6 +23,8 @@ config.decl @inkling.tokens : %value: index where [range(%value, 1, 2147483647)]
 func.decl pure @inkling_layer_in_loop(%layer: index) -> (i1)
 
 func.decl pure @inkling_layer_is_global(%layer: index) -> (i1)
+
+func.decl pure @inkling_visit_index(%layer: index, %pass: index) -> (index)
 
 // Mix area hooks: attention and FFN residual mixes and the post convolutions. The loop message mix runs inside the controller hooks (mix_msg is a no-op).
 
@@ -42,15 +44,39 @@ command.def public target(@inkling_execution) @inkling_hook_mix_attn(%layer: ind
   %controlled = scalar.andi %in_loop, %later : i1
   %is6 = index.cmp eq, %layer, %i6 : index
   %restore = scalar.andi %controlled, %is6 : i1
+  %i17 = index.constant 17 : index
+  %wrap6 = scalar.andi %is6, %later : i1
+  %i18 = index.constant 18 : index
+  %is18 = index.cmp eq, %layer, %i18 : index
+  %wrap = scalar.ori %wrap6, %is18 : i1
+  %layer_pos = scf.select %is0, %i1, %layer : index
+  %lm1 = index.sub %layer_pos, %i1 : index
+  %pl = scf.select %wrap, %i17, %lm1 : index
+  %pass_pos = scf.select %later, %pass, %i1 : index
+  %pm1 = index.sub %pass_pos, %i1 : index
+  %pp0 = scf.select %wrap6, %pm1, %pass : index
+  %i2 = index.constant 2 : index
+  %pp = scf.select %is18, %i2, %pp0 : index
+  %pv = func.call pure @inkling_visit_index(%pl, %pp) : (index, index) -> (index)
+  %i79872 = index.constant 79872 : index
+  %pconv0 = index.mul %pv, %i79872 : index
+  %i167772160 = index.constant 167772160 : index
+  %pconv = index.add %pconv0, %i167772160 : index
+  %pass0 = index.cmp eq, %pass, %i0 : index
+  %skip = scalar.andi %is6, %pass0 : i1
+  %span_cap = config.get @inkling.spans : index
+  %nc = scf.select %skip, %i0, %span_cap : index
+  %nc_main = scf.select %restore, %i0, %nc : index
   %i7 = index.constant 7 : index
   %cap = config.get @inkling.tokens : index
   %i2304 = index.constant 2304 : index
   %cE = index.mul %cap, %i2304 : index
   %slot7 = index.mul %i7, %cE : index
+  %i4352 = index.constant 4352 : index
   scf.if %is0 {
   } else {
   scf.if %restore {
-  kernel.launch @inkling_mix_states[%cap](%cap, %i0, %i1, %cE, %cE, %i0, %i0, %i0, %i0, %slot7, %i0, %span_table, %xn, %blocks, %blocks, %xn, %xn, %cur, %small) : [index](index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_mix_states[%cap, %span_cap, %i1](%cap, %span_cap, %i1, %i0, %cE, %cE, %i0, %i0, %i0, %i0, %slot7, %i0, %i4352, %pconv, %span_table, %xn, %blocks, %blocks, %xn, %xn, %cur, %small, %arena, %y) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   }
   %pick1 = scf.if %g -> (buffer) {
   %w2 = command.parameter %parameters, "blk.{}.attn_res_query.weight"[%layer] : view<6912xf32>
@@ -62,9 +88,17 @@ command.def public target(@inkling_execution) @inkling_hook_mix_attn(%layer: ind
     scf.yield %wb5 : buffer
   }
   scf.if %controlled {
-  kernel.launch @inkling_mix_states[%cap](%cap, %nb, %nq, %cE, %cE, %i0, %i0, %i0, %i0, %i0, %i0, %span_table, %xn, %blocks, %cur, %pick1, %xn, %xn, %small) : [index](index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_mix_states[%cap, %nc_main, %nq](%cap, %nc_main, %nq, %nb, %cE, %cE, %i0, %i0, %i0, %i0, %i0, %i0, %i4352, %pconv, %span_table, %xn, %blocks, %cur, %pick1, %xn, %xn, %small, %arena, %y) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   } else {
-  kernel.launch @inkling_mix_states[%cap](%cap, %nb, %nq, %cE, %cE, %i0, %i0, %i0, %i0, %i0, %i0, %span_table, %xn, %blocks, %cur, %pick1, %xn, %x, %small) : [index](index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  scf.if %g {
+  kernel.launch @inkling_mix_states[%cap, %nc_main, %i3](%cap, %nc_main, %i3, %nb, %cE, %cE, %i0, %i0, %i0, %i0, %i0, %i0, %i4352, %pconv, %span_table, %xn, %blocks, %cur, %pick1, %xn, %x, %small, %arena, %y) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  } else {
+  %w6 = command.parameter %parameters, "blk.{}.attn_res_query.weight"[%layer] : view<2304xf32>
+  %wb7 = command.parameter.base %w6 : view<2304xf32> -> buffer
+  %w8 = command.parameter %parameters, "blk.{}.attn_norm.weight"[%layer] : view<2304xf32>
+  %wb9 = command.parameter.base %w8 : view<2304xf32> -> buffer
+  kernel.launch @inkling_mix_states[%cap, %nc_main, %i1](%cap, %nc_main, %i1, %nb, %cE, %cE, %i1, %i0, %i0, %i0, %i0, %i0, %i4352, %pconv, %span_table, %xn, %blocks, %cur, %wb7, %wb9, %xn, %small, %arena, %y) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  }
   }
   }
   command.return
@@ -94,11 +128,9 @@ command.def public target(@inkling_execution) @inkling_hook_post_attn(%layer: in
   %i167772160 = index.constant 167772160 : index
   %convv = index.add %convv0, %i167772160 : index
   %i2048 = index.constant 2048 : index
-  %span_cap = config.get @inkling.spans : index
   %w1 = command.parameter %parameters, "blk.{}.attn_post_conv.weight"[%layer] : view<9216xf32>
   %wb2 = command.parameter.base %w1 : view<9216xf32> -> buffer
   kernel.launch @inkling_conv_res[%cap](%cap, %i2048, %convv, %push, %push_block, %cE, %bank_on, %bank_origin, %span_table, %arena, %ob, %wb2, %cur, %blocks, %bank) : [index](index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
-  kernel.launch @inkling_conv_commit[%span_cap](%span_cap, %i2048, %convv, %span_table, %arena, %ob) : [index](index, index, index, buffer, buffer, buffer)
   command.return
 }
 
@@ -107,6 +139,12 @@ command.def public target(@inkling_execution) @inkling_hook_mix_ffn(%layer: inde
   %l6 = index.div %layer, %i6 : index
   %i1 = index.constant 1 : index
   %nbf = index.add %l6, %i1 : index
+  %span_cap = config.get @inkling.spans : index
+  %i2048 = index.constant 2048 : index
+  %i79872 = index.constant 79872 : index
+  %convv0 = index.mul %visit, %i79872 : index
+  %i167772160 = index.constant 167772160 : index
+  %convv = index.add %convv0, %i167772160 : index
   %in_loop = func.call pure @inkling_layer_in_loop(%layer) : (index) -> (i1)
   %i0 = index.constant 0 : index
   %later = index.cmp ugt, %pass, %i0 : index
@@ -117,9 +155,11 @@ command.def public target(@inkling_execution) @inkling_hook_mix_ffn(%layer: inde
   %w1 = command.parameter %parameters, "blk.{}.ffn_res_query.weight"[%layer] : view<2304xf32>
   %wb2 = command.parameter.base %w1 : view<2304xf32> -> buffer
   scf.if %controlled {
-  kernel.launch @inkling_mix_states[%cap](%cap, %nbf, %i1, %cE, %cE, %i0, %i0, %i0, %i0, %i0, %i0, %span_table, %xn, %blocks, %cur, %wb2, %xn, %xn, %small) : [index](index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_mix_states[%cap, %span_cap, %i1](%cap, %span_cap, %i1, %nbf, %cE, %cE, %i0, %i0, %i0, %i0, %i0, %i0, %i2048, %convv, %span_table, %xn, %blocks, %cur, %wb2, %xn, %xn, %small, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   } else {
-  kernel.launch @inkling_mix_states[%cap](%cap, %nbf, %i1, %cE, %cE, %i0, %i0, %i0, %i0, %i0, %i0, %span_table, %xn, %blocks, %cur, %wb2, %xn, %x, %small) : [index](index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  %w3 = command.parameter %parameters, "blk.{}.ffn_norm.weight"[%layer] : view<2304xf32>
+  %wb4 = command.parameter.base %w3 : view<2304xf32> -> buffer
+  kernel.launch @inkling_mix_states[%cap, %span_cap, %i1](%cap, %span_cap, %i1, %nbf, %cE, %cE, %i1, %i0, %i0, %i0, %i0, %i0, %i2048, %convv, %span_table, %xn, %blocks, %cur, %wb2, %wb4, %xn, %small, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   }
   command.return
 }
@@ -144,17 +184,22 @@ command.def public target(@inkling_execution) @inkling_hook_post_ffn(%layer: ind
   %i167772160 = index.constant 167772160 : index
   %convv = index.add %convv0, %i167772160 : index
   %i4352 = index.constant 4352 : index
-  %span_cap = config.get @inkling.spans : index
   %i5 = index.constant 5 : index
   %is5 = index.cmp eq, %layer, %i5 : index
   %i7 = index.constant 7 : index
   %slot7 = index.mul %i7, %cE : index
+  %span_cap = config.get @inkling.spans : index
+  %i23 = index.constant 23 : index
+  %is23 = index.cmp eq, %layer, %i23 : index
   %w1 = command.parameter %parameters, "blk.{}.ffn_post_conv.weight"[%layer] : view<9216xf32>
   %wb2 = command.parameter.base %w1 : view<9216xf32> -> buffer
   kernel.launch @inkling_conv_res[%cap](%cap, %i4352, %convv, %i0, %i0, %cE, %bank_on, %bank_origin, %span_table, %arena, %y, %wb2, %cur, %blocks, %bank) : [index](index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
-  kernel.launch @inkling_conv_commit[%span_cap](%span_cap, %i4352, %convv, %span_table, %arena, %y) : [index](index, index, index, buffer, buffer, buffer)
   scf.if %is5 {
-  kernel.launch @inkling_mix_states[%cap](%cap, %i0, %i1, %cE, %cE, %i0, %i0, %i0, %i0, %i0, %slot7, %span_table, %xn, %blocks, %cur, %xn, %xn, %blocks, %small) : [index](index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_mix_states[%cap, %span_cap, %i1](%cap, %span_cap, %i1, %i0, %cE, %cE, %i0, %i0, %i0, %i0, %i0, %slot7, %i4352, %convv, %span_table, %xn, %blocks, %cur, %xn, %xn, %blocks, %small, %arena, %y) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  } else {
+  scf.if %is23 {
+  kernel.launch @inkling_conv_commit[%span_cap](%span_cap, %i4352, %convv, %span_table, %arena, %y) : [index](index, index, index, buffer, buffer, buffer)
+  }
   }
   command.return
 }
@@ -195,7 +240,7 @@ command.def public target(@inkling_execution) @inkling_hook_ctrl_qkv(%layer: ind
   %z = buffer.alloca<global> align(256) %z_bytes : buffer
   %w1 = command.parameter %parameters, "blk.{}.loop_msg_query.weight"[%layer] : view<4x2304xf32>
   %wb2 = command.parameter.base %w1 : view<4x2304xf32> -> buffer
-  kernel.launch @inkling_mix_states[%cap](%cap, %i1, %i4, %cE, %cE, %i0, %i0, %i0, %bank_set, %bank_cur, %i0, %span_table, %xn, %bank, %bank, %wb2, %xn, %msg, %rinv_m) : [index](index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_mix_states[%cap, %i0, %i4](%cap, %i0, %i4, %i1, %cE, %cE, %i0, %i0, %i0, %bank_set, %bank_cur, %i0, %i0, %i0, %span_table, %xn, %bank, %bank, %wb2, %xn, %msg, %rinv_m, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   %pick3 = scf.if %ctrl_f32 -> (buffer) {
   %w4 = command.parameter %parameters, "blk.{}.loop_q_ctrl_down.weight"[%layer] : view<64x4608xf32>
   %wb5 = command.parameter.base %w4 : view<64x4608xf32> -> buffer
@@ -317,7 +362,7 @@ command.def public target(@inkling_execution) @inkling_hook_ctrl_ffn(%layer: ind
   %z = buffer.alloca<global> align(256) %z_bytes : buffer
   %w1 = command.parameter %parameters, "blk.{}.loop_msg_query.weight"[%layer] : view<4x2304xf32>
   %wb2 = command.parameter.base %w1 : view<4x2304xf32> -> buffer
-  kernel.launch @inkling_mix_states[%cap](%cap, %i1, %i4, %cE, %cE, %i0, %i0, %i0, %bank_set, %bank_cur, %i0, %span_table, %xn, %bank, %bank, %wb2, %xn, %msg, %rinv_m) : [index](index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_mix_states[%cap, %i0, %i4](%cap, %i0, %i4, %i1, %cE, %cE, %i0, %i0, %i0, %bank_set, %bank_cur, %i0, %i0, %i0, %span_table, %xn, %bank, %bank, %wb2, %xn, %msg, %rinv_m, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   %pick3 = scf.if %ctrl_f32 -> (buffer) {
   %w4 = command.parameter %parameters, "blk.{}.loop_ffn_ctrl_down.weight"[%layer] : view<64x4608xf32>
   %wb5 = command.parameter.base %w4 : view<64x4608xf32> -> buffer

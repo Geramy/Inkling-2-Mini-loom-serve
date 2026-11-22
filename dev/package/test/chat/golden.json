@@ -1,0 +1,1277 @@
+[
+ {
+  "name": "single_turn",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Hello"
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Hello<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Hello<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "system_user",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "You are terse."
+    },
+    {
+     "role": "user",
+     "content": "Hello"
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>You are terse.<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Hello<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>You are terse.<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Hello<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "multi_turn",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Hi"
+    },
+    {
+     "role": "assistant",
+     "content": "Hello! How can I help?"
+    },
+    {
+     "role": "user",
+     "content": "Tell me a joke."
+    },
+    {
+     "role": "assistant",
+     "content": "No."
+    },
+    {
+     "role": "user",
+     "content": "Why not?"
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Hi<|end_message|><|message_model|><|content_text|>Hello! How can I help?<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>Tell me a joke.<|end_message|><|message_model|><|content_text|>No.<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>Why not?<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Hi<|end_message|><|message_model|><|content_text|>Hello! How can I help?<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>Tell me a joke.<|end_message|><|message_model|><|content_text|>No.<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>Why not?<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "two_systems_and_late_system",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "one"
+    },
+    {
+     "role": "system",
+     "content": "two"
+    },
+    {
+     "role": "user",
+     "content": "q"
+    },
+    {
+     "role": "assistant",
+     "content": "a"
+    },
+    {
+     "role": "system",
+     "content": "late"
+    },
+    {
+     "role": "user",
+     "content": "r"
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>one<|end_message|><|message_system|><|content_text|>two<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>q<|end_message|><|message_model|><|content_text|>a<|end_message|><|content_model_end_sampling|><|message_system|><|content_text|>late<|end_message|><|message_user|><|content_text|>r<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>one<|end_message|><|message_system|><|content_text|>two<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>q<|end_message|><|message_model|><|content_text|>a<|end_message|><|content_model_end_sampling|><|message_system|><|content_text|>late<|end_message|><|message_user|><|content_text|>r<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "system_only",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "just a system message"
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>just a system message<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>just a system message<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "tools_declared",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Weather in Zürich?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Get the weather for a city",
+      "parameters": {
+       "type": "object",
+       "required": [
+        "city"
+       ],
+       "properties": {
+        "unit": {
+         "enum": [
+          "c",
+          "f"
+         ],
+         "type": "string",
+         "description": "Unit \"quoted\"\nsecond line"
+        },
+        "city": {
+         "type": "string",
+         "description": "Name, e.g. Zürich 東京"
+        },
+        "days": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 14
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "search",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Get the weather for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"description\":\"Name, e.g. Zürich 東京\",\"type\":\"string\"},\"days\":{\"maximum\":14,\"minimum\":1,\"type\":\"integer\"},\"unit\":{\"description\":\"Unit \\\"quoted\\\"\\nsecond line\",\"enum\":[\"c\",\"f\"],\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"},\"type\":\"function\"},{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|>",
+  "oracle": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Get the weather for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"description\":\"Name, e.g. Zürich 東京\",\"type\":\"string\"},\"days\":{\"maximum\":14,\"minimum\":1,\"type\":\"integer\"},\"unit\":{\"description\":\"Unit \\\"quoted\\\"\\nsecond line\",\"enum\":[\"c\",\"f\"],\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"},\"type\":\"function\"},{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "tool_without_function_wrapper",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    }
+   ],
+   "tools": [
+    {
+     "name": "noop"
+    }
+   ]
+  },
+  "expect": "jinja",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|>",
+  "oracle": {
+   "error": "{\"error\":{\"code\":500,\"message\":\"Failed to parse tools: Missing tool type: {\\\"name\\\":\\\"noop\\\"}; tools = [\\n  {\\n    \\\"name\\\": \\\"noop\\\"\\n  }\\n]\",\"type\":\"server_error\"}}"
+  },
+  "engines_agree": true
+ },
+ {
+  "name": "tool_roundtrip",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Weather in Zürich and Tokyo?"
+    },
+    {
+     "role": "assistant",
+     "content": null,
+     "reasoning_content": "I should call the tool twice.",
+     "tool_calls": [
+      {
+       "id": "call_1_0",
+       "type": "function",
+       "function": {
+        "name": "get_weather",
+        "arguments": "{\"city\": \"Zürich\", \"unit\": \"c\", \"days\": 3}"
+       }
+      },
+      {
+       "id": "call_1_1",
+       "type": "function",
+       "function": {
+        "name": "get_weather",
+        "arguments": "{\"unit\": \"f\", \"city\": \"東京\", \"opts\": {\"z\": [1, 2.5, null, true], \"a\": \"line\\n\\\"q\\\"\\t\\\\\"}}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "name": "get_weather",
+     "tool_call_id": "call_1_0",
+     "content": "{\"temp\": 21}"
+    },
+    {
+     "role": "tool",
+     "name": "get_weather",
+     "tool_call_id": "call_1_1",
+     "content": "sunny"
+    },
+    {
+     "role": "assistant",
+     "content": "Zürich is 21C and Tokyo is sunny."
+    },
+    {
+     "role": "user",
+     "content": "thanks"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Get the weather for a city",
+      "parameters": {
+       "type": "object",
+       "required": [
+        "city"
+       ],
+       "properties": {
+        "unit": {
+         "enum": [
+          "c",
+          "f"
+         ],
+         "type": "string",
+         "description": "Unit \"quoted\"\nsecond line"
+        },
+        "city": {
+         "type": "string",
+         "description": "Name, e.g. Zürich 東京"
+        },
+        "days": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 14
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Get the weather for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"description\":\"Name, e.g. Zürich 東京\",\"type\":\"string\"},\"days\":{\"maximum\":14,\"minimum\":1,\"type\":\"integer\"},\"unit\":{\"description\":\"Unit \\\"quoted\\\"\\nsecond line\",\"enum\":[\"c\",\"f\"],\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich and Tokyo?<|end_message|><|message_model|><|content_thinking|>I should call the tool twice.<|end_message|><|message_model|>get_weather<|content_invoke_tool_json|>{\"name\":\"get_weather\",\"args\":{\"city\":\"Zürich\",\"days\":3,\"unit\":\"c\"}}<|end_message|><|message_model|>get_weather<|content_invoke_tool_json|>{\"name\":\"get_weather\",\"args\":{\"city\":\"東京\",\"opts\":{\"z\":[1,2.5,null,true],\"a\":\"line\\n\\\"q\\\"\\t\\\\\"},\"unit\":\"f\"}}<|end_message|><|content_model_end_sampling|><|message_tool|>get_weather<|content_text|>{\"temp\": 21}<|end_message|><|message_tool|>get_weather<|content_text|>sunny<|end_message|><|message_model|><|content_text|>Zürich is 21C and Tokyo is sunny.<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>thanks<|end_message|>",
+  "oracle": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Get the weather for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"description\":\"Name, e.g. Zürich 東京\",\"type\":\"string\"},\"days\":{\"maximum\":14,\"minimum\":1,\"type\":\"integer\"},\"unit\":{\"description\":\"Unit \\\"quoted\\\"\\nsecond line\",\"enum\":[\"c\",\"f\"],\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich and Tokyo?<|end_message|><|message_model|><|content_thinking|>I should call the tool twice.<|end_message|><|message_model|>get_weather<|content_invoke_tool_json|>{\"name\":\"get_weather\",\"args\":{\"city\":\"Zürich\",\"days\":3,\"unit\":\"c\"}}<|end_message|><|message_model|>get_weather<|content_invoke_tool_json|>{\"name\":\"get_weather\",\"args\":{\"city\":\"東京\",\"opts\":{\"z\":[1,2.5,null,true],\"a\":\"line\\n\\\"q\\\"\\t\\\\\"},\"unit\":\"f\"}}<|end_message|><|content_model_end_sampling|><|message_tool|>get_weather<|content_text|>{\"temp\": 21}<|end_message|><|message_tool|>get_weather<|content_text|>sunny<|end_message|><|message_model|><|content_text|>Zürich is 21C and Tokyo is sunny.<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>thanks<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "tool_call_with_text",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "Let me look.",
+     "tool_calls": [
+      {
+       "id": "call_1_0",
+       "type": "function",
+       "function": {
+        "name": "search",
+        "arguments": "{\"q\": \"llama\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "name": "search",
+     "content": "3 hits"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "search",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|><|content_text|>Let me look.<|end_message|><|message_model|>search<|content_invoke_tool_json|>{\"name\":\"search\",\"args\":{\"q\":\"llama\"}}<|end_message|><|content_model_end_sampling|><|message_tool|>search<|content_text|>3 hits<|end_message|>",
+  "oracle": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|><|content_text|>Let me look.<|end_message|><|message_model|>search<|content_invoke_tool_json|>{\"name\":\"search\",\"args\":{\"q\":\"llama\"}}<|end_message|><|content_model_end_sampling|><|message_tool|>search<|content_text|>3 hits<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "tool_call_no_args",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "call_1_0",
+       "type": "function",
+       "function": {
+        "name": "noop",
+        "arguments": "{}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "name": "noop",
+     "content": ""
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "noop"
+     }
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|><|end_message|>",
+  "oracle": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|><|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "tool_id_only",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "call_9_0",
+       "type": "function",
+       "function": {
+        "name": "noop",
+        "arguments": "{}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_9_0",
+     "content": "ok"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "noop"
+     }
+    }
+   ]
+  },
+  "expect": "reject",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
+  "oracle": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "reasoning_history",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "2+2?"
+    },
+    {
+     "role": "assistant",
+     "content": "4",
+     "reasoning_content": "Add two and two."
+    },
+    {
+     "role": "user",
+     "content": "and 3+3?"
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>2+2?<|end_message|><|message_model|><|content_thinking|>Add two and two.<|end_message|><|message_model|><|content_text|>4<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>and 3+3?<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>2+2?<|end_message|><|message_model|><|content_thinking|>Add two and two.<|end_message|><|message_model|><|content_text|>4<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>and 3+3?<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "reasoning_only_assistant",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "hm"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "reasoning_content": "thinking only"
+    },
+    {
+     "role": "user",
+     "content": "go on"
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>hm<|end_message|><|message_model|><|content_thinking|>thinking only<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>go on<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>hm<|end_message|><|message_model|><|content_thinking|>thinking only<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>go on<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "empty_assistant",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "hm"
+    },
+    {
+     "role": "assistant",
+     "content": ""
+    },
+    {
+     "role": "user",
+     "content": "go on"
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>hm<|end_message|><|message_model|><|content_text|><|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>go on<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>hm<|end_message|><|message_model|><|content_text|><|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>go on<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "content_parts",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "part one"
+      },
+      {
+       "type": "text",
+       "text": "part two"
+      }
+     ]
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>part one<|end_message|><|message_user|><|content_text|>part two<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>part one<|end_message|><|message_user|><|content_text|>part two<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "unicode_and_escapes",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "日本語 émoji 😀 ‮ quote \" backslash \\ tab\t nl\n <|end_message|> done"
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>日本語 émoji 😀 ‮ quote \" backslash \\ tab\t nl\n <|end_message|> done<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>日本語 émoji 😀 ‮ quote \" backslash \\ tab\t nl\n <|end_message|> done<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "whitespace_untrimmed",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "  padded \n\n"
+    },
+    {
+     "role": "assistant",
+     "content": "\n answer  "
+    },
+    {
+     "role": "user",
+     "content": " next "
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>  padded \n\n<|end_message|><|message_model|><|content_text|>\n answer  <|end_message|><|content_model_end_sampling|><|message_user|><|content_text|> next <|end_message|>",
+  "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>  padded \n\n<|end_message|><|message_model|><|content_text|>\n answer  <|end_message|><|content_model_end_sampling|><|message_user|><|content_text|> next <|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "args_key_order",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "call_1_0",
+       "type": "function",
+       "function": {
+        "name": "kv",
+        "arguments": "{\"Zeta\": 1, \"alpha\": {\"z\": 1, \"a\": [{\"y\": 2, \"b\": 1}]}, \"_u\": \"é\", \"B\": true, \"é\": null, \"a\": -3.5}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "name": "kv",
+     "content": "ok"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "noop"
+     }
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>kv<|content_invoke_tool_json|>{\"name\":\"kv\",\"args\":{\"B\":true,\"Zeta\":1,\"_u\":\"é\",\"a\":-3.5,\"alpha\":{\"z\":1,\"a\":[{\"y\":2,\"b\":1}]},\"é\":null}}<|end_message|><|content_model_end_sampling|><|message_tool|>kv<|content_text|>ok<|end_message|>",
+  "oracle": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>kv<|content_invoke_tool_json|>{\"name\":\"kv\",\"args\":{\"B\":true,\"Zeta\":1,\"_u\":\"é\",\"a\":-3.5,\"alpha\":{\"z\":1,\"a\":[{\"y\":2,\"b\":1}]},\"é\":null}}<|end_message|><|content_model_end_sampling|><|message_tool|>kv<|content_text|>ok<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "tools_nested_sort",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "nest",
+      "description": "Café “quoted” / slash \\ back",
+      "parameters": {
+       "type": "object",
+       "required": [
+        "b",
+        "a"
+       ],
+       "additionalProperties": false,
+       "properties": {
+        "z": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "properties": {
+           "y": {
+            "type": "integer"
+           },
+           "x": {
+            "type": "number",
+            "default": 0.5
+           }
+          }
+         }
+        },
+        "a": {
+         "anyOf": [
+          {
+           "type": "null"
+          },
+          {
+           "type": "string",
+           "enum": [
+            "q",
+            "p"
+           ]
+          }
+         ],
+         "description": ""
+        },
+        "B": {
+         "type": "boolean",
+         "const": true
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "empty_params",
+      "description": "",
+      "parameters": {}
+     }
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Café “quoted” / slash \\\\ back\",\"name\":\"nest\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"B\":{\"const\":true,\"type\":\"boolean\"},\"a\":{\"anyOf\":[{\"type\":\"null\"},{\"enum\":[\"q\",\"p\"],\"type\":\"string\"}],\"description\":\"\"},\"z\":{\"items\":{\"properties\":{\"x\":{\"default\":0.5,\"type\":\"number\"},\"y\":{\"type\":\"integer\"}},\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"b\",\"a\"],\"type\":\"object\"},\"type\":\"function\"},{\"description\":\"\",\"name\":\"empty_params\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|>",
+  "oracle": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Café “quoted” / slash \\\\ back\",\"name\":\"nest\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"B\":{\"const\":true,\"type\":\"boolean\"},\"a\":{\"anyOf\":[{\"type\":\"null\"},{\"enum\":[\"q\",\"p\"],\"type\":\"string\"}],\"description\":\"\"},\"z\":{\"items\":{\"properties\":{\"x\":{\"default\":0.5,\"type\":\"number\"},\"y\":{\"type\":\"integer\"}},\"type\":\"object\"},\"type\":\"array\"}},\"required\":[\"b\",\"a\"],\"type\":\"object\"},\"type\":\"function\"},{\"description\":\"\",\"name\":\"empty_params\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "tools_null_fields",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "null_description",
+      "description": null,
+      "parameters": null
+     }
+    }
+   ]
+  },
+  "expect": "jinja",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"null_description\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|>",
+  "oracle": {
+   "error": "{\"error\":{\"code\":500,\"message\":\"Failed to parse tools: [json.exception.type_error.302] type must be string, but is null; tools = [\\n  {\\n    \\\"type\\\": \\\"function\\\",\\n    \\\"function\\\": {\\n      \\\"name\\"
+  },
+  "engines_agree": true
+ },
+ {
+  "name": "many_tool_results",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "c0",
+       "type": "function",
+       "function": {
+        "name": "a",
+        "arguments": "{}"
+       }
+      },
+      {
+       "id": "c1",
+       "type": "function",
+       "function": {
+        "name": "b",
+        "arguments": "{\"x\": 1}"
+       }
+      },
+      {
+       "id": "c2",
+       "type": "function",
+       "function": {
+        "name": "c",
+        "arguments": "{}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "name": "a",
+     "content": "ra"
+    },
+    {
+     "role": "tool",
+     "name": "b",
+     "content": "rb"
+    },
+    {
+     "role": "tool",
+     "name": "c",
+     "content": "rc"
+    },
+    {
+     "role": "assistant",
+     "content": "done"
+    },
+    {
+     "role": "user",
+     "content": "again"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "noop"
+     }
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>a<|content_invoke_tool_json|>{\"name\":\"a\",\"args\":{}}<|end_message|><|message_model|>b<|content_invoke_tool_json|>{\"name\":\"b\",\"args\":{\"x\":1}}<|end_message|><|message_model|>c<|content_invoke_tool_json|>{\"name\":\"c\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>a<|content_text|>ra<|end_message|><|message_tool|>b<|content_text|>rb<|end_message|><|message_tool|>c<|content_text|>rc<|end_message|><|message_model|><|content_text|>done<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>again<|end_message|>",
+  "oracle": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>a<|content_invoke_tool_json|>{\"name\":\"a\",\"args\":{}}<|end_message|><|message_model|>b<|content_invoke_tool_json|>{\"name\":\"b\",\"args\":{\"x\":1}}<|end_message|><|message_model|>c<|content_invoke_tool_json|>{\"name\":\"c\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>a<|content_text|>ra<|end_message|><|message_tool|>b<|content_text|>rb<|end_message|><|message_tool|>c<|content_text|>rc<|end_message|><|message_model|><|content_text|>done<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>again<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "user_name_ignored",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "name": "alice",
+     "content": "hi"
+    },
+    {
+     "role": "assistant",
+     "content": "yo",
+     "reasoning_content": ""
+    },
+    {
+     "role": "user",
+     "content": "r"
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>hi<|end_message|><|message_model|><|content_text|>yo<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>r<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>hi<|end_message|><|message_model|><|content_text|>yo<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>r<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "tool_content_parts",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "call_1_0",
+       "type": "function",
+       "function": {
+        "name": "noop",
+        "arguments": "{}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "name": "noop",
+     "content": [
+      {
+       "type": "text",
+       "text": "r1"
+      },
+      {
+       "type": "text",
+       "text": "r2"
+      }
+     ]
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "noop"
+     }
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>r1<|end_message|><|message_tool|>noop<|content_text|>r2<|end_message|>",
+  "oracle": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>r1<|end_message|><|message_tool|>noop<|content_text|>r2<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "system_parts",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": [
+      {
+       "type": "text",
+       "text": "sys one"
+      },
+      {
+       "type": "text",
+       "text": "sys two"
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": "q"
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>sys one<|end_message|><|message_system|><|content_text|>sys two<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>q<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>sys one<|end_message|><|message_system|><|content_text|>sys two<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>q<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "assistant_name",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "q"
+    },
+    {
+     "role": "assistant",
+     "name": "bot",
+     "content": "hello"
+    },
+    {
+     "role": "user",
+     "content": "r"
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>q<|end_message|><|message_model|>bot<|content_text|>hello<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>r<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>q<|end_message|><|message_model|>bot<|content_text|>hello<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>r<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "empty_user",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": ""
+    }
+   ]
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|><|end_message|>",
+  "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|><|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_none",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "s"
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": "none"
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_minimal",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "s"
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": "minimal"
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.1<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.1<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_low",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "s"
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": "low"
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.2<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.2<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_medium",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "s"
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": "medium"
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.7<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.7<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_high",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "s"
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": "high"
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_xhigh",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "s"
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": "xhigh"
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.99<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.99<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_max",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "s"
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": "max"
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.99<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.99<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_low",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "s"
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": " low "
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.2<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.2<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_0.25",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "s"
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": 0.25
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.25<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.25<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_0.5",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "s"
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": 0.5
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.5<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.5<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_0",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "s"
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": 0
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_0.99",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "s"
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": 0.99
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.99<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.99<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_0.123456",
+  "body": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "s"
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": 0.123456
+  },
+  "expect": "match",
+  "jinja": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.123456<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>s<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.123456<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_null",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": null
+  },
+  "expect": "same",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "effort_bad_string",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": "extreme"
+  },
+  "expect": "reject",
+  "jinja": {
+   "error": "Unknown reasoning_effort: extreme"
+  },
+  "oracle": {
+   "error": "{\"error\":{\"code\":500,\"message\":\"\\n------------\\nWhile executing CallExpression at line 9, column 32 in source:\\n..._map -%}↵            {{- raise_exception(\\\"Unknown reasoning_effort: \\\" ~ eff) -}}..."
+  },
+  "engines_agree": true
+ },
+ {
+  "name": "effort_too_high",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": 1
+  },
+  "expect": "reject",
+  "jinja": {
+   "error": "reasoning_effort must be in [0.0, 0.99]"
+  },
+  "oracle": {
+   "error": "{\"error\":{\"code\":500,\"message\":\"\\n------------\\nWhile executing CallExpression at line 16, column 28 in source:\\n...m > 0.99 -%}↵        {{- raise_exception(\\\"reasoning_effort must be in [0.0, 0.99..."
+  },
+  "engines_agree": true
+ },
+ {
+  "name": "effort_negative",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": -0.1
+  },
+  "expect": "reject",
+  "jinja": {
+   "error": "reasoning_effort must be in [0.0, 0.99]"
+  },
+  "oracle": {
+   "error": "{\"error\":{\"code\":500,\"message\":\"\\n------------\\nWhile executing CallExpression at line 16, column 28 in source:\\n...m > 0.99 -%}↵        {{- raise_exception(\\\"reasoning_effort must be in [0.0, 0.99..."
+  },
+  "engines_agree": true
+ },
+ {
+  "name": "effort_seven_digits",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "reasoning_effort": 0.1234567
+  },
+  "expect": "reject",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.1234567<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.123457<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ }
+]

@@ -1,0 +1,2 @@
+{"label": "loom-baseline-ctx32k", "kind": "loom", "time": "2026-11-21 16:03:23", "thinking": "off", "warmup_decode_tps": 38.57, "completion_tokens": {"decode_tps": [300], "decode_tps_2k": [256]}, "decode_tps": 38.74, "prefill": [{"prompt_tokens": 1258, "prefill_tps": 814.3, "min": 811.7, "max": 815.9, "n": 5}, {"prompt_tokens": 2454, "prefill_tps": 830.1, "min": 828.7, "max": 836.8, "n": 5}], "decode_tps_2k": 35.6}
+{"session_end": "spin-1"}

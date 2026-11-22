@@ -1,0 +1,126 @@
+func.decl pure @inkling_visit_index(%layer: index, %pass: index) -> (index)
+
+config.decl @inkling.tokens : %value: index where [range(%value, 1, 2147483647)]
+
+config.decl @inkling.spans : %value: index where [range(%value, 1, 2147483647)]
+
+config.decl @inkling.capture_id : %value: index where [range(%value, 0, 1024)]
+
+kernel.decl @inkling_prep_spans() launch(%metadata: buffer, %origins: buffer, %span_table: buffer, %token_map: buffer)
+
+kernel.decl @inkling_capture_rows() launch(%src_width: index, %col: index, %half: index, %metadata: buffer, %src: buffer, %residual: buffer)
+
+target.decl @inkling_execution
+
+command.decl @inkling_hook_debug(%id: index) launch(%parameters: buffer, %metadata: buffer, %x0: buffer, %residual: buffer)
+
+command.decl @inkling_hook_embed() launch(%parameters: buffer, %metadata: buffer, %tokens: buffer, %embd: buffer, %cur: buffer)
+
+command.decl @inkling_hook_head() launch(%parameters: buffer, %span_table: buffer, %token_map: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %cur: buffer, %blocks: buffer, %bank: buffer, %x: buffer, %xn: buffer, %small: buffer, %q: buffer, %k: buffer, %v: buffer, %r: buffer, %gate: buffer, %ab: buffer, %ob: buffer, %y: buffer, %outputs: buffer, %residual: buffer)
+
+command.decl @inkling_visit(%layer: index, %visit: index, %pass: index) launch(%parameters: buffer, %span_table: buffer, %token_map: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %cur: buffer, %blocks: buffer, %bank: buffer, %x: buffer, %xn: buffer, %small: buffer, %q: buffer, %k: buffer, %v: buffer, %r: buffer, %gate: buffer, %ab: buffer, %ob: buffer, %y: buffer, %residual: buffer)
+
+config.decl @inkling.hidden : %value: index where [range(%value, 1, 2304)]
+
+func.def public pure inline @inkling_ws_bytes(%tokens: index, %words: index) -> (offset) {
+  %c4 = index.constant 4 : offset
+  %row_bytes = index.scale %words, %c4 : index, offset -> offset
+  %bytes = index.scale %tokens, %row_bytes : index, offset -> offset
+  func.return %bytes : offset
+}
+
+// Shared activation buffers (F32 words per token: 1 = [cap][E]). Layout of each buffer is documented in docs/DISPATCH.md.
+command.def public target(@inkling_execution) @inkling_model() launch(%parameters: buffer, %residual: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %tokens: buffer, %outputs: buffer) {
+  %tokens_cap = config.get @inkling.tokens : index
+  %spans_cap = config.get @inkling.spans : index
+  %c16 = index.constant 16 : offset
+  %c32 = index.constant 32 : offset
+  %span_bytes = index.scale %spans_cap, %c32 : index, offset -> offset
+  %span_total = index.add %span_bytes, %c16 : offset
+  %span_table = buffer.alloca<global> align(256) %span_total : buffer
+  %map_stride = index.constant 16 : offset
+  %map_bytes = index.scale %tokens_cap, %map_stride : index, offset -> offset
+  %token_map = buffer.alloca<global> align(256) %map_bytes : buffer
+  %w_embd = index.constant 2304 : index
+  %b_embd = func.call pure @inkling_ws_bytes(%tokens_cap, %w_embd) : (index, index) -> (offset)
+  %embd = buffer.alloca<global> align(256) %b_embd : buffer
+  %w_cur = index.constant 2304 : index
+  %b_cur = func.call pure @inkling_ws_bytes(%tokens_cap, %w_cur) : (index, index) -> (offset)
+  %cur = buffer.alloca<global> align(256) %b_cur : buffer
+  %w_blocks = index.constant 18432 : index
+  %b_blocks = func.call pure @inkling_ws_bytes(%tokens_cap, %w_blocks) : (index, index) -> (offset)
+  %blocks = buffer.alloca<global> align(256) %b_blocks : buffer
+  %w_bank = index.constant 9216 : index
+  %b_bank = func.call pure @inkling_ws_bytes(%tokens_cap, %w_bank) : (index, index) -> (offset)
+  %bank = buffer.alloca<global> align(256) %b_bank : buffer
+  %w_x = index.constant 9216 : index
+  %b_x = func.call pure @inkling_ws_bytes(%tokens_cap, %w_x) : (index, index) -> (offset)
+  %x = buffer.alloca<global> align(256) %b_x : buffer
+  %w_xn = index.constant 9216 : index
+  %b_xn = func.call pure @inkling_ws_bytes(%tokens_cap, %w_xn) : (index, index) -> (offset)
+  %xn = buffer.alloca<global> align(256) %b_xn : buffer
+  %w_small = index.constant 240 : index
+  %b_small = func.call pure @inkling_ws_bytes(%tokens_cap, %w_small) : (index, index) -> (offset)
+  %small = buffer.alloca<global> align(256) %b_small : buffer
+  %w_q = index.constant 3072 : index
+  %b_q = func.call pure @inkling_ws_bytes(%tokens_cap, %w_q) : (index, index) -> (offset)
+  %q = buffer.alloca<global> align(256) %b_q : buffer
+  %w_k = index.constant 1024 : index
+  %b_k = func.call pure @inkling_ws_bytes(%tokens_cap, %w_k) : (index, index) -> (offset)
+  %k = buffer.alloca<global> align(256) %b_k : buffer
+  %w_v = index.constant 1024 : index
+  %b_v = func.call pure @inkling_ws_bytes(%tokens_cap, %w_v) : (index, index) -> (offset)
+  %v = buffer.alloca<global> align(256) %b_v : buffer
+  %w_r = index.constant 384 : index
+  %b_r = func.call pure @inkling_ws_bytes(%tokens_cap, %w_r) : (index, index) -> (offset)
+  %r = buffer.alloca<global> align(256) %b_r : buffer
+  %w_gate = index.constant 3072 : index
+  %b_gate = func.call pure @inkling_ws_bytes(%tokens_cap, %w_gate) : (index, index) -> (offset)
+  %gate = buffer.alloca<global> align(256) %b_gate : buffer
+  %w_ab = index.constant 3072 : index
+  %b_ab = func.call pure @inkling_ws_bytes(%tokens_cap, %w_ab) : (index, index) -> (offset)
+  %ab = buffer.alloca<global> align(256) %b_ab : buffer
+  %w_ob = index.constant 2304 : index
+  %b_ob = func.call pure @inkling_ws_bytes(%tokens_cap, %w_ob) : (index, index) -> (offset)
+  %ob = buffer.alloca<global> align(256) %b_ob : buffer
+  %w_y = index.constant 2304 : index
+  %b_y = func.call pure @inkling_ws_bytes(%tokens_cap, %w_y) : (index, index) -> (offset)
+  %y = buffer.alloca<global> align(256) %b_y : buffer
+  command.serial {
+    kernel.launch @inkling_prep_spans(%metadata, %origins, %span_table, %token_map) : (buffer, buffer, buffer, buffer)
+    command.launch @inkling_hook_embed(%parameters, %metadata, %tokens, %embd, %cur) : (buffer, buffer, buffer, buffer, buffer)
+    %capture = config.get @inkling.capture_id : index
+    command.launch @inkling_hook_debug[%capture](%parameters, %metadata, %cur, %residual) : [index](buffer, buffer, buffer, buffer)
+    %c0 = index.constant 0 : index
+    %c1 = index.constant 1 : index
+    %c2 = index.constant 2 : index
+    %hidden = config.get @inkling.hidden : index
+    %capture_embd = index.cmp eq, %capture, %c1 : index
+    scf.if %capture_embd {
+      kernel.launch @inkling_capture_rows(%hidden, %c0, %c0, %metadata, %embd, %residual) : (index, index, index, buffer, buffer, buffer)
+    }
+    %capture_norm = index.cmp eq, %capture, %c2 : index
+    scf.if %capture_norm {
+      kernel.launch @inkling_capture_rows(%hidden, %c0, %c0, %metadata, %cur, %residual) : (index, index, index, buffer, buffer, buffer)
+    }
+    %c3 = index.constant 3 : index
+    %c6 = index.constant 6 : index
+    %c12 = index.constant 12 : index
+    %c18 = index.constant 18 : index
+    %c24 = index.constant 24 : index
+    scf.for %layer = [%c0 to %c6 step %c1] unroll {
+      command.launch @inkling_visit[%layer, %layer, %c0](%parameters, %span_table, %token_map, %metadata, %origins, %arena, %cur, %blocks, %bank, %x, %xn, %small, %q, %k, %v, %r, %gate, %ab, %ob, %y, %residual) : [index, index, index](buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+    }
+    scf.for %pass = [%c0 to %c3 step %c1] unroll {
+      scf.for %layer = [%c6 to %c18 step %c1] unroll {
+        %visit = func.call pure @inkling_visit_index(%layer, %pass) : (index, index) -> (index)
+        command.launch @inkling_visit[%layer, %visit, %pass](%parameters, %span_table, %token_map, %metadata, %origins, %arena, %cur, %blocks, %bank, %x, %xn, %small, %q, %k, %v, %r, %gate, %ab, %ob, %y, %residual) : [index, index, index](buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+      }
+    }
+    scf.for %layer = [%c18 to %c24 step %c1] unroll {
+      command.launch @inkling_visit[%layer, %layer, %c0](%parameters, %span_table, %token_map, %metadata, %origins, %arena, %cur, %blocks, %bank, %x, %xn, %small, %q, %k, %v, %r, %gate, %ab, %ob, %y, %residual) : [index, index, index](buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+    }
+    command.launch @inkling_hook_head(%parameters, %span_table, %token_map, %metadata, %origins, %arena, %cur, %blocks, %bank, %x, %xn, %small, %q, %k, %v, %r, %gate, %ab, %ob, %y, %outputs, %residual) : (buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  }
+  command.return
+}

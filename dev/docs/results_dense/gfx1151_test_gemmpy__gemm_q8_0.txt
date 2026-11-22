@@ -1,0 +1,12 @@
+PASS gfx1151  inkling_gemm_q8_0:q8_0_attn_q_n1             nmse=8.46e-08 pad_untouched=True 
+PASS gfx1151  inkling_gemm_q8_0:q8_0_attn_q_n16            nmse=8.38e-08 pad_untouched=True 
+PASS gfx1151  inkling_gemm_q8_0:q8_0_attn_q_n100           nmse=8.53e-08 pad_untouched=True 
+PASS gfx1151  inkling_gemm_q8_0:q8_0_attn_q_n308           nmse=8.54e-08 pad_untouched=True 
+PASS gfx1151  inkling_gemm_q8_0:q8_0_attn_q_n512           nmse=8.56e-08 pad_untouched=True 
+PASS gfx1151  inkling_gemm_q8_0:q8_0_attn_o_n77            nmse=8.47e-08 pad_untouched=True 
+PASS gfx1151  inkling_gemm_q8_0:q8_0_gate_sig_n33          nmse=1.33e-08 pad_untouched=True 
+PASS gfx1151  inkling_gemm_q8_0:q8_0_kv_1024_n200          nmse=8.64e-08 pad_untouched=True 
+PASS gfx1151  inkling_gemm_q8_0:q8_0_rel_384_n130          nmse=8.66e-08 pad_untouched=True 
+PASS gfx1151  inkling_gemm_q8_0:q8_0_attn_q_oracle_n16     nmse=6.31e-08 pad_untouched=True oracle_relL2=5.08e-03 
+PASS gfx1151  inkling_gemm_q8_0:q8_0_attn_k_oracle_n16     nmse=5.21e-08 pad_untouched=True oracle_relL2=4.47e-03 
+11 cases, 0 failed

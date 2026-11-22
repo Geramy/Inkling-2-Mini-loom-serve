@@ -28,7 +28,7 @@ No generator in the loom-skills starter covers this layout (loop, attention-resi
 | `LICENSE`, `NOTICE`, `.gitattributes` | MIT license of these programs, notices of the vendored files, LFS rules. |
 | `README.md`, `REPORT.md`, `info.json` | Generated card files (section 8). |
 
-Presets (all: 4 rows, prefill capacity 512, 4 checkpoints, max 4096 new tokens):
+Presets (all: 4 rows, 4 checkpoints, max 4096 new tokens; prefill capacity 2048 for the Q4 presets and 512 for the Q8 presets):
 
 | Preset | GPU | Variant | Context capacity |
 |---|---|---|---|
@@ -37,7 +37,7 @@ Presets (all: 4 rows, prefill capacity 512, 4 checkpoints, max 4096 new tokens):
 | `chat-q8` | Radeon 8060S | `ud-q8-k-xl` | 32768 |
 | `chat-q8-r9700` | Radeon AI PRO R9700 | `ud-q8-k-xl` | 32768 |
 
-The native context is 1,048,576. A preset sets the served context from measured memory: used memory is about 19.9 GB plus 39.4 KB per context position at 4 rows, so Q4 at 131072 uses about 25.1 GB on both GPUs. The R9700 admitted up to 327680 positions in tests. The 8060S admitted 1,048,576, but a full request of that size takes hours. The Q8 presets stay at 32768 because 131072 was not measured for Q8 (the Q8 weights are 5.2 GB larger). Each preset also carries `memory.weights_bytes`, `transient_bytes` and a `workload` text with the fit.
+The native context is 1,048,576. A preset sets the served context from measured memory: used memory is about 19.9 GB plus 39.4 KB per context position at 4 rows, so Q4 at 131072 uses about 24.9 GB on both GPUs (measured with prefill capacity 2048; the preset budgets 8.0 GB of non-weight memory). The R9700 admitted up to 327680 positions in tests. The 8060S admitted 1,048,576, but a full request of that size takes hours. The Q8 presets stay at 32768 and prefill capacity 512 because 131072 and the larger prefill capacity were not measured for Q8 (the Q8 weights are 5.2 GB larger). Each preset also carries `memory.weights_bytes`, `transient_bytes` and a `workload` text with the fit.
 
 ## 3. Tokenizer
 
@@ -84,10 +84,10 @@ Arch-dependent choices are data, not code paths. The program never asks for the 
 - Oracle: mainline llama.cpp built for CPU only (master `418fe97` plus the cherry-picked fix of PR 32704, which adds `inkling2_loop`), with F32 KV. A dump tool writes reference tensors for prompts A, B and C.
 - Kernel tests: every kernel has tests against numpy references and against oracle tensors, run on both GPUs (28 of 28 targets pass, evidence in `info.json`). The head chain and the lm_head cases include the oracle's `result_norm` and `result_output`.
 - Capture route: a debug deployment (`kind: sequence`) returns the chosen tensor of any visit. It was used to compare the embedding, norm, mix, attention and expert outputs with the oracle layer by layer, including chunked prefill.
-- Golden and compare: `golden.py` records greedy tokens and top-5 log-probs from the CPU llama.cpp server. `compare.py` accepts a divergence only if it is a near-tie. Result on both GPUs: golden, compare and consistency pass (14 prompts at dev level, max gap 0.296 nat; the full set of 23 prompts also has max gap 0.296, 12 full matches).
+- Golden and compare: `golden.py` records greedy tokens and top-5 log-probs from the CPU llama.cpp server. `compare.py` accepts a divergence only if it is a near-tie. Result on both GPUs: golden, compare and consistency pass (R9700: 14 prompts at dev level, 7 full matches, max gap 0.582 nat; the full set of 23 prompts 12 full matches, 0 bad. 8060S: 14 prompts, 9 full matches, max gap 0.296; 23 prompts 14 full matches, max gap 0.461, 0 bad). The gaps are near-ties at which the greedy text leaves the CPU reference; the numbers differ from the first build because reordered float sums flip a few such ties.
 - Agent gate: a multi-turn tool-calling loop with exact prompt rendering, history reuse and valid calls. It passes when tool messages carry `name` (section 9).
-- Context admission: a request of nearly the whole preset context is admitted and completes (131072 context: 183 s on the R9700, 443 s on the 8060S).
-- Chat glue: 83 template cases, 83 echo cases, 28 output and 36 option checks per GPU, against jinja2 and llama.cpp rendering.
+- Context admission: a request of nearly the whole preset context is admitted and completes (131072 context, one request of 130972 tokens: 120 s on the R9700, 343 s on the 8060S).
+- Chat glue: 84 template cases, 84 echo cases, 29 output and 37 option checks per GPU, against jinja2 and llama.cpp rendering.
 - Sampling gate: fails on both GPUs. The script expects a request without sampling fields to be greedy, and this package defaults to temperature 1.0 (the model's recommended sampling). Equivalent checks for a sampling default (temperature 0 repeats, `top_k 1` and a tiny `top_p` equal temperature 0, equal seeds repeat) pass 4 of 4 on both GPUs. The 200-draw distribution check cannot run because the first token is a structure token.
 - Performance is measured against a CPU llama.cpp (12 threads, F32 KV) because no GPU llama.cpp build was available. It is a reference, not a competitor.
 
@@ -111,6 +111,7 @@ loom-fetch <tree>/model.json --preset chat-r9700 --materialize=copy --output=<di
 loom-serve --model=<dir> '--device=amdgpu://?completion_spin_ns=4294967295' --pool_backing=fixed --parameter_mode=preload
 ```
 
+- On a two-GPU host the device must be named (`amdgpu://<id>?completion_spin_ns=4294967295`, ids from `loom-run --list_devices=amdgpu`) because the generated quick start in `README.md` uses the unnamed device URI, which can select the wrong GPU.
 - Use the preset of your GPU: `chat` (8060S) or `chat-r9700` (R9700); `chat-q8` and `chat-q8-r9700` for Q8_K_XL. A fetched directory holds only the preset you selected. Without `--origin`, `loom-fetch` downloads the GGUF from Hugging Face.
 - `--parameter_mode=preload` is what the README gives for the R9700. `--pool_backing=fixed` was used for every measurement.
 - Model id: `thinkingmachines/Inkling-2-Mini`. Endpoint `/v1/chat/completions` (OpenAI style, streaming or not).
@@ -119,7 +120,7 @@ loom-serve --model=<dir> '--device=amdgpu://?completion_spin_ns=4294967295' --po
 
 ## 10. Known limits
 
-- Prefill chunks are 512 tokens. The experts routing kernel supports at most 512 tokens per stage and a larger stage can hang the GPU. After a hang the next start fails with `DATA_LOSS` for about two minutes. Longer prompts are split by the service. Do not raise `prefill_capacity`.
+- Prefill stages: the Q4 presets use `prefill_capacity` 2048 (stages of up to 2048 tokens, longer prompts are split by the service). The Q8 presets stay at 512 because the larger capacity was not measured for Q8; the programs are the same, so a Q8 preset can raise it after a measurement. The routes kernel no longer limits a stage to 512 tokens (the rank store is gone and a second counting pass places each route), so the old hang with stages above 512 does not occur. Stages up to 2048 were tested (kernel tests, greedy replies and layer checks with chunkings 1, 3 and 512 plus rest). Values above 2048 were not tested. A larger capacity needs more workspace (about 0.4 GB at 2048 by an earlier measurement; the measured total is in the context paragraph above) and a longer first compile on a cold kernel cache. After any GPU hang the next start fails with `DATA_LOSS` for about two minutes.
 - At most 256 spans per stage (attention kernels); 4 rows.
 - A tool message needs `name`. A message that only has `tool_call_id` gets HTTP 400, because the call id is assigned by loom-serve and cannot carry the function name.
 - Images, audio and video are not supported (text parts only). There is no vision projector and no speculative decoding.
@@ -133,4 +134,22 @@ loom-serve --model=<dir> '--device=amdgpu://?completion_spin_ns=4294967295' --po
 
 - The programs in this tree are MIT licensed (`LICENSE`). They derive from ROCm/hrx-loom-library (MIT) and from the ggml-hrx kernels of llama.cpp (MIT). `NOTICE` lists each vendored file and its edits and holds the MIT notices.
 - The weights are not in this tree. They are the unmodified Unsloth GGUF files of Inkling 2 Mini, fetched from the origin in `model.json`. The base model is Apache-2.0. The card front matter says `base_model: unsloth/Inkling-2-Mini-GGUF`.
-- The license choice (MIT here, Apache-2.0 for the weights) must be confirmed by the owner before any publication.
+- License choice: MIT for the programs (copyright line "Copyright (c) 2026 Geramy Loveless" in `LICENSE`), Apache-2.0 for the weights (not in this tree). The owner has decided this.
+
+## 12. Performance structure and results (wave 1)
+
+Four changes in the programs raised the speed after the first working build. All are in the source files named in section 4; none changes the model math beyond float summation order.
+
+- Experts, prefill: the WMMA gate/up and down kernels use 64-route tiles (before: 32). The routes kernel has no per-workgroup rank store any more, so it is valid for any stage size (before: at most 512 tokens). With that, the Q4 presets set `prefill_capacity` 2048 and the weights are read once per 2048 tokens instead of once per 512.
+- Decode launch fusions: the conv commit runs inside the next mix launch (95 launches less per token), the mix launch also computes the norm for local attention and FFN visits without a controller (about 43 less), and one column-norm launch replaces the three input-norm launches (about 56 less).
+- Long-context decode attention: the number of splits is chosen from the context length at run time (at most 64 per visit; the block count per split is per-arch data), the K and V stage loop is unrolled, and workgroup memory is 32000 bytes (four workgroups per compute unit).
+- Sampler: the device sampler is three launches (statistics, partial sums, draw) with 128 workgroups per row, instead of one workgroup (195 us to about 7 us). The draws are the same as before (checked on 20,000 tokens).
+
+Measured on the published route (median of 3 fresh servers per GPU, Q4_K_XL, `perf.py` rows, tok/s; before in brackets):
+
+| | decode short | decode 32k | prefill 2k | prefill 8k | prefill 32k | 4 streams |
+|---|---|---|---|---|---|---|
+| R9700 | 90.2 (85.9) | 71.3 (67.0) | 2996 (2075) | 3092 (1920) | 2242 (1401) | 218.9 (214.2) |
+| 8060S | 39.7 (38.6) | 29.7 (27.5) | 1033 (823) | 1051 (786) | 812 (595) | 89.0 (86.6) |
+
+A request of 130972 tokens (the Q4 preset context) completes in 120 s on the R9700 and 343 s on the 8060S (183 s and 443 s before). The speed of the CPU reference is in the card (`README.md`, `REPORT.md`).

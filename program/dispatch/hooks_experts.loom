@@ -45,8 +45,8 @@ command.def public target(@inkling_execution) @inkling_hook_experts(%layer: inde
   %i128 = index.constant 128 : index
   %nbound = index.add %cap, %i128 : index
   %records = index.min %n8, %nbound : index
-  %o136 = index.constant 136 : offset
-  %tasks_bytes = index.scale %records, %o136 : index, offset -> offset
+  %o264 = index.constant 264 : offset
+  %tasks_bytes = index.scale %records, %o264 : index, offset -> offset
   %o16 = index.constant 16 : offset
   %tasks_total = index.add %tasks_bytes, %o16 : offset
   %o2304 = index.constant 2304 : offset
@@ -57,7 +57,7 @@ command.def public target(@inkling_execution) @inkling_hook_experts(%layer: inde
   %is_q8e = index.cmp eq, %dense, %i0 : index
   %i48 = index.constant 48 : index
   %wide = index.cmp uge, %cap, %i48 : index
-  %i32 = index.constant 32 : index
+  %i64 = index.constant 64 : index
   %tasks = buffer.alloca<global> align(256) %tasks_total : buffer
   %act = buffer.alloca<global> align(256) %act_bytes : buffer
   %dout = buffer.alloca<global> align(256) %dout_bytes : buffer
@@ -90,7 +90,7 @@ command.def public target(@inkling_execution) @inkling_hook_experts(%layer: inde
     scf.yield %q8gu, %q8dn, %wb2, %wb2 : buffer, buffer, buffer, buffer
   }
   scf.if %wide {
-  kernel.launch @inkling_experts_routes(%cap, %i32, %ab, %tasks) : (index, index, buffer, buffer)
+  kernel.launch @inkling_experts_routes(%cap, %i64, %ab, %tasks) : (index, index, buffer, buffer)
   kernel.launch @inkling_experts_gate_up_wmma[%cap](%cap, %wtype, %gate, %tasks, %gu3, %gus5, %act) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
   kernel.launch @inkling_experts_down_wmma[%cap](%cap, %wtype, %act, %tasks, %dn4, %dns6, %dout) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
   } else {

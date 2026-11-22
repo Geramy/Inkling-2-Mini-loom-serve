@@ -1,4 +1,5 @@
 func.decl @inkling_attn_span_record(%spans: buffer, %span_cap: index, %s: index) -> (index, index, index, index, offset, i1)
+func.decl @inkling_attn_decode_split(%split_blocks: index, %blocks: index) -> (index)
 
 func.decl @inkling_attn_find_tile(%spans: buffer, %span_cap: index, %tile: index) -> (i1, index, index, index, index, offset, index)
 
@@ -43,7 +44,7 @@ func.def public inline @inkling_attn_stage_block(%stage: buffer, %act: buffer, %
   %loads = index.div %c1024, %threads : index
   %block_pos = index.mul %block, %c64 : index
   %head_col = index.mul %g, %c128 : index
-  scf.for %it = [%c0 to %loads step %c1] {
+  scf.for %it = [%c0 to %loads step %c1] unroll {
     %idx0 = index.madd %it, %threads, %tid : index
     %idx = index.assume %idx0 [range(%idx0, 0, 1023)] : index
     %row = index.div %idx, %c16 : index
@@ -259,15 +260,12 @@ kernel.def export("inkling_attn_tile") @inkling_attn_tile(%grid_x: index, %grid_
   %prob_stage_bytes = index.constant 3072 : offset
   %small_stage_bytes = index.constant 1024 : offset
   %prod_stage_bytes = index.constant 8192 : offset
-  %ml_stage_bytes = index.constant 256 : offset
   %q_stage = buffer.alloca<workgroup> align(16) %q_stage_bytes : buffer
   %kv_stage = buffer.alloca<workgroup> align(16) %kv_stage_bytes : buffer
   %score_stage = buffer.alloca<workgroup> align(16) %score_stage_bytes : buffer
   %prob_stage = buffer.alloca<workgroup> align(16) %prob_stage_bytes : buffer
   %r_stage = buffer.alloca<workgroup> align(16) %small_stage_bytes : buffer
-  %scale_stage = buffer.alloca<workgroup> align(16) %small_stage_bytes : buffer
   %prod_stage = buffer.alloca<workgroup> align(16) %prod_stage_bytes : buffer
-  %ml_stage = buffer.alloca<workgroup> align(16) %ml_stage_bytes : buffer
 
   scf.if %found {
     %kv_end = index.add %pos0, %len : index
@@ -285,9 +283,11 @@ kernel.def export("inkling_attn_tile") @inkling_attn_tile(%grid_x: index, %grid_
     %b_lo = index.div %kmin_a, %c64 : index
     %b_hi = index.div %p_hi_a, %c64 : index
     %b_end = index.add %b_hi, %c1 : index
-    %split_off = index.mul %wg_z, %split_blocks : index
+    %nblocks = index.sub %b_end, %b_lo : index
+    %eff_split = func.call @inkling_attn_decode_split(%split_blocks, %nblocks) : (index, index) -> (index)
+    %split_off = index.mul %wg_z, %eff_split : index
     %sb0_dec = index.add %b_lo, %split_off : index
-    %sb1_dec0 = index.add %sb0_dec, %split_blocks : index
+    %sb1_dec0 = index.add %sb0_dec, %eff_split : index
     %sb1_dec = index.min %sb1_dec0, %b_end : index
     %sb0 = scf.select %dec, %sb0_dec, %b_lo : index
     %sb1 = scf.select %dec, %sb1_dec, %b_end : index
@@ -304,9 +304,9 @@ kernel.def export("inkling_attn_tile") @inkling_attn_tile(%grid_x: index, %grid_
       %kv_view = buffer.view %kv_stage[%zero] : buffer -> view<64x136xf16>
       %score_view = buffer.view %score_stage[%zero] : buffer -> view<64x24xf32>
       %r_stage_view = buffer.view %r_stage[%zero] : buffer -> view<16x16xf32>
-      %scale_view = buffer.view %scale_stage[%zero] : buffer -> view<16x16xf32>
+      %scale_view = buffer.view %r_stage[%zero] : buffer -> view<16x16xf32>
       %prod_view = buffer.view %prod_stage[%zero] : buffer -> view<16x128xf32>
-      %ml_view = buffer.view %ml_stage[%zero] : buffer -> view<16x2xf32>
+      %ml_view = buffer.view %score_stage[%zero] : buffer -> view<16x2xf32>
       %prob_t_layout = encoding.layout.strided [1, 24] : encoding<layout>
       %qpk = index.div %c128, %width : index
       %zero_q = vector.splatf 0.0 : vector<[%qpk]xf16>

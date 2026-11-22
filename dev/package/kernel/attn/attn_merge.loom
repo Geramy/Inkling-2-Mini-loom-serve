@@ -1,0 +1,101 @@
+// Combines the decode splits of one head: the sink logit joins the softmax here, then the gate multiplies the result.
+func.decl @inkling_attn_decode_split(%split_blocks: index, %blocks: index) -> (index)
+func.decl @inkling_attn_span_record(%spans: buffer, %span_cap: index, %s: index) -> (index, index, index, index, offset, i1)
+
+kernel.def export("inkling_attn_merge") @inkling_attn_merge(%span_cap: index) {
+  %one = index.constant 1 : index
+  %heads = index.constant 24 : index
+  %threads = index.constant 128 : index
+  kernel.launch.config workgroups(%span_cap, %heads, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%cap_in: index, %span_cap_in: index, %global: index, %split_blocks: index, %max_splits: index, %spans: buffer, %sink: buffer, %gate: buffer, %out: buffer, %partial: buffer) {
+  %cap = index.assume %cap_in [range(%cap_in, 1, 32768)] : index
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c2 = index.constant 2 : index
+  %c23 = index.constant 23 : index
+  %c24 = index.constant 24 : index
+  %c64 = index.constant 64 : index
+  %c127 = index.constant 127 : index
+  %c128 = index.constant 128 : index
+  %c136 = index.constant 136 : index
+  %c1023 = index.constant 1023 : index
+  %zero = index.constant 0 : offset
+  %zero_f = scalar.constant 0.0 : f32
+  %one_f = scalar.constant 1.0 : f32
+  %span0 = kernel.workgroup.id<x> : index
+  %head0 = kernel.workgroup.id<y> : index
+  %head = index.min %head0, %c23 : index
+  %d0 = kernel.workitem.id<x> : index
+  %d = index.min %d0, %c127 : index
+  %begin, %len, %pos0, %row, %slot, %active = func.call @inkling_attn_span_record(%spans, %span_cap_in, %span0) : (buffer, index, index) -> (index, index, index, index, offset, i1)
+  %single = index.cmp eq, %len, %c1 : index
+  %found = scalar.andi %active, %single : i1
+  scf.if %found {
+    %token = index.assume %begin [range(%begin, 0, 32767), lt(%begin, %cap)] : index
+    %is_global = index.cmp ne, %global, %c0 : index
+    %over = index.cmp ugt, %pos0, %c1023 : index
+    %lo_diff = index.sub %pos0, %c1023 : index
+    %lo_shift = scf.select %over, %lo_diff, %c0 : index
+    %kmin = scf.select %is_global, %c0, %lo_shift : index
+    %kmin_a = index.assume %kmin [range(%kmin, 0, 2147483647)] : index
+    %pos_a = index.assume %pos0 [range(%pos0, 0, 2147483647)] : index
+    %b_lo = index.div %kmin_a, %c64 : index
+    %b_hi = index.div %pos_a, %c64 : index
+    %nb = index.sub %b_hi, %b_lo : index
+    %nb1 = index.add %nb, %c1 : index
+    %eff = func.call @inkling_attn_decode_split(%split_blocks, %nb1) : (index, index) -> (index)
+    %sb = index.assume %eff [range(%eff, 1, 1024)] : index
+    %sbm = index.sub %sb, %c1 : index
+    %nb_r = index.add %nb1, %sbm : index
+    %nb_a = index.assume %nb_r [range(%nb_r, 0, 2147483647)] : index
+    %ns0 = index.div %nb_a, %sb : index
+    %ns = index.min %ns0, %max_splits : index
+    %sink_view = buffer.view %sink[%zero] : buffer -> view<[%cap]x24xf32>
+    %gate_view = buffer.view %gate[%zero] : buffer -> view<[%cap]x3072xf32>
+    %out_view = buffer.view %out[%zero] : buffer -> view<[%cap]x3072xf32>
+    %total = index.mul %span_cap_in, %c24 : index
+    %total_splits = index.mul %total, %max_splits : index
+    %partial_elements = index.mul %total_splits, %c136 : index
+    %partial_view = buffer.view %partial[%zero] : buffer -> view<[%partial_elements]xf32>
+    %sink_value = view.load %sink_view[%token, %head] : view<[%cap]x24xf32> -> f32
+    %span_head = index.madd %span0, %c24, %head : index
+    %span_base = index.mul %span_head, %max_splits : index
+    %m_all = scf.for %s = [%c0 to %ns step %c1](%acc = %sink_value : f32) -> (f32) {
+      %at0 = index.add %span_base, %s : index
+      %at1 = index.mul %at0, %c136 : index
+      %at = index.assume %at1 [range(%at1, 0, 2147483646), lt(%at1, %partial_elements)] : index
+      %ms = view.load %partial_view[%at] : view<[%partial_elements]xf32> -> f32
+      %next = scalar.maxnumf %acc, %ms : f32
+      scf.yield %next : f32
+    }
+    %sink_delta = scalar.subf %sink_value, %m_all : f32
+    %sink_w = scalar.expf<afn> %sink_delta : f32
+    %l_all, %o_all = scf.for %s = [%c0 to %ns step %c1](%la = %sink_w : f32, %oa = %zero_f : f32) -> (f32, f32) {
+      %at0 = index.add %span_base, %s : index
+      %at1 = index.mul %at0, %c136 : index
+      %at = index.assume %at1 [range(%at1, 0, 2147483646), lt(%at1, %partial_elements)] : index
+      %at_l0 = index.add %at1, %c1 : index
+      %at_l = index.assume %at_l0 [range(%at_l0, 0, 2147483646), lt(%at_l0, %partial_elements)] : index
+      %at_o0 = index.add %at1, %c2 : index
+      %at_o1 = index.add %at_o0, %d : index
+      %at_o = index.assume %at_o1 [range(%at_o1, 0, 2147483646), lt(%at_o1, %partial_elements)] : index
+      %ms = view.load %partial_view[%at] : view<[%partial_elements]xf32> -> f32
+      %ls = view.load %partial_view[%at_l] : view<[%partial_elements]xf32> -> f32
+      %os = view.load %partial_view[%at_o] : view<[%partial_elements]xf32> -> f32
+      %delta = scalar.subf %ms, %m_all : f32
+      %w = scalar.expf<afn> %delta : f32
+      %l_next = scalar.fmaf %w, %ls, %la : f32
+      %o_next = scalar.fmaf %w, %os, %oa : f32
+      scf.yield %l_next, %o_next : f32, f32
+    }
+    %inv = scalar.divf %one_f, %l_all : f32
+    %col0 = index.madd %head, %c128, %d : index
+    %col = index.assume %col0 [range(%col0, 0, 3071)] : index
+    %g = view.load %gate_view[%token, %col] : view<[%cap]x3072xf32> -> f32
+    %sg = scalar.logisticf %g : f32
+    %normalized = scalar.mulf %o_all, %inv : f32
+    %result = scalar.mulf %normalized, %sg : f32
+    view.store %result, %out_view[%token, %col] : f32, view<[%cap]x3072xf32>
+  }
+  kernel.return
+}

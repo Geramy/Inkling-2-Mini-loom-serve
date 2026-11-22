@@ -1,0 +1,12 @@
+gate_up gfx1201 wtype=0 n=1: rel_l2=2.16e-04 max_rel=2.45e-04 PASS
+gate_up gfx1201 wtype=0 n=3: rel_l2=2.05e-04 max_rel=2.70e-04 PASS
+gate_up gfx1201 wtype=0 n=8: rel_l2=2.10e-04 max_rel=3.24e-04 PASS
+gate_up gfx1201 wtype=0 n=37: rel_l2=2.04e-04 max_rel=2.49e-04 PASS
+gate_up gfx1201 wtype=1 n=1: rel_l2=2.00e-04 max_rel=3.12e-04 PASS
+gate_up gfx1201 wtype=1 n=3: rel_l2=1.99e-04 max_rel=3.13e-04 PASS
+gate_up gfx1201 wtype=1 n=8: rel_l2=2.01e-04 max_rel=3.13e-04 PASS
+gate_up gfx1201 wtype=1 n=37: rel_l2=2.00e-04 max_rel=3.13e-04 PASS
+gate_up gfx1201 wtype=2 n=1: rel_l2=1.98e-04 max_rel=2.54e-04 PASS
+gate_up gfx1201 wtype=2 n=3: rel_l2=2.01e-04 max_rel=2.16e-04 PASS
+gate_up gfx1201 wtype=2 n=8: rel_l2=2.11e-04 max_rel=2.88e-04 PASS
+gate_up gfx1201 wtype=2 n=37: rel_l2=2.07e-04 max_rel=3.40e-04 PASS

@@ -1,0 +1,15 @@
+config.def @inkling.dense_type = 0 : index
+
+config.def @inkling.capture_id = 0 : index
+
+config.def @inkling.capture_visit = 0 : index
+
+config.def @inkling.capture_occurrence = 0 : index
+
+config.def @inkling.capture_width = 2304 : index
+
+config.def @inkling.probes = 0 : index
+
+config.def @inkling.tune_probe = 0 : index
+
+config.def @inkling.stop_after = 99 : index

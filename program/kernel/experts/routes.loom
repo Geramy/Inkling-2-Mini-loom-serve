@@ -1,5 +1,5 @@
-// Groups the routes (token * 8 + slot) of one chunk by expert (n <= 512). The table is:
-// word 0 = record count, words 4.. = records of 34 words {expert, live routes, 32 route ids}. Records hold at most `tile` routes.
+// Groups the routes (token * 8 + slot) of one chunk by expert (any n). The table is:
+// word 0 = record count, words 4.. = records of `stride` words {expert, live routes, route ids}, stride = max(tile, 32) + 2. Records hold at most `tile` routes.
 // One workgroup of 128 workitems, one per expert. The order of the routes inside an expert is arbitrary; it does not change any result.
 
 func.decl @inkling_experts_records(%n: index) -> (index)
@@ -13,24 +13,24 @@ kernel.def export("inkling_experts_routes") @inkling_experts_routes() {
   %c1 = index.constant 1 : index
   %c2 = index.constant 2 : index
   %c8 = index.constant 8 : index
+  %c32 = index.constant 32 : index
   %c128 = index.constant 128 : index
   %origin = index.constant 0 : offset
   %records_origin = index.constant 16 : offset
   %counter_bytes = index.constant 512 : offset
-  %rank_bytes = index.constant 16384 : offset
   %routes = index.mul %n, %c8 : index
   %records = func.call pure @inkling_experts_records(%n) : (index) -> (index)
   %tid = kernel.workitem.id<x> : index
   %tid_word = index.cast %tid : index to i32
   %idv = buffer.view %ids[%origin] : buffer -> view<[%routes]xi32>
-  %table = buffer.view %tasks[%records_origin] : buffer -> view<[%records]x34xi32>
+  %tile_wide = index.max %tile, %c32 : index
+  %stride = index.add %tile_wide, %c2 : index
+  %table = buffer.view %tasks[%records_origin] : buffer -> view<[%records]x[%stride]xi32>
   %header = buffer.view %tasks[%origin] : buffer -> view<1xi32>
   %counter_store = buffer.alloca<workgroup> align(16) %counter_bytes : buffer
   %offset_store = buffer.alloca<workgroup> align(16) %counter_bytes : buffer
-  %rank_store = buffer.alloca<workgroup> align(16) %rank_bytes : buffer
   %counters = buffer.view %counter_store[%origin] : buffer -> view<128xi32>
   %offsets = buffer.view %offset_store[%origin] : buffer -> view<128xi32>
-  %ranks = buffer.view %rank_store[%origin] : buffer -> view<4096xi32>
   %zero = scalar.constant 0 : i32
   %one = scalar.constant 1 : i32
   view.store %zero, %counters[%tid] : i32, view<128xi32>
@@ -40,8 +40,6 @@ kernel.def export("inkling_experts_routes") @inkling_experts_routes() {
     %id_raw = index.cast %id32 : i32 to index
     %id = index.assume %id_raw [ge(%id_raw, 0), lt(%id_raw, 128)] : index
     %rank = view.atomic.rmw<addi> %one, %counters[%id] {ordering = relaxed, scope = workgroup} : i32, view<128xi32> -> i32
-    %slot = index.assume %r [ge(%r, 0), lt(%r, 4096)] : index
-    view.store %rank, %ranks[%slot] : i32, view<4096xi32>
   }
   kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
   %population = view.load %counters[%tid] : view<128xi32> -> i32
@@ -68,16 +66,17 @@ kernel.def export("inkling_experts_routes") @inkling_experts_routes() {
     %full = index.cmp ult, %remaining, %tile : index
     %live = scf.select %full, %remaining, %tile : index
     %live_word = index.cast %live : index to i32
-    view.store %tid_word, %table[%rec, 0] : i32, view<[%records]x34xi32>
-    view.store %live_word, %table[%rec, 1] : i32, view<[%records]x34xi32>
+    view.store %tid_word, %table[%rec, 0] : i32, view<[%records]x[%stride]xi32>
+    view.store %live_word, %table[%rec, 1] : i32, view<[%records]x[%stride]xi32>
   }
+  kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+  view.store %zero, %counters[%tid] : i32, view<128xi32>
   kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
   scf.for %r = [%tid to %routes step %c128] {
     %id32 = view.load %idv[%r] : view<[%routes]xi32> -> i32
     %id_raw = index.cast %id32 : i32 to index
     %id = index.assume %id_raw [ge(%id_raw, 0), lt(%id_raw, 128)] : index
-    %slot_r = index.assume %r [ge(%r, 0), lt(%r, 4096)] : index
-    %rank = view.load %ranks[%slot_r] : view<4096xi32> -> i32
+    %rank = view.atomic.rmw<addi> %one, %counters[%id] {ordering = relaxed, scope = workgroup} : i32, view<128xi32> -> i32
     %base32 = view.load %offsets[%id] : view<128xi32> -> i32
     %q32 = scalar.divui %rank, %tile_word : i32
     %s32 = scalar.remui %rank, %tile_word : i32
@@ -86,9 +85,9 @@ kernel.def export("inkling_experts_routes") @inkling_experts_routes() {
     %rec = index.assume %rec_raw [ge(%rec_raw, 0), lt(%rec_raw, %records)] : index
     %s_raw = index.cast %s32 : i32 to index
     %field_raw = index.add %s_raw, %c2 : index
-    %field = index.assume %field_raw [ge(%field_raw, 2), lt(%field_raw, 34)] : index
+    %field = index.assume %field_raw [ge(%field_raw, 2), lt(%field_raw, %stride)] : index
     %route_word = index.cast %r : index to i32
-    view.store %route_word, %table[%rec, %field] : i32, view<[%records]x34xi32>
+    view.store %route_word, %table[%rec, %field] : i32, view<[%records]x[%stride]xi32>
   }
   kernel.return
 }

@@ -1,0 +1,43 @@
+config.def @inkling.layers = 24 : index
+
+config.def @inkling.visits = 48 : index
+
+config.def @inkling.hidden = 2304 : index
+
+config.def @inkling.heads = 24 : index
+
+config.def @inkling.kv_heads = 8 : index
+
+config.def @inkling.head_dim = 128 : index
+
+config.def @inkling.experts = 128 : index
+
+config.def @inkling.experts_used = 8 : index
+
+config.def @inkling.expert_hidden = 1152 : index
+
+config.def @inkling.window = 1024 : index
+
+config.def @inkling.conv_taps = 4 : index
+
+config.def @inkling.vocab_padded = 201024 : index
+
+config.def @inkling.vocab = 200058 : index
+
+config.def @inkling.page_tokens = 64 : index
+
+config.def @inkling.global_visits = 8 : index
+
+config.def @inkling.local_visits = 40 : index
+
+config.def @inkling.kv_token_bytes = 4096 : index
+
+config.def @inkling.conv_visit_bytes = 79872 : index
+
+config.def @inkling.conv_bytes = 3833856 : index
+
+config.def @inkling.conv_origin = 167772160 : index
+
+config.def @inkling.ring_bytes = 167772160 : index
+
+config.def @inkling.slot_bytes = 171606016 : index

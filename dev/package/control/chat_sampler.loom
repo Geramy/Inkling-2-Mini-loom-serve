@@ -1,0 +1,343 @@
+// Device sampler for the Inkling output head. It draws one token per row of logits with the options record that request_options produced.
+// The draw depends only on the request seed, the absolute position and the token ID, so packing, row order and epoch shape do not change it.
+// The categorical selection and Philox generator are the AMD motifs (sampling.loom, random.loom).
+//
+// Greedy rows, top_k 1 rows and plain rows (top_k 0, top_p 1) use three launches: inkling_sample_stats (maxima per block of columns), inkling_sample_draw (exponential race per block) and inkling_sample_rows (combine). The result is the same as the one-workgroup template. Other rows run the template in inkling_sample_rows.
+// Scratch layout (blocks per row = 128, n = rows * 128): i64 maximum key [n], f32 maximum logit [n], f32 race [n], i32 token [n].
+
+config.decl @inkling.packet_capacity : %value: index where [range(%value, 2, 2147483646)]
+
+func.decl @inkling_packet_identity_origin(%capacity: index) -> (offset)
+
+func.decl @inkling_packet_policy_origin(%capacity: index) -> (offset)
+
+func.decl @sampling_key(%value: f32, %id: i32) -> (i64)
+
+func.decl @sampling_race(%logit: f32, %maximum: f32, %temperature: f32, %seed: i64, %position: i64, %id: i32) -> (f32)
+
+template.decl @sampling.reduce_key(%key: i64, %minimum: i1) -> (i64)
+
+template.decl @sampling.categorical_excluding_f32(%columns: index, %logits: buffer, %logits_origin: offset, %excluded_id: i32, %temperature: f32, %top_p: f32, %top_k: i32, %seed: i64, %position: i64) -> (i32)
+
+// Token that opens a tool call. Option flag bit 1 (tool_choice none) removes it from the draw.
+func.def @chat_tool_open_token() -> (i32) {
+  %token = scalar.constant 200049 : i32
+  func.return %token : i32
+}
+
+// Identity record per selected row (packet identity table): {owner, position}. The owner indexes the 24-byte option table of the packet, the position is the absolute index of the drawn token. Rows at or above the selected count are not live.
+func.def @chat_sample_policy(%row: index, %packet_capacity: index, %epoch: buffer) -> (i1, f32, f32, i32, i32, i64, i64) {
+  %origin = index.constant 0 : offset
+  %header = buffer.view %epoch[%origin] : buffer -> view<3xi32>
+  %selected_count = view.load %header[2] : view<3xi32> -> i32
+  %row_word = index.cast %row : index to i32
+  %live = scalar.cmpi ult, %row_word, %selected_count : i32
+  %zero_f = scalar.constant 0.0 : f32
+  %zero32 = scalar.constant 0 : i32
+  %zero64 = scalar.constant 0 : i64
+  %temperature, %top_p, %top_k, %excluded, %seed, %position = scf.if %live -> (f32, f32, i32, i32, i64, i64) {
+    %identity_row = index.assume %row [ge(%row, 0), lt(%row, %packet_capacity)] : index
+    %identity_origin = func.call @inkling_packet_identity_origin(%packet_capacity) : (index) -> (offset)
+    %records = buffer.view %epoch[%identity_origin] : buffer -> view<[%packet_capacity]x2xi32>
+    %owner_word = view.load %records[%identity_row, 0] : view<[%packet_capacity]x2xi32> -> i32
+    %position_word = view.load %records[%identity_row, 1] : view<[%packet_capacity]x2xi32> -> i32
+    %position = scalar.extui %position_word : i32 to i64
+    %owner_value = index.cast %owner_word : i32 to index
+    %owner = index.assume %owner_value [ge(%owner_value, 0), lt(%owner_value, %packet_capacity)] : index
+    %policy_origin = func.call @inkling_packet_policy_origin(%packet_capacity) : (index) -> (offset)
+    %policy_stride = index.constant 24 : offset
+    %policy_relative = index.scale %owner, %policy_stride : index, offset -> offset
+    %policy_offset = index.add %policy_origin, %policy_relative : offset
+    %policy = buffer.view %epoch[%policy_offset] : buffer -> view<6xi32>
+    %floats = buffer.view %epoch[%policy_offset] : buffer -> view<6xf32>
+    %seed_relative = index.constant 16 : offset
+    %seed_offset = index.add %policy_offset, %seed_relative : offset
+    %seeds = buffer.view %epoch[%seed_offset] : buffer -> view<1xi64>
+    %temperature = view.load %floats[0] : view<6xf32> -> f32
+    %top_p = view.load %floats[1] : view<6xf32> -> f32
+    %top_k = view.load %policy[2] : view<6xi32> -> i32
+    %flags = view.load %policy[3] : view<6xi32> -> i32
+    %seed = view.load %seeds[0] : view<1xi64> -> i64
+    %forbid_bit = scalar.constant 2 : i32
+    %none = scalar.constant -1 : i32
+    %forbidden_bits = scalar.andi %flags, %forbid_bit : i32
+    %forbidden = scalar.cmpi ne, %forbidden_bits, %zero32 : i32
+    %tool_open = func.call @chat_tool_open_token() : () -> (i32)
+    %excluded = scf.select %forbidden, %tool_open, %none : i32
+    scf.yield %temperature, %top_p, %top_k, %excluded, %seed, %position : f32, f32, i32, i32, i64, i64
+  } else {
+    scf.yield %zero_f, %zero_f, %zero32, %zero32, %zero64, %zero64 : f32, f32, i32, i32, i64, i64
+  }
+  func.return %live, %temperature, %top_p, %top_k, %excluded, %seed, %position : i1, f32, f32, i32, i32, i64, i64
+}
+
+// Deterministic: greedy or top_k 1. Fast: deterministic or plain (top_k 0, top_p 1).
+func.def inline @chat_sample_mode(%temperature: f32, %top_p: f32, %top_k: i32) -> (i1, i1) {
+  %c0 = scalar.constant 0.0 : f32
+  %c1 = scalar.constant 1.0 : f32
+  %zero32 = scalar.constant 0 : i32
+  %one32 = scalar.constant 1 : i32
+  %true = scalar.constant true : i1
+  %greedy = scalar.cmpf oeq, %temperature, %c0 : f32
+  %single = scalar.cmpi eq, %top_k, %one32 : i32
+  %deterministic = scalar.ori %greedy, %single : i1
+  %unbounded = scalar.cmpi eq, %top_k, %zero32 : i32
+  %nucleus = scalar.cmpf olt, %top_p, %c1 : f32
+  %whole = scalar.xori %nucleus, %true : i1
+  %plain = scalar.andi %unbounded, %whole : i1
+  %fast = scalar.ori %deterministic, %plain : i1
+  func.return %deterministic, %fast : i1, i1
+}
+
+// Columns [begin, end) of block b. 128 blocks of 1563 columns cover the 200058 columns.
+func.def inline @chat_sample_span(%block: index) -> (index, index) {
+  %columns = index.constant 200058 : index
+  %width = index.constant 1563 : index
+  %start = index.mul %block, %width : index
+  %begin = index.min %start, %columns : index
+  %next = index.add %begin, %width : index
+  %end = index.min %next, %columns : index
+  func.return %begin, %end : index, index
+}
+
+// Byte origins of the maximum logit, race and token arrays for a launch of n = rows * 128 partials. The key array starts at zero.
+func.def inline @chat_sample_scratch(%n: index) -> (offset, offset, offset) {
+  %c8 = index.constant 8 : offset
+  %c12 = index.constant 12 : offset
+  %c16 = index.constant 16 : offset
+  %logit_origin = index.scale %n, %c8 : index, offset -> offset
+  %race_origin = index.scale %n, %c12 : index, offset -> offset
+  %token_origin = index.scale %n, %c16 : index, offset -> offset
+  func.return %logit_origin, %race_origin, %token_origin : offset, offset, offset
+}
+
+// Maximum key and maximum logit of every block of columns of a fast row. The excluded ID does not count.
+kernel.def @inkling_sample_stats(%rows_value: index) {
+  %rows = index.assume %rows_value [range(%rows_value, 1, 16777216)] : index
+  %blocks = index.constant 128 : index
+  %c1_index = index.constant 1 : index
+  %threads = index.constant 256 : index
+  kernel.launch.config workgroups(%blocks, %rows, %c1_index) workgroup_size(%threads, %c1_index, %c1_index) : index
+} launch(%rows_value: index, %logit_stride: index, %epoch: buffer, %logits: buffer, %scratch: buffer) {
+  %origin = index.constant 0 : offset
+  %c0 = index.constant 0 : index
+  %c1_index = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %blocks = index.constant 128 : index
+  %columns = index.constant 200058 : index
+  %thread = kernel.workitem.id<x> : index
+  %block = kernel.workgroup.id<x> : index
+  %row_value = kernel.workgroup.id<y> : index
+  %rows = index.assume %rows_value [range(%rows_value, 1, 16777216)] : index
+  %row = index.assume %row_value [ge(%row_value, 0), lt(%row_value, %rows)] : index
+  %packet_capacity = config.get @inkling.packet_capacity : index
+  %live, %temperature, %top_p, %top_k, %excluded, %seed, %position = func.call @chat_sample_policy(%row, %packet_capacity, %epoch) : (index, index, buffer) -> (i1, f32, f32, i32, i32, i64, i64)
+  %deterministic, %fast = func.call @chat_sample_mode(%temperature, %top_p, %top_k) : (f32, f32, i32) -> (i1, i1)
+  %go = scalar.andi %live, %fast : i1
+  scf.if %go {
+    %begin, %end = func.call @chat_sample_span(%block) : (index) -> (index, index)
+    %last = index.sub %end, %c1_index : index
+    %c4 = index.constant 4 : offset
+    %row_elements = index.mul %row, %logit_stride : index
+    %row_offset = index.scale %row_elements, %c4 : index, offset -> offset
+    %values = buffer.view %logits[%row_offset] : buffer -> view<200058xf32>
+    %zero64 = scalar.constant 0 : i64
+    %negative = scalar.constant -inf : f32
+    %false = scalar.constant false : i1
+    %local_key, %local_logit = scf.for %base = [%begin to %end step %threads](%best = %zero64 : i64, %greatest = %negative : f32) -> (i64, f32) {
+      %candidate = index.add %base, %thread : index
+      %inside = index.cmp ult, %candidate, %end : index
+      %clamped = index.min %candidate, %last : index
+      %column = index.assume %clamped [ge(%clamped, 0), lt(%clamped, %columns)] : index
+      %value = view.load %values[%column] : view<200058xf32> -> f32
+      %id = index.cast %column : index to i32
+      %key = func.call @sampling_key(%value, %id) : (f32, i32) -> (i64)
+      %permitted = scalar.cmpi ne, %id, %excluded : i32
+      %present = scalar.andi %inside, %permitted : i1
+      %candidate_key = scf.select %present, %key, %zero64 : i64
+      %next_key = scalar.maxui %best, %candidate_key : i64
+      %candidate_logit = scf.select %present, %value, %negative : f32
+      %next_logit = scalar.maxnumf %greatest, %candidate_logit : f32
+      scf.yield %next_key, %next_logit : i64, f32
+    }
+    %block_key = template.apply<@sampling.reduce_key>(%local_key, %false) : (i64, i1) -> (i64)
+    %block_logit = kernel.workgroup.reduce<maxnumf> %local_logit : f32
+    %n_value = index.mul %rows, %blocks : index
+    %n = index.assume %n_value [range(%n_value, 128, 2147483647)] : index
+    %logit_origin, %race_origin, %token_origin = func.call @chat_sample_scratch(%n) : (index) -> (offset, offset, offset)
+    %keys = buffer.view %scratch[%origin] : buffer -> view<[%n]xi64>
+    %logit_partials = buffer.view %scratch[%logit_origin] : buffer -> view<[%n]xf32>
+    %slot_base = index.mul %row, %blocks : index
+    %slot_value = index.add %slot_base, %block : index
+    %slot = index.assume %slot_value [ge(%slot_value, 0), lt(%slot_value, %n)] : index
+    %publishes = index.cmp eq, %thread, %c0 : index
+    scf.if %publishes {
+      view.store %block_key, %keys[%slot] : i64, view<[%n]xi64>
+      view.store %block_logit, %logit_partials[%slot] : f32, view<[%n]xf32>
+    }
+  }
+  kernel.return
+}
+
+// Exponential race over every block of columns of a plain row with a random draw. Each workgroup first combines the block maxima into the row maximum logit.
+kernel.def @inkling_sample_draw(%rows_value: index) {
+  %rows = index.assume %rows_value [range(%rows_value, 1, 16777216)] : index
+  %blocks = index.constant 128 : index
+  %c1_index = index.constant 1 : index
+  %threads = index.constant 256 : index
+  kernel.launch.config workgroups(%blocks, %rows, %c1_index) workgroup_size(%threads, %c1_index, %c1_index) : index
+} launch(%rows_value: index, %logit_stride: index, %epoch: buffer, %logits: buffer, %scratch: buffer) {
+  %origin = index.constant 0 : offset
+  %c0 = index.constant 0 : index
+  %c1_index = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %blocks = index.constant 128 : index
+  %columns = index.constant 200058 : index
+  %thread = kernel.workitem.id<x> : index
+  %block = kernel.workgroup.id<x> : index
+  %row_value = kernel.workgroup.id<y> : index
+  %rows = index.assume %rows_value [range(%rows_value, 1, 16777216)] : index
+  %row = index.assume %row_value [ge(%row_value, 0), lt(%row_value, %rows)] : index
+  %packet_capacity = config.get @inkling.packet_capacity : index
+  %live, %temperature, %top_p, %top_k, %excluded, %seed, %position = func.call @chat_sample_policy(%row, %packet_capacity, %epoch) : (index, index, buffer) -> (i1, f32, f32, i32, i32, i64, i64)
+  %deterministic, %fast = func.call @chat_sample_mode(%temperature, %top_p, %top_k) : (f32, f32, i32) -> (i1, i1)
+  %true = scalar.constant true : i1
+  %random = scalar.xori %deterministic, %true : i1
+  %drawn = scalar.andi %fast, %random : i1
+  %go = scalar.andi %live, %drawn : i1
+  scf.if %go {
+    %negative = scalar.constant -inf : f32
+    %largest = scalar.constant 2147483647 : i32
+    %n_value = index.mul %rows, %blocks : index
+    %n = index.assume %n_value [range(%n_value, 128, 2147483647)] : index
+    %logit_origin, %race_origin, %token_origin = func.call @chat_sample_scratch(%n) : (index) -> (offset, offset, offset)
+    %logit_partials = buffer.view %scratch[%logit_origin] : buffer -> view<[%n]xf32>
+    %races = buffer.view %scratch[%race_origin] : buffer -> view<[%n]xf32>
+    %tokens = buffer.view %scratch[%token_origin] : buffer -> view<[%n]xi32>
+    %row_base = index.mul %row, %blocks : index
+    %last_block = index.sub %blocks, %c1_index : index
+    %partial = index.min %thread, %last_block : index
+    %partial_slot_value = index.add %row_base, %partial : index
+    %partial_slot = index.assume %partial_slot_value [ge(%partial_slot_value, 0), lt(%partial_slot_value, %n)] : index
+    %partial_logit = view.load %logit_partials[%partial_slot] : view<[%n]xf32> -> f32
+    %is_block = index.cmp ult, %thread, %blocks : index
+    %candidate_logit = scf.select %is_block, %partial_logit, %negative : f32
+    %maximum_logit = kernel.workgroup.reduce<maxnumf> %candidate_logit : f32
+    %begin, %end = func.call @chat_sample_span(%block) : (index) -> (index, index)
+    %last = index.sub %end, %c1_index : index
+    %c4 = index.constant 4 : offset
+    %row_elements = index.mul %row, %logit_stride : index
+    %row_offset = index.scale %row_elements, %c4 : index, offset -> offset
+    %values = buffer.view %logits[%row_offset] : buffer -> view<200058xf32>
+    %local_race, %local_id = scf.for %base = [%begin to %end step %threads](%best = %negative : f32, %best_id = %largest : i32) -> (f32, i32) {
+      %candidate = index.add %base, %thread : index
+      %inside = index.cmp ult, %candidate, %end : index
+      %clamped = index.min %candidate, %last : index
+      %column = index.assume %clamped [ge(%clamped, 0), lt(%clamped, %columns)] : index
+      %value = view.load %values[%column] : view<200058xf32> -> f32
+      %id = index.cast %column : index to i32
+      %permitted = scalar.cmpi ne, %id, %excluded : i32
+      %present = scalar.andi %inside, %permitted : i1
+      %race = scf.if %present -> (f32) {
+        %score = func.call @sampling_race(%value, %maximum_logit, %temperature, %seed, %position, %id) : (f32, f32, f32, i64, i64, i32) -> (f32)
+        scf.yield %score : f32
+      } else {
+        scf.yield %negative : f32
+      }
+      %greater = scalar.cmpf ogt, %race, %best : f32
+      %tie = scalar.cmpf oeq, %race, %best : f32
+      %earlier = scalar.cmpi slt, %id, %best_id : i32
+      %earlier_tie = scalar.andi %tie, %earlier : i1
+      %better = scalar.ori %greater, %earlier_tie : i1
+      %take = scalar.andi %present, %better : i1
+      %next = scf.select %take, %race, %best : f32
+      %next_id = scf.select %take, %id, %best_id : i32
+      scf.yield %next, %next_id : f32, i32
+    }
+    %winning = kernel.workgroup.reduce<maxnumf> %local_race : f32
+    %owns = scalar.cmpf oeq, %local_race, %winning : f32
+    %owner_id = scf.select %owns, %local_id, %largest : i32
+    %id = kernel.workgroup.reduce<minsi> %owner_id : i32
+    %slot_value = index.add %row_base, %block : index
+    %slot = index.assume %slot_value [ge(%slot_value, 0), lt(%slot_value, %n)] : index
+    %publishes = index.cmp eq, %thread, %c0 : index
+    scf.if %publishes {
+      view.store %winning, %races[%slot] : f32, view<[%n]xf32>
+      view.store %id, %tokens[%slot] : i32, view<[%n]xi32>
+    }
+  }
+  kernel.return
+}
+
+// One workgroup per row of logits. Fast rows combine the block results of the two launches before. Other rows run the template over the whole row. The logit stride is the element distance between rows; zero makes every row read row zero.
+kernel.def @inkling_sample_rows(%rows_value: index) {
+  %rows = index.assume %rows_value [range(%rows_value, 1, 2147483647)] : index
+  %c1_index = index.constant 1 : index
+  %threads = index.constant 256 : index
+  kernel.launch.config workgroups(%rows, %c1_index, %c1_index) workgroup_size(%threads, %c1_index, %c1_index) : index
+} launch(%rows_value: index, %logit_stride: index, %epoch: buffer, %logits: buffer, %outputs: buffer, %scratch: buffer) {
+  %origin = index.constant 0 : offset
+  %c0 = index.constant 0 : index
+  %c1_index = index.constant 1 : index
+  %blocks = index.constant 128 : index
+  %thread = kernel.workitem.id<x> : index
+  %row_value = kernel.workgroup.id<x> : index
+  %rows = index.assume %rows_value [range(%rows_value, 1, 2147483647)] : index
+  %row = index.assume %row_value [ge(%row_value, 0), lt(%row_value, %rows)] : index
+  %packet_capacity = config.get @inkling.packet_capacity : index
+  %live, %temperature, %top_p, %top_k, %excluded, %seed, %position = func.call @chat_sample_policy(%row, %packet_capacity, %epoch) : (index, index, buffer) -> (i1, f32, f32, i32, i32, i64, i64)
+  scf.if %live {
+    %deterministic, %fast = func.call @chat_sample_mode(%temperature, %top_p, %top_k) : (f32, f32, i32) -> (i1, i1)
+    %n_value = index.mul %rows, %blocks : index
+    %n = index.assume %n_value [range(%n_value, 128, 2147483647)] : index
+    %row_base = index.mul %row, %blocks : index
+    %last_block = index.sub %blocks, %c1_index : index
+    %partial = index.min %thread, %last_block : index
+    %partial_slot_value = index.add %row_base, %partial : index
+    %partial_slot = index.assume %partial_slot_value [ge(%partial_slot_value, 0), lt(%partial_slot_value, %n)] : index
+    %is_block = index.cmp ult, %thread, %blocks : index
+    %selected = scf.if %fast -> (i32) {
+      %logit_origin, %race_origin, %token_origin = func.call @chat_sample_scratch(%n) : (index) -> (offset, offset, offset)
+      %id = scf.if %deterministic -> (i32) {
+        %zero64 = scalar.constant 0 : i64
+        %false = scalar.constant false : i1
+        %keys = buffer.view %scratch[%origin] : buffer -> view<[%n]xi64>
+        %partial_key = view.load %keys[%partial_slot] : view<[%n]xi64> -> i64
+        %candidate_key = scf.select %is_block, %partial_key, %zero64 : i64
+        %maximum = template.apply<@sampling.reduce_key>(%candidate_key, %false) : (i64, i1) -> (i64)
+        %inverse = scalar.trunci %maximum : i64 to i32
+        %all_bits = scalar.constant -1 : i32
+        %token = scalar.xori %inverse, %all_bits : i32
+        scf.yield %token : i32
+      } else {
+        %negative = scalar.constant -inf : f32
+        %largest = scalar.constant 2147483647 : i32
+        %races = buffer.view %scratch[%race_origin] : buffer -> view<[%n]xf32>
+        %tokens = buffer.view %scratch[%token_origin] : buffer -> view<[%n]xi32>
+        %partial_race = view.load %races[%partial_slot] : view<[%n]xf32> -> f32
+        %partial_token = view.load %tokens[%partial_slot] : view<[%n]xi32> -> i32
+        %candidate_race = scf.select %is_block, %partial_race, %negative : f32
+        %winning = kernel.workgroup.reduce<maxnumf> %candidate_race : f32
+        %holds = scalar.cmpf oeq, %candidate_race, %winning : f32
+        %owns = scalar.andi %holds, %is_block : i1
+        %candidate_token = scf.select %owns, %partial_token, %largest : i32
+        %token = kernel.workgroup.reduce<minsi> %candidate_token : i32
+        scf.yield %token : i32
+      }
+      scf.yield %id : i32
+    } else {
+      %columns = index.constant 200058 : index
+      %c4 = index.constant 4 : offset
+      %row_elements = index.mul %row, %logit_stride : index
+      %row_offset = index.scale %row_elements, %c4 : index, offset -> offset
+      %id = template.apply<@sampling.categorical_excluding_f32>(%columns, %logits, %row_offset, %excluded, %temperature, %top_p, %top_k, %seed, %position) : (index, buffer, offset, i32, f32, f32, i32, i64, i64) -> (i32)
+      scf.yield %id : i32
+    }
+    %publishes = index.cmp eq, %thread, %c0 : index
+    scf.if %publishes {
+      %tokens = buffer.view %outputs[%origin] : buffer -> view<[%rows]xi32>
+      view.store %selected, %tokens[%row] : i32, view<[%rows]xi32>
+    }
+  }
+  kernel.return
+}

@@ -1,0 +1,16 @@
+PASS gfx1201  head_bf16_gemv_nsel3                         sel_ok=True pad_inf=True rest_zero=True argmax_equal=True nmse=7.63e-14 
+PASS gfx1201  head_q8_0_gemv_nsel3                         sel_ok=True pad_inf=True rest_zero=True argmax_equal=True nmse=7.61e-14 
+PASS gfx1201  head_bf16_gemv_nsel1_decode                  sel_ok=True pad_inf=True rest_zero=True argmax_equal=True nmse=7.38e-14 
+PASS gfx1201  head_bf16_gemv_packet512                     sel_ok=True pad_inf=True rest_zero=True argmax_equal=True nmse=7.63e-14 
+PASS gfx1201  head_q8_0_gemv_packet512                     sel_ok=True pad_inf=True rest_zero=True argmax_equal=True nmse=7.61e-14 
+PASS gfx1201  head_bf16_gemm_nsel12                        sel_ok=True pad_inf=True rest_zero=True argmax_equal=True nmse=4.35e-08 
+PASS gfx1201  head_q8_0_gemm_nsel12                        sel_ok=True pad_inf=True rest_zero=True argmax_equal=True nmse=8.65e-08 
+PASS gfx1201  head_oracle_chain_bf16_gemv                  sel_ok=True pad_inf=True rest_zero=True argmax_equal=True nmse=5.48e-14 result_norm_nmse=1.5e-14 result_output_relL2=8.7e-04 top5_equal=True 
+PASS gfx1201  head_oracle_chain_q8_0_gemv                  sel_ok=True pad_inf=True rest_zero=True argmax_equal=True nmse=5.47e-14 result_norm_nmse=1.5e-14 result_output_relL2=2.4e-03 top5_equal=True 
+PASS gfx1201  head_oracle_chain_bf16_spans                 sel_ok=True pad_inf=True rest_zero=True argmax_equal=True nmse=6.56e-14 result_norm_nmse=1.5e-14 result_output_relL2=8.7e-04 top5_equal=True 
+PASS gfx1201  head_oracle_chain_q8_0_spans                 sel_ok=True pad_inf=True rest_zero=True argmax_equal=True nmse=6.55e-14 result_norm_nmse=1.5e-14 result_output_relL2=2.4e-03 top5_equal=True 
+PASS gfx1201  lm_head_oracle_bf16_gemv                     nmse_vs_exact=4.98e-14 oracle_relL2=8.67e-04 argmax_equal=True top5_equal=True 
+PASS gfx1201  lm_head_oracle_q8_0_gemv                     nmse_vs_exact=4.98e-14 oracle_relL2=2.42e-03 argmax_equal=True top5_equal=True 
+PASS gfx1201  lm_head_oracle_bf16_gemm                     nmse_vs_exact=6.78e-09 oracle_relL2=8.64e-04 argmax_equal=True top5_equal=True 
+PASS gfx1201  lm_head_oracle_q8_0_gemm                     nmse_vs_exact=1.54e-08 oracle_relL2=2.42e-03 argmax_equal=True top5_equal=True 
+15 cases, 0 failed

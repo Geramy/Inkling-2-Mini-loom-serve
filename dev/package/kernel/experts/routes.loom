@@ -1,0 +1,93 @@
+// Groups the routes (token * 8 + slot) of one chunk by expert (any n). The table is:
+// word 0 = record count, words 4.. = records of `stride` words {expert, live routes, route ids}, stride = max(tile, 32) + 2. Records hold at most `tile` routes.
+// One workgroup of 128 workitems, one per expert. The order of the routes inside an expert is arbitrary; it does not change any result.
+
+func.decl @inkling_experts_records(%n: index) -> (index)
+
+kernel.def export("inkling_experts_routes") @inkling_experts_routes() {
+  %c1 = index.constant 1 : index
+  %c128 = index.constant 128 : index
+  kernel.launch.config workgroups(%c1, %c1, %c1) workgroup_size(%c128, %c1, %c1) : index
+} launch(%n: index, %tile: index, %ids: buffer, %tasks: buffer) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c2 = index.constant 2 : index
+  %c8 = index.constant 8 : index
+  %c32 = index.constant 32 : index
+  %c128 = index.constant 128 : index
+  %origin = index.constant 0 : offset
+  %records_origin = index.constant 16 : offset
+  %counter_bytes = index.constant 512 : offset
+  %routes = index.mul %n, %c8 : index
+  %records = func.call pure @inkling_experts_records(%n) : (index) -> (index)
+  %tid = kernel.workitem.id<x> : index
+  %tid_word = index.cast %tid : index to i32
+  %idv = buffer.view %ids[%origin] : buffer -> view<[%routes]xi32>
+  %tile_wide = index.max %tile, %c32 : index
+  %stride = index.add %tile_wide, %c2 : index
+  %table = buffer.view %tasks[%records_origin] : buffer -> view<[%records]x[%stride]xi32>
+  %header = buffer.view %tasks[%origin] : buffer -> view<1xi32>
+  %counter_store = buffer.alloca<workgroup> align(16) %counter_bytes : buffer
+  %offset_store = buffer.alloca<workgroup> align(16) %counter_bytes : buffer
+  %counters = buffer.view %counter_store[%origin] : buffer -> view<128xi32>
+  %offsets = buffer.view %offset_store[%origin] : buffer -> view<128xi32>
+  %zero = scalar.constant 0 : i32
+  %one = scalar.constant 1 : i32
+  view.store %zero, %counters[%tid] : i32, view<128xi32>
+  kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+  scf.for %r = [%tid to %routes step %c128] {
+    %id32 = view.load %idv[%r] : view<[%routes]xi32> -> i32
+    %id_raw = index.cast %id32 : i32 to index
+    %id = index.assume %id_raw [ge(%id_raw, 0), lt(%id_raw, 128)] : index
+    %rank = view.atomic.rmw<addi> %one, %counters[%id] {ordering = relaxed, scope = workgroup} : i32, view<128xi32> -> i32
+  }
+  kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+  %population = view.load %counters[%tid] : view<128xi32> -> i32
+  %tile_word = index.cast %tile : index to i32
+  %tile_less = scalar.subi %tile_word, %one : i32
+  %rounded = scalar.addi %population, %tile_less : i32
+  %tiles = scalar.divui %rounded, %tile_word : i32
+  %first = kernel.workgroup.scan<addi> %tiles {direction = forward, mode = exclusive} : i32
+  view.store %first, %offsets[%tid] : i32, view<128xi32>
+  %last = index.constant 127 : index
+  %is_last = index.cmp eq, %tid, %last : index
+  scf.if %is_last {
+    %total = scalar.addi %first, %tiles : i32
+    view.store %total, %header[0] : i32, view<1xi32>
+  }
+  %first_index = index.cast %first : i32 to index
+  %tiles_index = index.cast %tiles : i32 to index
+  %population_index = index.cast %population : i32 to index
+  scf.for %q = [%c0 to %tiles_index step %c1] {
+    %rec_raw = index.add %first_index, %q : index
+    %rec = index.assume %rec_raw [ge(%rec_raw, 0), lt(%rec_raw, %records)] : index
+    %done = index.mul %q, %tile : index
+    %remaining = index.sub %population_index, %done : index
+    %full = index.cmp ult, %remaining, %tile : index
+    %live = scf.select %full, %remaining, %tile : index
+    %live_word = index.cast %live : index to i32
+    view.store %tid_word, %table[%rec, 0] : i32, view<[%records]x[%stride]xi32>
+    view.store %live_word, %table[%rec, 1] : i32, view<[%records]x[%stride]xi32>
+  }
+  kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+  view.store %zero, %counters[%tid] : i32, view<128xi32>
+  kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+  scf.for %r = [%tid to %routes step %c128] {
+    %id32 = view.load %idv[%r] : view<[%routes]xi32> -> i32
+    %id_raw = index.cast %id32 : i32 to index
+    %id = index.assume %id_raw [ge(%id_raw, 0), lt(%id_raw, 128)] : index
+    %rank = view.atomic.rmw<addi> %one, %counters[%id] {ordering = relaxed, scope = workgroup} : i32, view<128xi32> -> i32
+    %base32 = view.load %offsets[%id] : view<128xi32> -> i32
+    %q32 = scalar.divui %rank, %tile_word : i32
+    %s32 = scalar.remui %rank, %tile_word : i32
+    %rec32 = scalar.addi %base32, %q32 : i32
+    %rec_raw = index.cast %rec32 : i32 to index
+    %rec = index.assume %rec_raw [ge(%rec_raw, 0), lt(%rec_raw, %records)] : index
+    %s_raw = index.cast %s32 : i32 to index
+    %field_raw = index.add %s_raw, %c2 : index
+    %field = index.assume %field_raw [ge(%field_raw, 2), lt(%field_raw, %stride)] : index
+    %route_word = index.cast %r : index to i32
+    view.store %route_word, %table[%rec, %field] : i32, view<[%records]x[%stride]xi32>
+  }
+  kernel.return
+}

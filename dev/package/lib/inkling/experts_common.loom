@@ -1,0 +1,199 @@
+// Shared pieces of the expert kernels. Weight type 0 is NVFP4, 1 is Q8_0, 2 is BF16. A unit is 16 consecutive K elements.
+// F16 activations are stored per unit in slot order: dword d holds the natural elements (0,2) (8,10) (1,3) (9,11) (4,6) (12,14) (5,7) (13,15).
+
+
+func.decl @inkling_nvfp4_scale(%word: i32, %sub: index) -> (f32)
+func.decl @inkling_nvfp4_codes(%w0: i32, %w1: i32) -> (vector<16xf16>)
+// Element index (0..15 inside a unit) to slot.
+func.def public inline @inkling_x_slot(%e: index) -> (index) {
+  %c8 = index.constant 8 : index
+  %low = index.cmp ult, %e, %c8 : index
+  %lo_table = scalar.constant -641183424 : i32
+  %hi_table = scalar.constant -68521118 : i32
+  %table = scf.select %low, %lo_table, %hi_table : i32
+  %e7 = index.rem %e, %c8 : index
+  %e32 = index.cast %e7 : index to i32
+  %c2_i32 = scalar.constant 2 : i32
+  %c15_i32 = scalar.constant 15 : i32
+  %shift = scalar.shli %e32, %c2_i32 : i32
+  %moved = scalar.shrui %table, %shift : i32
+  %slot32 = scalar.andi %moved, %c15_i32 : i32
+  %slot = index.cast %slot32 : i32 to index
+  func.return %slot : index
+}
+
+// Slot order of 16 natural f16 values.
+func.def public inline @inkling_x_pack(%v: vector<16xf16>) -> (vector<16xf16>) {
+  %p0 = vector.extract %v[0] : vector<16xf16> -> f16
+  %p1 = vector.extract %v[2] : vector<16xf16> -> f16
+  %p2 = vector.extract %v[8] : vector<16xf16> -> f16
+  %p3 = vector.extract %v[10] : vector<16xf16> -> f16
+  %p4 = vector.extract %v[1] : vector<16xf16> -> f16
+  %p5 = vector.extract %v[3] : vector<16xf16> -> f16
+  %p6 = vector.extract %v[9] : vector<16xf16> -> f16
+  %p7 = vector.extract %v[11] : vector<16xf16> -> f16
+  %p8 = vector.extract %v[4] : vector<16xf16> -> f16
+  %p9 = vector.extract %v[6] : vector<16xf16> -> f16
+  %p10 = vector.extract %v[12] : vector<16xf16> -> f16
+  %p11 = vector.extract %v[14] : vector<16xf16> -> f16
+  %p12 = vector.extract %v[5] : vector<16xf16> -> f16
+  %p13 = vector.extract %v[7] : vector<16xf16> -> f16
+  %p14 = vector.extract %v[13] : vector<16xf16> -> f16
+  %p15 = vector.extract %v[15] : vector<16xf16> -> f16
+  %r = vector.from_elements %p0, %p1, %p2, %p3, %p4, %p5, %p6, %p7, %p8, %p9, %p10, %p11, %p12, %p13, %p14, %p15 : vector<16xf16>
+  func.return %r : vector<16xf16>
+}
+
+// Natural order of 16 slot-ordered f16 values.
+func.def public inline @inkling_x_natural(%x: vector<16xf16>) -> (vector<16xf16>) {
+  %e0 = vector.extract %x[0] : vector<16xf16> -> f16
+  %e1 = vector.extract %x[4] : vector<16xf16> -> f16
+  %e2 = vector.extract %x[1] : vector<16xf16> -> f16
+  %e3 = vector.extract %x[5] : vector<16xf16> -> f16
+  %e4 = vector.extract %x[8] : vector<16xf16> -> f16
+  %e5 = vector.extract %x[12] : vector<16xf16> -> f16
+  %e6 = vector.extract %x[9] : vector<16xf16> -> f16
+  %e7 = vector.extract %x[13] : vector<16xf16> -> f16
+  %e8 = vector.extract %x[2] : vector<16xf16> -> f16
+  %e9 = vector.extract %x[6] : vector<16xf16> -> f16
+  %e10 = vector.extract %x[3] : vector<16xf16> -> f16
+  %e11 = vector.extract %x[7] : vector<16xf16> -> f16
+  %e12 = vector.extract %x[10] : vector<16xf16> -> f16
+  %e13 = vector.extract %x[14] : vector<16xf16> -> f16
+  %e14 = vector.extract %x[11] : vector<16xf16> -> f16
+  %e15 = vector.extract %x[15] : vector<16xf16> -> f16
+  %n = vector.from_elements %e0, %e1, %e2, %e3, %e4, %e5, %e6, %e7, %e8, %e9, %e10, %e11, %e12, %e13, %e14, %e15 : vector<16xf16>
+  func.return %n : vector<16xf16>
+}
+
+// Bytes of a weight row of `units` units: NVFP4 9 B per unit, Q8_0 17 B, BF16 32 B.
+func.def public inline @inkling_experts_row_bytes(%wtype: index, %units: index) -> (offset) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %is_fp4 = index.cmp eq, %wtype, %c0 : index
+  %is_q8 = index.cmp eq, %wtype, %c1 : index
+  %b_fp4 = index.constant 9 : offset
+  %b_q8 = index.constant 17 : offset
+  %b_bf = index.constant 32 : offset
+  %t = scf.select %is_q8, %b_q8, %b_bf : offset
+  %per_unit = scf.select %is_fp4, %b_fp4, %t : offset
+  %total = index.scale %units, %per_unit : index, offset -> offset
+  func.return %total : offset
+}
+
+// Loads unit `unit` of the weight row at byte `row`. The result is f16 codes in slot order and one f32 scale: weight = code * scale.
+func.def public inline @inkling_experts_unit_load(%wtype: index, %w: buffer, %row: offset, %units: index, %unit: index) -> (vector<16xf16>, f32) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c2 = index.constant 2 : index
+  %c4 = index.constant 4 : index
+  %is_fp4 = index.cmp eq, %wtype, %c0 : index
+  %is_q8 = index.cmp eq, %wtype, %c1 : index
+  %codes, %scale = scf.if %is_fp4 -> (vector<16xf16>, f32) {
+    %block = index.div %unit, %c4 : index
+    %sub = index.rem %unit, %c4 : index
+    %c9 = index.constant 9 : index
+    %words = index.mul %units, %c9 : index
+    %nwords = index.div %words, %c4 : index
+    %view = buffer.view %w[%row] : buffer -> view<[%nwords]xi32>
+    %w9 = index.mul %block, %c9 : index
+    %sub2 = index.mul %sub, %c2 : index
+    %q0 = index.add %w9, %sub2 : index
+    %i0 = index.add %q0, %c1 : index
+    %i1 = index.add %q0, %c2 : index
+    %scales = view.load %view[%w9] : view<[%nwords]xi32> -> i32
+    %v0 = view.load %view[%i0] : view<[%nwords]xi32> -> i32
+    %v1 = view.load %view[%i1] : view<[%nwords]xi32> -> i32
+    %raw = func.call @inkling_nvfp4_scale(%scales, %sub) : (i32, index) -> (f32)
+    %k14 = scalar.constant 16384.0 : f32
+    %scale = scalar.mulf %raw, %k14 : f32
+    %codes = func.call @inkling_nvfp4_codes(%v0, %v1) : (i32, i32) -> (vector<16xf16>)
+    scf.yield %codes, %scale : vector<16xf16>, f32
+  } else {
+    %c, %s = scf.if %is_q8 -> (vector<16xf16>, f32) {
+      %block = index.div %unit, %c2 : index
+      %half = index.rem %unit, %c2 : index
+      %block_bytes = index.constant 34 : offset
+      %block_off = index.scale %block, %block_bytes : index, offset -> offset
+      %base = index.add %row, %block_off : offset
+      %half_bytes = index.constant 16 : offset
+      %half_off = index.scale %half, %half_bytes : index, offset -> offset
+      %two = index.constant 2 : offset
+      %code_base = index.add %base, %two : offset
+      %code_off = index.add %code_base, %half_off : offset
+      %sv = buffer.view %w[%base] : buffer -> view<1xf16>
+      %cv = buffer.view %w[%code_off] : buffer -> view<16xi8>
+      %sh = view.load %sv[0] : view<1xf16> -> f16
+      %scale = scalar.extf %sh : f16 to f32
+      %raw = vector.load %cv[0] : view<16xi8> -> vector<16xi8>
+      %cf = vector.sitofp %raw : vector<16xi8> to vector<16xf16>
+      %packed = func.call @inkling_x_pack(%cf) : (vector<16xf16>) -> (vector<16xf16>)
+      scf.yield %packed, %scale : vector<16xf16>, f32
+    } else {
+      %bytes32 = index.constant 32 : offset
+      %off = index.scale %unit, %bytes32 : index, offset -> offset
+      %base = index.add %row, %off : offset
+      %bv = buffer.view %w[%base] : buffer -> view<16xbf16>
+      %wb = vector.load %bv[0] : view<16xbf16> -> vector<16xbf16>
+      %wf = vector.extf %wb : vector<16xbf16> to vector<16xf32>
+      %wh = vector.fptrunc %wf : vector<16xf32> to vector<16xf16>
+      %packed = func.call @inkling_x_pack(%wh) : (vector<16xf16>) -> (vector<16xf16>)
+      %one = scalar.constant 1.0 : f32
+      scf.yield %packed, %one : vector<16xf16>, f32
+    }
+    scf.yield %c, %s : vector<16xf16>, f32
+  }
+  func.return %codes, %scale : vector<16xf16>, f32
+}
+
+func.def public inline @inkling_unit_dot(%codes: vector<16xf16>, %x: vector<16xf16>, %scale: f32) -> (f32) {
+  %zero = scalar.constant 0.0 : f32
+  %zero8 = vector.splatf 0.0 : vector<8xf32>
+  %pairs = vector.dot2f %codes, %x, %zero8 : vector<16xf16>, vector<16xf16>, vector<8xf32>
+  %sum = vector.reduce<addf> %pairs, %zero : vector<8xf32>, f32
+  %scaled = scalar.mulf %sum, %scale : f32
+  func.return %scaled : f32
+}
+
+// Number of route records that always suffice: every route could be alone, or tiles of 8 plus one partial tile per expert.
+func.def public pure inline @inkling_experts_records(%n: index) -> (index) {
+  %c8 = index.constant 8 : index
+  %c128 = index.constant 128 : index
+  %routes = index.mul %n, %c8 : index
+  %bound = index.add %n, %c128 : index
+  %less = index.cmp ult, %routes, %bound : index
+  %records = scf.select %less, %routes, %bound : index
+  func.return %records : index
+}
+
+// Records needed for tiles of `tile` routes.
+func.def public pure inline @inkling_experts_records_tile(%n: index, %tile: index) -> (index) {
+  %c8 = index.constant 8 : index
+  %c128 = index.constant 128 : index
+  %routes = index.mul %n, %c8 : index
+  %full = index.div %routes, %tile : index
+  %bound = index.add %full, %c128 : index
+  %less = index.cmp ult, %routes, %bound : index
+  %records = scf.select %less, %routes, %bound : index
+  func.return %records : index
+}
+
+// Real f16 weights of one unit in slot order (for matrix operations).
+func.def public inline @inkling_experts_unit_f16(%wtype: index, %w: buffer, %row: offset, %units: index, %unit: index) -> (vector<16xf16>) {
+  %c0 = index.constant 0 : index
+  %is_fp4 = index.cmp eq, %wtype, %c0 : index
+  %codes, %scale = func.call @inkling_experts_unit_load(%wtype, %w, %row, %units, %unit) : (index, buffer, offset, index, index) -> (vector<16xf16>, f32)
+  %pre32 = scalar.constant 16384.0 : f32
+  %one32 = scalar.constant 1.0 : f32
+  %inv32 = scalar.constant 6.103515625e-05 : f32
+  %pre = scf.select %is_fp4, %pre32, %one32 : f32
+  %post = scf.select %is_fp4, %inv32, %one32 : f32
+  %pre16 = scalar.fptrunc %pre : f32 to f16
+  %fac = scalar.mulf %scale, %post : f32
+  %fac16 = scalar.fptrunc %fac : f32 to f16
+  %pre_v = vector.splat %pre16 : vector<16xf16>
+  %fac_v = vector.splat %fac16 : vector<16xf16>
+  %real = vector.mulf %codes, %pre_v : vector<16xf16>
+  %result = vector.mulf %real, %fac_v : vector<16xf16>
+  func.return %result : vector<16xf16>
+}

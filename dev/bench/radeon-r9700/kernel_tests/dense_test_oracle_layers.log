@@ -1,0 +1,18 @@
+PASS gfx1201  layer0_bf16                                  nmse_exact/oracle_relL2 q:7.4e-14/1.4e-03 k:6.3e-14/1.3e-03 v:4.4e-14/1.0e-03 r:3.3e-14/7.7e-04 g:1.3e-14 o:1.1e-13/1.6e-03 l:1.3e-14/1.3e-07 
+PASS gfx1201  layer1_bf16                                  nmse_exact/oracle_relL2 q:7.6e-14/1.5e-03 k:6.2e-14/1.3e-03 v:4.6e-14/1.1e-03 r:3.4e-14/8.5e-04 g:1.9e-14 o:9.7e-14/1.7e-03 l:1.4e-14/1.3e-07 
+PASS gfx1201  layer2_bf16                                  nmse_exact/oracle_relL2 q:7.7e-14/1.5e-03 k:6.3e-14/1.3e-03 v:5.1e-14/1.1e-03 r:3.6e-14/9.0e-04 g:2.4e-14 o:9.1e-14/1.7e-03 l:1.3e-14/1.3e-07 
+PASS gfx1201  layer3_bf16                                  nmse_exact/oracle_relL2 q:7.7e-14/1.5e-03 k:6.7e-14/1.3e-03 v:5.2e-14/1.2e-03 r:3.9e-14/9.7e-04 g:2.9e-14 o:1.2e-13/1.7e-03 l:1.4e-14/1.3e-07 
+PASS gfx1201  layer4_bf16                                  nmse_exact/oracle_relL2 q:7.8e-14/1.4e-03 k:6.2e-14/1.3e-03 v:5.9e-14/1.2e-03 r:3.8e-14/9.0e-04 g:1.5e-14 o:1.0e-13/1.6e-03 l:1.3e-14/1.3e-07 
+PASS gfx1201  layer5_bf16                                  nmse_exact/oracle_relL2 q:6.7e-14/1.3e-03 k:5.3e-14/1.2e-03 v:4.6e-14/1.1e-03 r:5.0e-14/1.2e-03 g:3.5e-14 o:1.5e-13/1.8e-03 l:1.5e-14/1.4e-07 
+PASS gfx1201  layer6_bf16                                  nmse_exact/oracle_relL2 q:7.4e-14/1.4e-03 k:7.4e-14/1.4e-03 v:4.8e-14/1.1e-03 r:3.5e-14/9.8e-04 g:1.1e-14 o:1.1e-13/1.7e-03 l:1.2e-14/1.3e-07 
+PASS gfx1201  layer8_bf16                                  nmse_exact/oracle_relL2 q:7.9e-14/1.5e-03 k:5.4e-14/1.2e-03 v:6.1e-14/1.3e-03 r:4.8e-14/1.2e-03 g:1.5e-14 o:1.3e-13/2.0e-03 l:1.3e-14/1.3e-07 
+PASS gfx1201  layer11_bf16                                 nmse_exact/oracle_relL2 q:6.4e-14/1.4e-03 k:4.5e-14/1.1e-03 v:5.1e-14/1.1e-03 r:5.1e-14/1.1e-03 g:3.5e-14 o:1.5e-13/2.0e-03 l:1.4e-14/1.4e-07 
+PASS gfx1201  layer12_bf16                                 nmse_exact/oracle_relL2 q:6.9e-14/1.4e-03 k:5.1e-14/1.2e-03 v:4.4e-14/1.1e-03 r:5.3e-14/1.2e-03 g:8.8e-15 o:2.0e-13/2.5e-03 l:1.4e-14/1.4e-07 
+PASS gfx1201  layer17_bf16                                 nmse_exact/oracle_relL2 q:6.2e-14/1.3e-03 k:5.3e-14/1.2e-03 v:4.9e-14/1.1e-03 r:4.9e-14/1.1e-03 g:3.9e-14 o:9.1e-14/2.0e-03 l:1.7e-14/1.5e-07 
+PASS gfx1201  layer18_bf16                                 nmse_exact/oracle_relL2 q:7.5e-14/1.5e-03 k:5.4e-14/1.2e-03 v:5.0e-14/1.1e-03 r:4.8e-14/1.1e-03 g:1.5e-14 o:1.4e-13/2.1e-03 l:1.4e-14/1.4e-07 
+PASS gfx1201  layer23_bf16                                 nmse_exact/oracle_relL2 q:6.6e-14/1.4e-03 k:5.8e-14/1.2e-03 v:4.3e-14/9.9e-04 r:6.5e-14/1.4e-03 g:1.4e-14 o:1.1e-13/2.4e-03 l:1.3e-14/1.3e-07 
+PASS gfx1201  layer0_q8_0                                  nmse_exact/oracle_relL2 q:6.3e-08/5.1e-03 k:5.2e-08/4.5e-03 v:3.4e-08/3.6e-03 r:2.2e-08/2.3e-03 g:9.6e-09 o:6.9e-08/5.6e-03 
+PASS gfx1201  layer5_q8_0                                  nmse_exact/oracle_relL2 q:5.6e-08/4.9e-03 k:4.0e-08/4.0e-03 v:3.6e-08/3.9e-03 r:4.1e-08/3.1e-03 g:3.4e-08 o:7.9e-08/6.4e-03 
+PASS gfx1201  layer17_q8_0                                 nmse_exact/oracle_relL2 q:5.3e-08/4.8e-03 k:4.3e-08/4.1e-03 v:3.9e-08/4.1e-03 r:3.8e-08/3.9e-03 g:2.2e-08 o:9.9e-08/7.9e-03 
+PASS gfx1201  layer23_q8_0                                 nmse_exact/oracle_relL2 q:5.8e-08/6.8e-03 k:4.9e-08/5.2e-03 v:3.3e-08/4.5e-03 r:5.5e-08/5.8e-03 g:1.1e-08 o:1.6e-07/9.4e-03 
+17 cases, 0 failed

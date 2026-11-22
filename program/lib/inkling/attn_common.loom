@@ -129,3 +129,13 @@ func.def public inline @inkling_attn_find_tile(%spans: buffer, %span_cap: index,
   }
   func.return %found, %begin, %len, %pos, %row, %slot, %tile_in : i1, index, index, index, index, offset, index
 }
+
+func.def public inline @inkling_attn_decode_split(%split_blocks: index, %blocks: index) -> (index) {
+  %c63 = index.constant 63 : index
+  %c64 = index.constant 64 : index
+  %blocks_a = index.assume %blocks [range(%blocks, 0, 2147483647)] : index
+  %up = index.add %blocks_a, %c63 : index
+  %need = index.div %up, %c64 : index
+  %split = index.max %split_blocks, %need : index
+  func.return %split : index
+}

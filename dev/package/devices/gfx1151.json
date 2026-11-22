@@ -1,0 +1,4 @@
+{
+  "devices": {"gpu": {"uri": "amdgpu://id/000000e2000000808e270f2b0bbb4e00"}},
+  "pools": {"main": {"devices": ["gpu"], "pool_backing": "elastic", "memory_bytes": "48gib"}}
+}

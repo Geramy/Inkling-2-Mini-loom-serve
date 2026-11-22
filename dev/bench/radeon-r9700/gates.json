@@ -1,0 +1,34 @@
+{
+ "verdict": "FAIL",
+ "level": "dev",
+ "pkg_hash": "780f833bad85",
+ "seconds": 76,
+ "ts": "2026-11-22T09:51:47",
+ "gates": {
+  "consistency": {
+   "pass": true,
+   "log": "gates_consistency.log",
+   "seconds": 0
+  },
+  "agent": {
+   "pass": true,
+   "log": "gates_agent.log",
+   "seconds": 71
+  },
+  "golden": {
+   "pass": true,
+   "log": "gates_golden.log",
+   "seconds": 0
+  },
+  "compare": {
+   "pass": true,
+   "log": "gates_compare.log",
+   "seconds": 0
+  },
+  "sampling": {
+   "pass": false,
+   "log": "gates_sampling.log",
+   "seconds": 5
+  }
+ }
+}

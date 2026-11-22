@@ -1,0 +1,69 @@
+config.decl @inkling.vocab_padded : %value: index where [range(%value, 1, 2147483647)]
+
+config.decl @inkling.capture_width : %value: index where [range(%value, 1, 1048576)]
+
+func.decl import("input") @require(%condition: i32, %diagnostic: buffer)
+
+func.def public @request_defaults(%options: buffer) -> (buffer) {
+  %empty = buffer.constant utf8("") : buffer
+  func.return %empty : buffer
+}
+
+func.def public @prepare_request(%defaults: buffer, %request: buffer, %nonce: i64, %tokens: buffer) -> (buffer) {
+  %origin = index.constant 0 : offset
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c4 = index.constant 4 : index
+  %bytes_offset = buffer.length %tokens
+  %bytes = index.cast %bytes_offset : offset to index
+  %count = index.div %bytes, %c4 : index
+  %ids = buffer.view %tokens[%origin] : buffer -> view<[%count]xi32>
+  %vocab = config.get @inkling.vocab_padded : index
+  %vocab32 = index.cast %vocab : index to i32
+  %true = scalar.constant true : i1
+  %all = scf.for %i = [%c0 to %count step %c1](%ok = %true : i1) -> (i1) {
+    %id = view.load %ids[%i] : view<[%count]xi32> -> i32
+    %below = scalar.cmpi ult, %id, %vocab32 : i32
+    %next = scalar.andi %ok, %below : i1
+    scf.yield %next : i1
+  }
+  %flag = scalar.extui %all : i1 to i32
+  %error = buffer.constant utf8("token id outside the padded vocabulary") : buffer
+  func.call @require(%flag, %error) : (i32, buffer)
+  func.return %defaults : buffer
+}
+
+func.def public @bind_request(%state: buffer, %row: i32, %options: buffer) {
+  func.return
+}
+
+// One range per span: the span's rows of the capture tensor, row-major, in packed token order.
+func.def public @capture_epoch(%control_state: buffer, %shape: i32, %span_count: i32, %plan: buffer) -> (buffer) {
+  %origin = index.constant 0 : offset
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %spans = index.cast %span_count : i32 to index
+  %triple_bytes = index.constant 24 : offset
+  %bytes = index.scale %spans, %triple_bytes : index, offset -> offset
+  %ranges = buffer.alloca<private> align(8) %bytes : buffer
+  %records = buffer.view %plan[%origin] : buffer -> view<[%spans]x9xi32>
+  %out = buffer.view %ranges[%origin] : buffer -> view<[%spans]x3xi64>
+  %width = config.get @inkling.capture_width : index
+  %width64 = index.cast %width : index to i64
+  %c4_i64 = scalar.constant 4 : i64
+  %row_bytes = scalar.muli %width64, %c4_i64 : i64
+  %c0_i64 = scalar.constant 0 : i64
+  %total = scf.for %i = [%c0 to %spans step %c1](%cursor = %c0_i64 : i64) -> (i64) {
+    %length32 = view.load %records[%i, 0] : view<[%spans]x9xi32> -> i32
+    %length = scalar.extui %length32 : i32 to i64
+    %ordinal = index.cast %i : index to i64
+    %begin = scalar.muli %cursor, %row_bytes : i64
+    %extent = scalar.muli %length, %row_bytes : i64
+    view.store %ordinal, %out[%i, 0] : i64, view<[%spans]x3xi64>
+    view.store %begin, %out[%i, 1] : i64, view<[%spans]x3xi64>
+    view.store %extent, %out[%i, 2] : i64, view<[%spans]x3xi64>
+    %next = scalar.addi %cursor, %length : i64
+    scf.yield %next : i64
+  }
+  func.return %ranges : buffer
+}

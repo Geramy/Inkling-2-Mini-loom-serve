@@ -1,0 +1,119 @@
+{
+ "total": 33432,
+ "items": [
+  {
+   "id": 10,
+   "name": "x",
+   "col": 0,
+   "width": 2304
+  },
+  {
+   "id": 11,
+   "name": "xn",
+   "col": 2304,
+   "width": 2304
+  },
+  {
+   "id": 12,
+   "name": "q_raw",
+   "col": 4608,
+   "width": 3072
+  },
+  {
+   "id": 13,
+   "name": "k_raw",
+   "col": 7680,
+   "width": 1024
+  },
+  {
+   "id": 14,
+   "name": "v_raw",
+   "col": 8704,
+   "width": 1024
+  },
+  {
+   "id": 15,
+   "name": "r_raw",
+   "col": 9728,
+   "width": 384
+  },
+  {
+   "id": 19,
+   "name": "gate",
+   "col": 10112,
+   "width": 3072
+  },
+  {
+   "id": 21,
+   "name": "sink",
+   "col": 13184,
+   "width": 24
+  },
+  {
+   "id": 22,
+   "name": "q",
+   "col": 13208,
+   "width": 3072
+  },
+  {
+   "id": 23,
+   "name": "k",
+   "col": 16280,
+   "width": 1024
+  },
+  {
+   "id": 24,
+   "name": "v",
+   "col": 17304,
+   "width": 1024
+  },
+  {
+   "id": 25,
+   "name": "r",
+   "col": 18328,
+   "width": 384
+  },
+  {
+   "id": 16,
+   "name": "ab",
+   "col": 18712,
+   "width": 3072
+  },
+  {
+   "id": 17,
+   "name": "ob",
+   "col": 21784,
+   "width": 2304
+  },
+  {
+   "id": 27,
+   "name": "ffn_inp",
+   "col": 24088,
+   "width": 2304
+  },
+  {
+   "id": 28,
+   "name": "xn_ffn",
+   "col": 26392,
+   "width": 2304
+  },
+  {
+   "id": 29,
+   "name": "logits",
+   "col": 28696,
+   "width": 128
+  },
+  {
+   "id": 18,
+   "name": "y",
+   "col": 28824,
+   "width": 2304
+  },
+  {
+   "id": 20,
+   "name": "l_out",
+   "col": 31128,
+   "width": 2304
+  }
+ ]
+}

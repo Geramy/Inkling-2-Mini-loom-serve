@@ -63,7 +63,7 @@ func.def public @sampling_key(%value: f32, %id: i32) -> (i64) {
 // Independent per-token exponential races implement a categorical draw.
 // Request seed, absolute target position and token ID fully determine the
 // counter. Packed rows, dispatch shape and speculative depth are absent.
-func.def @sampling_race(%logit: f32, %maximum: f32, %temperature: f32, %seed: i64, %position: i64, %id: i32) -> (f32) {
+func.def public @sampling_race(%logit: f32, %maximum: f32, %temperature: f32, %seed: i64, %position: i64, %id: i32) -> (f32) {
   %shift64 = scalar.constant 32 : i64
   %seed_high = scalar.shrui %seed, %shift64 : i64
   %position_high = scalar.shrui %position, %shift64 : i64

@@ -1,0 +1,13 @@
+Q4 F32 slot 24 ctrl q chunk 128 vs numpy     nmse 4.681e-14 PASS
+Q4 F32 slot 24 ctrl k chunk 128 vs numpy     nmse 6.441e-14 PASS
+Q4 F32 slot 24 ctrl v chunk 128 vs numpy     nmse 5.849e-14 PASS
+Q4 F32 slot 29 ctrl q chunk 128 vs numpy     nmse 1.787e-14 PASS
+Q4 F32 slot 29 ctrl k chunk 128 vs numpy     nmse 9.775e-15 PASS
+Q4 F32 slot 29 ctrl v chunk 128 vs numpy     nmse 6.394e-15 PASS
+Q4 F32 slot 41 ctrl q chunk 128 vs numpy     nmse 2.975e-14 PASS
+Q4 F32 slot 41 ctrl k chunk 128 vs numpy     nmse 1.085e-14 PASS
+Q4 F32 slot 41 ctrl v chunk 128 vs numpy     nmse 9.111e-15 PASS
+Q4 F32 slot 47 ctrl q chunk 128 vs numpy     nmse 9.380e-15 PASS
+Q4 F32 slot 47 ctrl k chunk 128 vs numpy     nmse 6.854e-15 PASS
+Q4 F32 slot 47 ctrl v chunk 128 vs numpy     nmse 3.332e-15 PASS
+TOTAL 12 FAIL 0

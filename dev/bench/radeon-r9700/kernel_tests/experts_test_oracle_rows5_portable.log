@@ -1,0 +1,89 @@
+slot 0 L0 router logits rel_l2: 7.937e-08 (tol 1e-06) PASS
+slot 0 L0 x16 rel_l2: 2.092e-04 (tol 0.001) PASS
+slot 0 L0 router id rows that differ (of 1): 0.000e+00 (tol 1) PASS
+slot 0 L0 router weights rel_l2: 1.600e-07 (tol 1e-06) PASS
+slot 0 L0 n=1 wtype 0 nvfp4 portable act vs host (f32 x): 3.161e-04 (tol 0.003) PASS
+slot 0 L0 n=1 wtype 0 nvfp4 portable dout vs host: 3.077e-04 (tol 0.003) PASS
+slot 0 L0 n=1 wtype 0 nvfp4 portable y vs host: 2.453e-04 (tol 0.003) PASS
+slot 0 L0 n=1 wtype 0 nvfp4 portable y vs oracle conv_in(ffn): 1.082e-02 (tol 0.02) PASS
+slot 9 L9 router logits rel_l2: 8.620e-08 (tol 1e-06) PASS
+slot 9 L9 x16 rel_l2: 2.079e-04 (tol 0.001) PASS
+slot 9 L9 router id rows that differ (of 1): 0.000e+00 (tol 1) PASS
+slot 9 L9 router weights rel_l2: 1.363e-07 (tol 1e-06) PASS
+slot 9 L9 n=1 wtype 0 nvfp4 portable act vs host (f32 x): 2.784e-04 (tol 0.003) PASS
+slot 9 L9 n=1 wtype 0 nvfp4 portable dout vs host: 2.696e-04 (tol 0.003) PASS
+slot 9 L9 n=1 wtype 0 nvfp4 portable y vs host: 2.023e-04 (tol 0.003) PASS
+slot 9 L9 n=1 wtype 0 nvfp4 portable y vs oracle conv_in(ffn): 1.059e-02 (tol 0.02) PASS
+slot 19 L19 router logits rel_l2: 8.598e-08 (tol 1e-06) PASS
+slot 19 L19 x16 rel_l2: 2.116e-04 (tol 0.001) PASS
+slot 19 L19 router id rows that differ (of 1): 0.000e+00 (tol 1) PASS
+slot 19 L19 router weights rel_l2: 1.218e-07 (tol 1e-06) PASS
+slot 19 L19 n=1 wtype 0 nvfp4 portable act vs host (f32 x): 3.453e-04 (tol 0.003) PASS
+slot 19 L19 n=1 wtype 0 nvfp4 portable dout vs host: 3.393e-04 (tol 0.003) PASS
+slot 19 L19 n=1 wtype 0 nvfp4 portable y vs host: 3.154e-04 (tol 0.003) PASS
+slot 19 L19 n=1 wtype 0 nvfp4 portable y vs oracle conv_in(ffn): 1.133e-02 (tol 0.02) PASS
+slot 27 L9 router logits rel_l2: 7.728e-08 (tol 1e-06) PASS
+slot 27 L9 x16 rel_l2: 2.102e-04 (tol 0.001) PASS
+slot 27 L9 router id rows that differ (of 1): 0.000e+00 (tol 1) PASS
+slot 27 L9 router weights rel_l2: 1.430e-07 (tol 1e-06) PASS
+slot 27 L9 n=1 wtype 0 nvfp4 portable act vs host (f32 x): 3.144e-04 (tol 0.003) PASS
+slot 27 L9 n=1 wtype 0 nvfp4 portable dout vs host: 3.080e-04 (tol 0.003) PASS
+slot 27 L9 n=1 wtype 0 nvfp4 portable y vs host: 2.534e-04 (tol 0.003) PASS
+slot 27 L9 n=1 wtype 0 nvfp4 portable y vs oracle conv_in(ffn): 1.107e-02 (tol 0.02) PASS
+slot 39 L9 router logits rel_l2: 7.558e-08 (tol 1e-06) PASS
+slot 39 L9 x16 rel_l2: 2.017e-04 (tol 0.001) PASS
+slot 39 L9 router id rows that differ (of 1): 0.000e+00 (tol 1) PASS
+slot 39 L9 router weights rel_l2: 9.481e-08 (tol 1e-06) PASS
+slot 39 L9 n=1 wtype 0 nvfp4 portable act vs host (f32 x): 2.723e-04 (tol 0.003) PASS
+slot 39 L9 n=1 wtype 0 nvfp4 portable dout vs host: 2.683e-04 (tol 0.003) PASS
+slot 39 L9 n=1 wtype 0 nvfp4 portable y vs host: 1.762e-04 (tol 0.003) PASS
+slot 39 L9 n=1 wtype 0 nvfp4 portable y vs oracle conv_in(ffn): 1.146e-02 (tol 0.02) PASS
+slot 20 L20 router logits rel_l2: 8.547e-08 (tol 1e-06) PASS
+slot 20 L20 x16 rel_l2: 2.084e-04 (tol 0.001) PASS
+slot 20 L20 router id rows that differ (of 1): 0.000e+00 (tol 1) PASS
+slot 20 L20 router weights rel_l2: 1.112e-07 (tol 1e-06) PASS
+slot 20 L20 n=1 wtype 2 bf16-q8xl portable act vs host (f32 x): 3.137e-04 (tol 0.003) PASS
+slot 20 L20 n=1 wtype 2 bf16-q8xl portable dout vs host: 3.089e-04 (tol 0.003) PASS
+slot 20 L20 n=1 wtype 2 bf16-q8xl portable y vs host: 2.631e-04 (tol 0.003) PASS
+slot 20 L20 n=1 wtype 2 bf16-q8xl portable y vs oracle conv_in(ffn): 2.369e-03 (tol 0.02) PASS
+slot 20 L20 n=1 wtype 1 q8_0-q4xl-hostref portable act vs host (f32 x): 3.207e-04 (tol 0.003) PASS
+slot 20 L20 n=1 wtype 1 q8_0-q4xl-hostref portable dout vs host: 3.166e-04 (tol 0.003) PASS
+slot 20 L20 n=1 wtype 1 q8_0-q4xl-hostref portable y vs host: 2.959e-04 (tol 0.003) PASS
+slot 20 L20 n=1 wtype 1 q8_0-q4xl-hostref portable y vs oracle conv_in(ffn): 8.464e-03 (tol 0.02) PASS
+slot 21 L21 router logits rel_l2: 8.788e-08 (tol 1e-06) PASS
+slot 21 L21 x16 rel_l2: 2.037e-04 (tol 0.001) PASS
+slot 21 L21 router id rows that differ (of 1): 0.000e+00 (tol 1) PASS
+slot 21 L21 router weights rel_l2: 1.881e-07 (tol 1e-06) PASS
+slot 21 L21 n=1 wtype 2 bf16-q8xl portable act vs host (f32 x): 3.207e-04 (tol 0.003) PASS
+slot 21 L21 n=1 wtype 2 bf16-q8xl portable dout vs host: 3.231e-04 (tol 0.003) PASS
+slot 21 L21 n=1 wtype 2 bf16-q8xl portable y vs host: 2.969e-04 (tol 0.003) PASS
+slot 21 L21 n=1 wtype 2 bf16-q8xl portable y vs oracle conv_in(ffn): 2.181e-03 (tol 0.02) PASS
+slot 21 L21 n=1 wtype 1 q8_0-q4xl-hostref portable act vs host (f32 x): 3.146e-04 (tol 0.003) PASS
+slot 21 L21 n=1 wtype 1 q8_0-q4xl-hostref portable dout vs host: 3.158e-04 (tol 0.003) PASS
+slot 21 L21 n=1 wtype 1 q8_0-q4xl-hostref portable y vs host: 2.730e-04 (tol 0.003) PASS
+slot 21 L21 n=1 wtype 1 q8_0-q4xl-hostref portable y vs oracle conv_in(ffn): 8.195e-03 (tol 0.02) PASS
+slot 22 L22 router logits rel_l2: 8.239e-08 (tol 1e-06) PASS
+slot 22 L22 x16 rel_l2: 2.067e-04 (tol 0.001) PASS
+slot 22 L22 router id rows that differ (of 1): 0.000e+00 (tol 1) PASS
+slot 22 L22 router weights rel_l2: 4.976e-08 (tol 1e-06) PASS
+slot 22 L22 n=1 wtype 2 bf16-q8xl portable act vs host (f32 x): 3.446e-04 (tol 0.003) PASS
+slot 22 L22 n=1 wtype 2 bf16-q8xl portable dout vs host: 3.387e-04 (tol 0.003) PASS
+slot 22 L22 n=1 wtype 2 bf16-q8xl portable y vs host: 2.927e-04 (tol 0.003) PASS
+slot 22 L22 n=1 wtype 2 bf16-q8xl portable y vs oracle conv_in(ffn): 2.266e-03 (tol 0.02) PASS
+slot 22 L22 n=1 wtype 1 q8_0-q4xl-hostref portable act vs host (f32 x): 3.301e-04 (tol 0.003) PASS
+slot 22 L22 n=1 wtype 1 q8_0-q4xl-hostref portable dout vs host: 3.125e-04 (tol 0.003) PASS
+slot 22 L22 n=1 wtype 1 q8_0-q4xl-hostref portable y vs host: 2.302e-04 (tol 0.003) PASS
+slot 22 L22 n=1 wtype 1 q8_0-q4xl-hostref portable y vs oracle conv_in(ffn): 7.059e-03 (tol 0.02) PASS
+slot 23 L23 router logits rel_l2: 8.055e-08 (tol 1e-06) PASS
+slot 23 L23 x16 rel_l2: 2.070e-04 (tol 0.001) PASS
+slot 23 L23 router id rows that differ (of 1): 0.000e+00 (tol 1) PASS
+slot 23 L23 router weights rel_l2: 5.153e-08 (tol 1e-06) PASS
+slot 23 L23 n=1 wtype 2 bf16-q8xl portable act vs host (f32 x): 3.098e-04 (tol 0.003) PASS
+slot 23 L23 n=1 wtype 2 bf16-q8xl portable dout vs host: 3.094e-04 (tol 0.003) PASS
+slot 23 L23 n=1 wtype 2 bf16-q8xl portable y vs host: 2.337e-04 (tol 0.003) PASS
+slot 23 L23 n=1 wtype 2 bf16-q8xl portable y vs oracle conv_in(ffn): 1.918e-03 (tol 0.02) PASS
+slot 23 L23 n=1 wtype 1 q8_0-q4xl-hostref portable act vs host (f32 x): 3.320e-04 (tol 0.003) PASS
+slot 23 L23 n=1 wtype 1 q8_0-q4xl-hostref portable dout vs host: 3.234e-04 (tol 0.003) PASS
+slot 23 L23 n=1 wtype 1 q8_0-q4xl-hostref portable y vs host: 2.541e-04 (tol 0.003) PASS
+slot 23 L23 n=1 wtype 1 q8_0-q4xl-hostref portable y vs oracle conv_in(ffn): 6.786e-03 (tol 0.02) PASS
+FAILS 0

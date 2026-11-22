@@ -71,57 +71,57 @@
     "value": null
    }
   },
-  "memory_bytes": 25147695104,
+  "memory_bytes": 24925405184,
   "output": "unsloth-Inkling-2-Mini-loom"
  },
  "devices": {
   "radeon-r9700": {
    "gates": {
     "agent": {
-     "date": "2026-11-21",
+     "date": "2026-11-22",
      "detail": "tool messages sent with name",
      "level": "dev",
-     "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
      "source": "machine",
      "status": "pass"
     },
     "compare": {
-     "date": "2026-11-21",
+     "date": "2026-11-22",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
      "source": "machine",
      "status": "pass"
     },
     "consistency": {
-     "date": "2026-11-21",
+     "date": "2026-11-22",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
      "source": "machine",
      "status": "pass"
     },
     "golden": {
-     "date": "2026-11-21",
+     "date": "2026-11-22",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
      "source": "machine",
      "status": "pass"
     },
     "kernel_tests": {
-     "date": "2026-11-21",
+     "date": "2026-11-22",
      "detail": "28/28",
      "level": null,
-     "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
      "source": "machine",
      "status": "pass"
     },
     "sampling": {
-     "date": "2026-11-21",
+     "date": "2026-11-22",
      "detail": "default temperature 1.0, check expects greedy",
      "level": "dev",
-     "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
      "source": "machine",
      "status": "fail"
     }
@@ -146,7 +146,7 @@
        "c4_steady.py URL 4 --model thinkingmachines/Inkling-2-Mini --label loom-baseline",
        "perf.py URL llama-cpu-baseline --kind llama --repeats 3 [--long]  (llama-server -ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja)"
       ],
-      "date": "2026-11-21",
+      "date": "2026-11-22",
       "metrics": {
        "decode": {
         "baseline": 14.9,
@@ -155,11 +155,11 @@
          14.86,
          14.26
         ],
-        "loom": 85.9,
+        "loom": 90.2,
         "loom_runs": [
-         85.88,
-         86.04,
-         85.69
+         90.45,
+         89.89,
+         90.18
         ]
        },
        "decode_2k": {
@@ -169,20 +169,20 @@
          11.28,
          11.26
         ],
-        "loom": 79.3,
+        "loom": 83.2,
         "loom_runs": [
-         79.74,
-         79.33,
-         79.22
+         83.61,
+         82.77,
+         83.24
         ]
        },
        "decode_32k": {
         "baseline": null,
-        "loom": 67.0,
+        "loom": 71.3,
         "loom_runs": [
-         67.19,
-         66.95,
-         67.03
+         71.34,
+         71.09,
+         71.36
         ]
        },
        "prefill_16k": {
@@ -190,11 +190,11 @@
         "baseline_runs": [
          44.6
         ],
-        "loom": 1714.0,
+        "loom": 2800.9,
         "loom_runs": [
-         1739.6,
-         1714.0,
-         1713.4
+         2846.8,
+         2800.9,
+         2798.0
         ]
        },
        "prefill_1k": {
@@ -204,11 +204,11 @@
          57.6,
          55.6
         ],
-        "loom": 2014.2,
+        "loom": 2576.3,
         "loom_runs": [
-         2057.6,
-         2014.2,
-         1993.9
+         2647.8,
+         2576.3,
+         2572.4
         ]
        },
        "prefill_2k": {
@@ -218,20 +218,20 @@
          53.6,
          53.4
         ],
-        "loom": 2074.7,
+        "loom": 2996.0,
         "loom_runs": [
-         2128.9,
-         2074.7,
-         2066.6
+         3071.2,
+         2996.0,
+         2989.6
         ]
        },
        "prefill_32k": {
         "baseline": null,
-        "loom": 1400.8,
+        "loom": 2242.0,
         "loom_runs": [
-         1410.5,
-         1399.6,
-         1400.8
+         2255.6,
+         2239.7,
+         2242.0
         ]
        },
        "prefill_8k": {
@@ -239,24 +239,24 @@
         "baseline_runs": [
          48.7
         ],
-        "loom": 1919.8,
+        "loom": 3091.5,
         "loom_runs": [
-         1961.3,
-         1919.8,
-         1919.4
+         3151.9,
+         3091.5,
+         3087.2
         ]
        },
        "streams4": {
         "baseline": null,
-        "loom": 214.2,
+        "loom": 218.9,
         "loom_runs": [
-         214.2,
-         214.9,
-         209.8
+         218.9,
+         218.9,
+         219.7
         ]
        }
       },
-      "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+      "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
       "runs": {
        "decode_prefill": 3,
        "streams4": 3
@@ -295,23 +295,23 @@
       "efficiency": 0.817
      },
      "prefill_16k": {
-      "ceiling": 9730.0,
+      "ceiling": 18918.3,
       "efficiency": 0.33
      },
      "prefill_1k": {
-      "ceiling": 9772.5,
+      "ceiling": 19306.3,
       "efficiency": 0.33
      },
      "prefill_2k": {
-      "ceiling": 9785.9,
+      "ceiling": 20543.5,
       "efficiency": 0.33
      },
      "prefill_32k": {
-      "ceiling": 9804.6,
+      "ceiling": 17540.9,
       "efficiency": 0.33
      },
      "prefill_8k": {
-      "ceiling": 9768.8,
+      "ceiling": 19715.8,
       "efficiency": 0.33
      },
      "streams4": {
@@ -322,7 +322,7 @@
     },
     "tool": {
      "script": "scripts/roofline_inkling.py",
-     "sha256": "b3ded5731d9f85463ee52f164356963e756995c333dcfea5fbb2a593f880ea25",
+     "sha256": "0f3808b7a1802b3e7dab677cb0ed8c4fccd3f5aa9187d5a105183be35d2b308f",
      "skills_commit": "618f89e134ea7bdc579f01f2d1825622df12912d"
     }
    }
@@ -330,50 +330,50 @@
   "strix-halo": {
    "gates": {
     "agent": {
-     "date": "2026-11-21",
+     "date": "2026-11-22",
      "detail": "tool messages sent with name",
      "level": "dev",
-     "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
      "source": "machine",
      "status": "pass"
     },
     "compare": {
-     "date": "2026-11-21",
+     "date": "2026-11-22",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
      "source": "machine",
      "status": "pass"
     },
     "consistency": {
-     "date": "2026-11-21",
+     "date": "2026-11-22",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
      "source": "machine",
      "status": "pass"
     },
     "golden": {
-     "date": "2026-11-21",
+     "date": "2026-11-22",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
      "source": "machine",
      "status": "pass"
     },
     "kernel_tests": {
-     "date": "2026-11-21",
+     "date": "2026-11-22",
      "detail": "28/28",
      "level": null,
-     "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
      "source": "machine",
      "status": "pass"
     },
     "sampling": {
-     "date": "2026-11-21",
+     "date": "2026-11-22",
      "detail": "default temperature 1.0, check expects greedy",
      "level": "dev",
-     "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
      "source": "machine",
      "status": "fail"
     }
@@ -398,7 +398,7 @@
        "c4_steady.py URL 4 --model thinkingmachines/Inkling-2-Mini --label loom-baseline",
        "perf.py URL llama-cpu-baseline --kind llama --repeats 3 [--long]  (llama-server -ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja)"
       ],
-      "date": "2026-11-21",
+      "date": "2026-11-22",
       "metrics": {
        "decode": {
         "baseline": 14.9,
@@ -407,11 +407,11 @@
          14.86,
          14.26
         ],
-        "loom": 38.6,
+        "loom": 39.7,
         "loom_runs": [
-         38.78,
-         38.53,
-         38.65
+         39.7,
+         39.65,
+         39.66
         ]
        },
        "decode_2k": {
@@ -421,20 +421,20 @@
          11.28,
          11.26
         ],
-        "loom": 35.5,
+        "loom": 36.7,
         "loom_runs": [
-         35.51,
-         35.48,
-         35.67
+         36.56,
+         36.72,
+         36.72
         ]
        },
        "decode_32k": {
         "baseline": null,
-        "loom": 27.5,
+        "loom": 29.7,
         "loom_runs": [
-         27.08,
-         27.54,
-         27.66
+         29.67,
+         29.66,
+         29.64
         ]
        },
        "prefill_16k": {
@@ -442,11 +442,11 @@
         "baseline_runs": [
          44.6
         ],
-        "loom": 717.7,
+        "loom": 973.1,
         "loom_runs": [
-         722.2,
-         717.7,
-         700.1
+         979.0,
+         973.1,
+         952.9
         ]
        },
        "prefill_1k": {
@@ -456,11 +456,11 @@
          57.6,
          55.6
         ],
-        "loom": 798.9,
+        "loom": 893.7,
         "loom_runs": [
-         818.8,
-         798.9,
-         779.4
+         899.8,
+         891.9,
+         893.7
         ]
        },
        "prefill_2k": {
@@ -470,20 +470,20 @@
          53.6,
          53.4
         ],
-        "loom": 822.6,
+        "loom": 1033.1,
         "loom_runs": [
-         836.8,
-         822.6,
-         802.6
+         1046.5,
+         1033.1,
+         1021.1
         ]
        },
        "prefill_32k": {
         "baseline": null,
-        "loom": 594.6,
+        "loom": 811.8,
         "loom_runs": [
-         594.6,
-         597.4,
-         583.6
+         817.9,
+         811.8,
+         795.4
         ]
        },
        "prefill_8k": {
@@ -491,24 +491,24 @@
         "baseline_runs": [
          48.7
         ],
-        "loom": 785.7,
+        "loom": 1050.7,
         "loom_runs": [
-         794.3,
-         785.7,
-         765.7
+         1059.1,
+         1050.7,
+         1032.2
         ]
        },
        "streams4": {
         "baseline": null,
-        "loom": 86.6,
+        "loom": 89.0,
         "loom_runs": [
-         86.6,
-         85.6,
-         87.0
+         88.9,
+         89.0,
+         92.4
         ]
        }
       },
-      "programs_sha256": "51c67d50845729c54820575c2b5f85130ed78a138e81d99d6008162509c2ce9b",
+      "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
       "runs": {
        "decode_prefill": 3,
        "streams4": 3
@@ -548,23 +548,23 @@
       "efficiency": 0.817
      },
      "prefill_16k": {
-      "ceiling": 3609.5,
+      "ceiling": 4329.3,
       "efficiency": 0.445
      },
      "prefill_1k": {
-      "ceiling": 3625.3,
+      "ceiling": 4792.4,
       "efficiency": 0.445
      },
      "prefill_2k": {
-      "ceiling": 3630.3,
+      "ceiling": 4701.2,
       "efficiency": 0.445
      },
      "prefill_32k": {
-      "ceiling": 3631.2,
+      "ceiling": 4014.1,
       "efficiency": 0.445
      },
      "prefill_8k": {
-      "ceiling": 3623.9,
+      "ceiling": 4511.8,
       "efficiency": 0.445
      },
      "streams4": {
@@ -575,7 +575,7 @@
     },
     "tool": {
      "script": "scripts/roofline_inkling.py",
-     "sha256": "b3ded5731d9f85463ee52f164356963e756995c333dcfea5fbb2a593f880ea25",
+     "sha256": "0f3808b7a1802b3e7dab677cb0ed8c4fccd3f5aa9187d5a105183be35d2b308f",
      "skills_commit": "618f89e134ea7bdc579f01f2d1825622df12912d"
     }
    }

@@ -1,0 +1,18 @@
+[
+ ["embed", "^inkling_embed_"],
+ ["norm", "^inkling_rms_norm"],
+ ["proj", "^inkling_(gemv|gemm)_(q8_0|bf16|f32|split_bf16|rows_|wmma_bf16|wide_q8_0)"],
+ ["attn_prep", "^inkling_attn_(prep|conv_commit|kv_append)"],
+ ["attention", "^inkling_attn_(tile|merge)"],
+ ["mix", "^inkling_mix_(states|norm)"],
+ ["post_conv", "^inkling_conv_(res|commit)"],
+ ["ctrl", "^inkling_ctrl_"],
+ ["router", "^inkling_router_"],
+ ["experts_prep", "^inkling_experts_routes"],
+ ["experts_gate_up", "^inkling_experts_gate_up"],
+ ["experts_down", "^inkling_experts_down"],
+ ["combine", "^inkling_experts_combine"],
+ ["head", "^inkling_head_"],
+ ["sampler", "^inkling_sample_"],
+ ["prep", "^inkling_prep_spans"]
+]

@@ -20,9 +20,11 @@ kernel.decl @inkling_head_norm(%spans_cap: index) launch(%sel: buffer, %sel_orig
 
 kernel.decl @inkling_head_select(%spans_cap: index) launch(%spans_cap: index, %all_rows: index, %metadata: buffer, %sel: buffer, %sel_origin: offset)
 
-kernel.decl @inkling_mix_states(%cap: index) launch(%cap_in: index, %nb_in: index, %nq_in: index, %block_stride_in: index, %col_stride_in: index, %mode_in: index, %w_stride_in: index, %sel_on_in: index, %blocks_off: index, %cur_off: index, %out_off: index, %spans: buffer, %sel: buffer, %blocks: buffer, %cur: buffer, %query: buffer, %norm_w: buffer, %out: buffer, %rinv_out: buffer)
+kernel.decl @inkling_mix_states(%cap: index, %ncommit: index, %nq: index) launch(%cap_in: index, %ncommit_in: index, %nq: index, %nb_in: index, %block_stride_in: index, %col_stride_in: index, %mode_in: index, %w_stride_in: index, %sel_on_in: index, %blocks_off: index, %cur_off: index, %out_off: index, %commit_site_in: index, %commit_visit_in: index, %spans: buffer, %sel: buffer, %blocks: buffer, %cur: buffer, %query: buffer, %norm_w: buffer, %out: buffer, %rinv_out: buffer, %commit_state: buffer, %commit_a: buffer)
 
 kernel.decl @inkling_rms_norm(%rows: index) launch(%control: buffer, %count_origin: offset, %width: index, %x_origin: offset, %x_stride: index, %d_origin: offset, %d_stride: index, %epsilon: f32, %input: buffer, %weight: buffer, %output: buffer)
+
+kernel.decl @inkling_rms_norm_cols(%rows: index) launch(%control: buffer, %count_origin: offset, %width: index, %origin: offset, %col_step: offset, %epsilon: f32, %input: buffer, %w0: buffer, %w1: buffer, %w2: buffer, %output: buffer)
 
 config.decl @inkling.capture_id : %value: index where [range(%value, 0, 1024)]
 
@@ -34,7 +36,11 @@ func.decl pure @inkling_layer_in_loop(%layer: index) -> (i1)
 
 func.decl pure @inkling_layer_is_global(%layer: index) -> (i1)
 
-kernel.decl @inkling_sample_rows(%rows_value: index) launch(%rows_value: index, %logit_stride: index, %epoch: buffer, %logits: buffer, %outputs: buffer)
+kernel.decl @inkling_sample_stats(%rows_value: index) launch(%rows_value: index, %logit_stride: index, %epoch: buffer, %logits: buffer, %scratch: buffer)
+
+kernel.decl @inkling_sample_draw(%rows_value: index) launch(%rows_value: index, %logit_stride: index, %epoch: buffer, %logits: buffer, %scratch: buffer)
+
+kernel.decl @inkling_sample_rows(%rows_value: index) launch(%rows_value: index, %logit_stride: index, %epoch: buffer, %logits: buffer, %outputs: buffer, %scratch: buffer)
 
 kernel.decl @inkling_capture_rows() launch(%src_width: index, %col: index, %half: index, %metadata: buffer, %src: buffer, %residual: buffer)
 
@@ -90,6 +96,8 @@ command.def public target(@inkling_execution) @inkling_hook_head() launch(%param
   %sel_bytes = index.add %sel_words, %o16 : offset
   %o800256 = index.constant 800256 : offset
   %logit_bytes = index.scale %sel_rows, %o800256 : index, offset -> offset
+  %o2560 = index.constant 2560 : offset
+  %scratch_bytes = index.scale %sel_rows, %o2560 : index, offset -> offset
   %i4 = index.constant 4 : index
   %i2304 = index.constant 2304 : index
   %cE = index.mul %cap, %i2304 : index
@@ -106,9 +114,10 @@ command.def public target(@inkling_execution) @inkling_hook_head() launch(%param
   %cap31 = index.cmp eq, %capid, %i31 : index
   %sel = buffer.alloca<global> align(256) %sel_bytes : buffer
   %logits = buffer.alloca<global> align(256) %logit_bytes : buffer
+  %scratch = buffer.alloca<global> align(256) %scratch_bytes : buffer
   %w1 = command.parameter %parameters, "output_res_query.weight" : view<2304xf32>
   %wb2 = command.parameter.base %w1 : view<2304xf32> -> buffer
-  kernel.launch @inkling_mix_states[%cap](%cap, %i4, %i1, %cE, %cE, %i0, %i0, %i0, %i0, %i0, %i0, %span_table, %xn, %blocks, %cur, %wb2, %xn, %x, %small) : [index](index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_mix_states[%cap, %i0, %i1](%cap, %i0, %i1, %i4, %cE, %cE, %i0, %i0, %i0, %i0, %i0, %i0, %i0, %i0, %span_table, %xn, %blocks, %cur, %wb2, %xn, %x, %small, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   kernel.launch @inkling_head_select[%sel_rows](%sel_rows, %all_rows, %metadata, %sel, %o0) : [index](index, index, buffer, buffer, offset)
   %w3 = command.parameter %parameters, "output_norm.weight" : view<2304xf32>
   %wb4 = command.parameter.base %w3 : view<2304xf32> -> buffer
@@ -143,7 +152,9 @@ command.def public target(@inkling_execution) @inkling_hook_head() launch(%param
   scf.if %cap31 {
   kernel.launch @inkling_capture_rows(%i200064, %i0, %i0, %metadata, %logits, %residual) : (index, index, index, buffer, buffer, buffer)
   }
-  kernel.launch @inkling_sample_rows[%sel_rows](%sel_rows, %i200064, %metadata, %logits, %outputs) : [index](index, index, buffer, buffer, buffer)
+  kernel.launch @inkling_sample_stats[%sel_rows](%sel_rows, %i200064, %metadata, %logits, %scratch) : [index](index, index, buffer, buffer, buffer)
+  kernel.launch @inkling_sample_draw[%sel_rows](%sel_rows, %i200064, %metadata, %logits, %scratch) : [index](index, index, buffer, buffer, buffer)
+  kernel.launch @inkling_sample_rows[%sel_rows](%sel_rows, %i200064, %metadata, %logits, %outputs, %scratch) : [index](index, index, buffer, buffer, buffer, buffer)
   command.return
 }
 
@@ -155,12 +166,8 @@ command.def public target(@inkling_execution) @inkling_hook_norm_in(%layer: inde
   %cap = config.get @inkling.tokens : index
   %i2304 = index.constant 2304 : index
   %eps = scalar.constant 9.9999999999999995e-07 : f32
-  %i1 = index.constant 1 : index
   %o9216 = index.constant 9216 : offset
   %colbytes = index.scale %cap, %o9216 : index, offset -> offset
-  %col1 = index.scale %i1, %colbytes : index, offset -> offset
-  %i2 = index.constant 2 : index
-  %col2 = index.scale %i2, %colbytes : index, offset -> offset
   %in_loop = func.call pure @inkling_layer_in_loop(%layer) : (index) -> (i1)
   %later = index.cmp ugt, %pass, %i0 : index
   %controlled = scalar.andi %in_loop, %later : i1
@@ -172,28 +179,16 @@ command.def public target(@inkling_execution) @inkling_hook_norm_in(%layer: inde
   scf.if %g {
   %w3 = command.parameter %parameters, "blk.{}.attn_q_inp_norm.weight"[%layer] : view<2304xf32>
   %wb4 = command.parameter.base %w3 : view<2304xf32> -> buffer
-  kernel.launch @inkling_rms_norm[%cap](%metadata, %o0, %i2304, %o0, %i2304, %o0, %i2304, %eps, %x, %wb4, %xn) : [index](buffer, offset, index, offset, index, offset, index, f32, buffer, buffer, buffer)
   %w5 = command.parameter %parameters, "blk.{}.attn_k_inp_norm.weight"[%layer] : view<2304xf32>
   %wb6 = command.parameter.base %w5 : view<2304xf32> -> buffer
-  kernel.launch @inkling_rms_norm[%cap](%metadata, %o0, %i2304, %col1, %i2304, %col1, %i2304, %eps, %x, %wb6, %xn) : [index](buffer, offset, index, offset, index, offset, index, f32, buffer, buffer, buffer)
   %w7 = command.parameter %parameters, "blk.{}.attn_v_inp_norm.weight"[%layer] : view<2304xf32>
   %wb8 = command.parameter.base %w7 : view<2304xf32> -> buffer
-  kernel.launch @inkling_rms_norm[%cap](%metadata, %o0, %i2304, %col2, %i2304, %col2, %i2304, %eps, %x, %wb8, %xn) : [index](buffer, offset, index, offset, index, offset, index, f32, buffer, buffer, buffer)
+  kernel.launch @inkling_rms_norm_cols[%cap](%metadata, %o0, %i2304, %o0, %colbytes, %eps, %x, %wb4, %wb6, %wb8, %xn) : [index](buffer, offset, index, offset, offset, f32, buffer, buffer, buffer, buffer, buffer)
   } else {
   scf.if %controlled {
   %w9 = command.parameter %parameters, "blk.{}.attn_norm.weight"[%layer] : view<2304xf32>
   %wb10 = command.parameter.base %w9 : view<2304xf32> -> buffer
-  kernel.launch @inkling_rms_norm[%cap](%metadata, %o0, %i2304, %o0, %i2304, %o0, %i2304, %eps, %x, %wb10, %xn) : [index](buffer, offset, index, offset, index, offset, index, f32, buffer, buffer, buffer)
-  %w11 = command.parameter %parameters, "blk.{}.attn_norm.weight"[%layer] : view<2304xf32>
-  %wb12 = command.parameter.base %w11 : view<2304xf32> -> buffer
-  kernel.launch @inkling_rms_norm[%cap](%metadata, %o0, %i2304, %col1, %i2304, %col1, %i2304, %eps, %x, %wb12, %xn) : [index](buffer, offset, index, offset, index, offset, index, f32, buffer, buffer, buffer)
-  %w13 = command.parameter %parameters, "blk.{}.attn_norm.weight"[%layer] : view<2304xf32>
-  %wb14 = command.parameter.base %w13 : view<2304xf32> -> buffer
-  kernel.launch @inkling_rms_norm[%cap](%metadata, %o0, %i2304, %col2, %i2304, %col2, %i2304, %eps, %x, %wb14, %xn) : [index](buffer, offset, index, offset, index, offset, index, f32, buffer, buffer, buffer)
-  } else {
-  %w15 = command.parameter %parameters, "blk.{}.attn_norm.weight"[%layer] : view<2304xf32>
-  %wb16 = command.parameter.base %w15 : view<2304xf32> -> buffer
-  kernel.launch @inkling_rms_norm[%cap](%metadata, %o0, %i2304, %o0, %i2304, %o0, %i2304, %eps, %x, %wb16, %xn) : [index](buffer, offset, index, offset, index, offset, index, f32, buffer, buffer, buffer)
+  kernel.launch @inkling_rms_norm_cols[%cap](%metadata, %o0, %i2304, %o0, %colbytes, %eps, %x, %wb10, %wb10, %wb10, %xn) : [index](buffer, offset, index, offset, offset, f32, buffer, buffer, buffer, buffer, buffer)
   }
   }
   }
@@ -511,13 +506,19 @@ command.def public target(@inkling_execution) @inkling_hook_oproj(%layer: index,
 }
 
 command.def public target(@inkling_execution) @inkling_hook_norm_ffn(%layer: index, %visit: index, %pass: index) launch(%parameters: buffer, %span_table: buffer, %token_map: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %cur: buffer, %blocks: buffer, %bank: buffer, %x: buffer, %xn: buffer, %small: buffer, %q: buffer, %k: buffer, %v: buffer, %r: buffer, %gate: buffer, %ab: buffer, %ob: buffer, %y: buffer) {
+  %in_loop = func.call pure @inkling_layer_in_loop(%layer) : (index) -> (i1)
+  %i0 = index.constant 0 : index
+  %later = index.cmp ugt, %pass, %i0 : index
+  %controlled = scalar.andi %in_loop, %later : i1
   %o0 = index.constant 0 : offset
   %cap = config.get @inkling.tokens : index
   %i2304 = index.constant 2304 : index
   %eps = scalar.constant 9.9999999999999995e-07 : f32
+  scf.if %controlled {
   %w1 = command.parameter %parameters, "blk.{}.ffn_norm.weight"[%layer] : view<2304xf32>
   %wb2 = command.parameter.base %w1 : view<2304xf32> -> buffer
   kernel.launch @inkling_rms_norm[%cap](%metadata, %o0, %i2304, %o0, %i2304, %o0, %i2304, %eps, %x, %wb2, %xn) : [index](buffer, offset, index, offset, index, offset, index, f32, buffer, buffer, buffer)
+  }
   command.return
 }
 

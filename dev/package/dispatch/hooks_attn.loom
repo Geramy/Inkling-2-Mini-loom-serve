@@ -1,0 +1,134 @@
+target.decl @inkling_execution
+
+kernel.decl @inkling_attn_conv_commit(%span_cap: index) launch(%span_cap_in: index, %cap_in: index, %conv_origin: offset, %spans: buffer, %state: buffer, %k_raw: buffer, %v_raw: buffer)
+
+kernel.decl @inkling_attn_kv_append(%cap: index) launch(%cap_in: index, %span_cap: index, %global: index, %max_blocks: index, %kv_origin: offset, %spans: buffer, %rows: buffer, %state: buffer, %k_act: buffer, %v_act: buffer)
+
+kernel.decl @inkling_attn_merge(%span_cap: index) launch(%cap_in: index, %span_cap_in: index, %global: index, %split_blocks: index, %max_splits: index, %spans: buffer, %sink: buffer, %gate: buffer, %out: buffer, %partial: buffer)
+
+kernel.decl @inkling_attn_prep(%cap: index) launch(%cap_in: index, %span_cap: index, %global: index, %conv_origin: offset, %spans: buffer, %state: buffer, %q_raw: buffer, %k_raw: buffer, %v_raw: buffer, %r_raw: buffer, %dyn_k: buffer, %dyn_v: buffer, %w_q_clip: buffer, %w_rel_clip: buffer, %w_k_conv: buffer, %w_v_conv: buffer, %q_out: buffer, %r_out: buffer, %k_act: buffer, %v_act: buffer)
+
+kernel.decl @inkling_attn_tile(%grid_x: index, %grid_y: index, %grid_z: index) launch(%cap_in: index, %span_cap: index, %mode: index, %global: index, %split_blocks: index, %max_splits: index, %max_blocks: index, %kv_origin: offset, %spans: buffer, %rows: buffer, %state: buffer, %q: buffer, %r: buffer, %k_act: buffer, %v_act: buffer, %rel_bias: buffer, %sink: buffer, %gate: buffer, %out: buffer, %partial: buffer)
+
+config.decl @inkling.spans : %value: index where [range(%value, 1, 2147483647)]
+
+config.decl @inkling.tokens : %value: index where [range(%value, 1, 2147483647)]
+
+func.decl pure @inkling_layer_is_global(%layer: index) -> (i1)
+
+config.decl @inkling.pool : %value: index where [range(%value, 0, 2147483647)]
+
+config.decl @inkling.context : %value: index where [range(%value, 1, 2147483647)]
+
+target.decl @inkling_rdna3
+
+target.decl @inkling_rdna4
+
+// Smallest decode split in 64-key blocks. The kernels raise it so that a visit has at most 64 splits (docs/OPT_D4.md).
+template.decl @inkling.tune.attn.split_blocks(%context: index, %global: index) -> (index)
+
+template.def<@inkling.tune.attn.split_blocks> priority(-1) @inkling_attn_split_blocks_default(%context: index, %global: index) -> (index) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c4 = index.constant 4 : index
+  %is_global = index.cmp ne, %global, %c0 : index
+  %value = scf.select %is_global, %c4, %c1 : index
+  template.return %value : index
+}
+
+template.def<@inkling.tune.attn.split_blocks> target(@inkling_rdna3) @inkling_attn_split_blocks_gfx1151(%context: index, %global: index) -> (index) {
+  %value = index.constant 1 : index
+  template.return %value : index
+}
+
+template.def<@inkling.tune.attn.split_blocks> target(@inkling_rdna4) @inkling_attn_split_blocks_gfx1201(%context: index, %global: index) -> (index) {
+  %value = index.constant 1 : index
+  template.return %value : index
+}
+
+command.def public target(@inkling_execution) @inkling_hook_attn_prep(%layer: index, %visit: index, %pass: index) launch(%parameters: buffer, %span_table: buffer, %token_map: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %cur: buffer, %blocks: buffer, %bank: buffer, %x: buffer, %xn: buffer, %small: buffer, %q: buffer, %k: buffer, %v: buffer, %r: buffer, %gate: buffer, %ab: buffer, %ob: buffer, %y: buffer) {
+  %g = func.call pure @inkling_layer_is_global(%layer) : (index) -> (i1)
+  %i1 = index.constant 1 : index
+  %i0 = index.constant 0 : index
+  %gl = scf.select %g, %i1, %i0 : index
+  %i6 = index.constant 6 : index
+  %gv = index.div %visit, %i6 : index
+  %lv = index.sub %visit, %gv : index
+  %pool = config.get @inkling.pool : index
+  %gvpool = index.mul %gv, %pool : index
+  %o4096 = index.constant 4096 : offset
+  %kvg = index.scale %gvpool, %o4096 : index, offset -> offset
+  %o4194304 = index.constant 4194304 : offset
+  %kvl = index.scale %lv, %o4194304 : index, offset -> offset
+  %kv_origin = scf.select %g, %kvg, %kvl : offset
+  %o79872 = index.constant 79872 : offset
+  %cv0 = index.scale %visit, %o79872 : index, offset -> offset
+  %o167772160 = index.constant 167772160 : offset
+  %conv_origin = index.add %cv0, %o167772160 : offset
+  %cap = config.get @inkling.tokens : index
+  %span_cap = config.get @inkling.spans : index
+  %w1 = command.parameter %parameters, "blk.{}.attn_q_clip.weight"[%layer] : view<3072xf32>
+  %wb2 = command.parameter.base %w1 : view<3072xf32> -> buffer
+  %w3 = command.parameter %parameters, "blk.{}.attn_rel_clip.weight"[%layer] : view<384xf32>
+  %wb4 = command.parameter.base %w3 : view<384xf32> -> buffer
+  %w5 = command.parameter %parameters, "blk.{}.attn_k_conv.weight"[%layer] : view<4096xf32>
+  %wb6 = command.parameter.base %w5 : view<4096xf32> -> buffer
+  %w7 = command.parameter %parameters, "blk.{}.attn_v_conv.weight"[%layer] : view<4096xf32>
+  %wb8 = command.parameter.base %w7 : view<4096xf32> -> buffer
+  kernel.launch @inkling_attn_prep[%cap](%cap, %span_cap, %gl, %conv_origin, %span_table, %arena, %q, %k, %v, %r, %ob, %y, %wb2, %wb4, %wb6, %wb8, %q, %r, %xn, %x) : [index](index, index, index, offset, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_attn_conv_commit[%span_cap](%span_cap, %cap, %conv_origin, %span_table, %arena, %k, %v) : [index](index, index, offset, buffer, buffer, buffer, buffer)
+  command.return
+}
+
+command.def public target(@inkling_execution) @inkling_hook_attn(%layer: index, %visit: index, %pass: index) launch(%parameters: buffer, %span_table: buffer, %token_map: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %cur: buffer, %blocks: buffer, %bank: buffer, %x: buffer, %xn: buffer, %small: buffer, %q: buffer, %k: buffer, %v: buffer, %r: buffer, %gate: buffer, %ab: buffer, %ob: buffer, %y: buffer) {
+  %g = func.call pure @inkling_layer_is_global(%layer) : (index) -> (i1)
+  %i1 = index.constant 1 : index
+  %i0 = index.constant 0 : index
+  %gl = scf.select %g, %i1, %i0 : index
+  %i6 = index.constant 6 : index
+  %gv = index.div %visit, %i6 : index
+  %lv = index.sub %visit, %gv : index
+  %pool = config.get @inkling.pool : index
+  %gvpool = index.mul %gv, %pool : index
+  %o4096 = index.constant 4096 : offset
+  %kvg = index.scale %gvpool, %o4096 : index, offset -> offset
+  %o4194304 = index.constant 4194304 : offset
+  %kvl = index.scale %lv, %o4194304 : index, offset -> offset
+  %kv_origin = scf.select %g, %kvg, %kvl : offset
+  %o79872 = index.constant 79872 : offset
+  %cv0 = index.scale %visit, %o79872 : index, offset -> offset
+  %o167772160 = index.constant 167772160 : offset
+  %conv_origin = index.add %cv0, %o167772160 : offset
+  %cap = config.get @inkling.tokens : index
+  %span_cap = config.get @inkling.spans : index
+  %ctx = config.get @inkling.context : index
+  %split = template.apply<@inkling.tune.attn.split_blocks>(%ctx, %gl) : (index, index) -> (index)
+  %i64 = index.constant 64 : index
+  %max_blocks = index.div %ctx, %i64 : index
+  %vis_g = index.add %max_blocks, %i1 : index
+  %i17 = index.constant 17 : index
+  %vis = scf.select %g, %vis_g, %i17 : index
+  %splitm1 = index.sub %split, %i1 : index
+  %vis_up = index.add %vis, %splitm1 : index
+  %max_splits0 = index.div %vis_up, %split : index
+  %max_splits = index.min %max_splits0, %i64 : index
+  %i15 = index.constant 15 : index
+  %cap15 = index.add %cap, %i15 : index
+  %i16 = index.constant 16 : index
+  %cap16 = index.div %cap15, %i16 : index
+  %tile_bound = index.add %cap16, %span_cap : index
+  %partial_n = index.mul %span_cap, %max_splits : index
+  %o13056 = index.constant 13056 : offset
+  %partial_bytes = index.scale %partial_n, %o13056 : index, offset -> offset
+  %i24 = index.constant 24 : index
+  %i8 = index.constant 8 : index
+  %partial = buffer.alloca<global> align(256) %partial_bytes : buffer
+  %w1 = command.parameter %parameters, "blk.{}.attn_rel_bias.weight"[%layer] : view<16384xf32>
+  %wb2 = command.parameter.base %w1 : view<16384xf32> -> buffer
+  kernel.launch @inkling_attn_tile[%tile_bound, %i24, %i1](%cap, %span_cap, %i0, %gl, %split, %max_splits, %max_blocks, %kv_origin, %span_table, %origins, %arena, %q, %r, %xn, %x, %wb2, %small, %gate, %ab, %partial) : [index, index, index](index, index, index, index, index, index, index, offset, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_attn_tile[%span_cap, %i8, %max_splits](%cap, %span_cap, %i1, %gl, %split, %max_splits, %max_blocks, %kv_origin, %span_table, %origins, %arena, %q, %r, %xn, %x, %wb2, %small, %gate, %ab, %partial) : [index, index, index](index, index, index, index, index, index, index, offset, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_attn_merge[%span_cap](%cap, %span_cap, %gl, %split, %max_splits, %span_table, %small, %gate, %ab, %partial) : [index](index, index, index, index, index, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_attn_kv_append[%cap](%cap, %span_cap, %gl, %max_blocks, %kv_origin, %span_table, %origins, %arena, %xn, %x) : [index](index, index, index, index, offset, buffer, buffer, buffer, buffer, buffer)
+  command.return
+}
+

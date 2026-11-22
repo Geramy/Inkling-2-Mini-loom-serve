@@ -154,7 +154,7 @@
    "kv_bytes_per_position": 39400,
    "workspace_gib": 2.14,
    "over_cap": false,
-   "note": "resident_weights_bytes is the tensor data of the GGUF file; kv_bytes_per_position and workspace_gib are fitted to the used memory measured at 4 rows on both GPUs (19.9 GB + 39.4 KB per context position, docs/CONTEXT_TABLE.md); the global KV alone is 32768 bytes per position"
+   "note": "resident_weights_bytes is the tensor data of the GGUF file; kv_bytes_per_position and workspace_gib are fitted to the used memory measured at 4 rows on both GPUs (19.9 GB + 39.4 KB per context position, docs/CONTEXT_TABLE.md; re-measured at 131072 with prefill_capacity 2048: 24.9 GB used, inside the fit); the global KV alone is 32768 bytes per position"
   }
  },
  "sdk": {

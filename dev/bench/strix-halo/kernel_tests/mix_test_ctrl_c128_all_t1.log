@@ -1,0 +1,241 @@
+slot 24 attn ctrl q vs numpy                 nmse 2.797e-14 PASS
+slot 24 attn q norm vs oracle                nmse 1.662e-06 (oracle occ 2) PASS
+slot 24 attn ctrl k vs numpy                 nmse 2.529e-14 PASS
+slot 24 attn k norm vs oracle                nmse 4.345e-06 (oracle occ 0) PASS
+slot 24 attn ctrl v vs numpy                 nmse 1.775e-14 PASS
+slot 24 attn v norm vs oracle                nmse 2.351e-06 (oracle occ 1) PASS
+slot 24 guard                                nmse 0.000e+00 PASS
+slot 24 ffn ctrl vs numpy                    nmse 1.033e-14 PASS
+slot 24 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.333e-14 PASS
+slot 24 ffn norm vs oracle                   nmse 1.390e-06 PASS
+slot 25 attn ctrl q vs numpy                 nmse 1.344e-14 PASS
+slot 25 attn q norm vs oracle                nmse 6.161e-06 (oracle occ 2) PASS
+slot 25 attn ctrl k vs numpy                 nmse 1.248e-14 PASS
+slot 25 attn k norm vs oracle                nmse 9.712e-07 (oracle occ 0) PASS
+slot 25 attn ctrl v vs numpy                 nmse 1.218e-14 PASS
+slot 25 attn v norm vs oracle                nmse 1.253e-06 (oracle occ 1) PASS
+slot 25 guard                                nmse 0.000e+00 PASS
+slot 25 ffn ctrl vs numpy                    nmse 1.139e-14 PASS
+slot 25 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.012e-14 PASS
+slot 25 ffn norm vs oracle                   nmse 2.916e-06 PASS
+slot 26 attn ctrl q vs numpy                 nmse 1.699e-14 PASS
+slot 26 attn q norm vs oracle                nmse 2.196e-06 (oracle occ 2) PASS
+slot 26 attn ctrl k vs numpy                 nmse 1.293e-14 PASS
+slot 26 attn k norm vs oracle                nmse 1.250e-06 (oracle occ 0) PASS
+slot 26 attn ctrl v vs numpy                 nmse 1.006e-14 PASS
+slot 26 attn v norm vs oracle                nmse 1.245e-06 (oracle occ 1) PASS
+slot 26 guard                                nmse 0.000e+00 PASS
+slot 26 ffn ctrl vs numpy                    nmse 1.500e-14 PASS
+slot 26 ffn ctrl+norm(ffn_norm) vs numpy     nmse 9.705e-15 PASS
+slot 26 ffn norm vs oracle                   nmse 2.535e-06 PASS
+slot 27 attn ctrl q vs numpy                 nmse 2.715e-14 PASS
+slot 27 attn q norm vs oracle                nmse 9.245e-06 (oracle occ 2) PASS
+slot 27 attn ctrl k vs numpy                 nmse 1.839e-14 PASS
+slot 27 attn k norm vs oracle                nmse 2.319e-06 (oracle occ 0) PASS
+slot 27 attn ctrl v vs numpy                 nmse 1.273e-14 PASS
+slot 27 attn v norm vs oracle                nmse 1.074e-06 (oracle occ 1) PASS
+slot 27 guard                                nmse 0.000e+00 PASS
+slot 27 ffn ctrl vs numpy                    nmse 3.536e-14 PASS
+slot 27 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.257e-14 PASS
+slot 27 ffn norm vs oracle                   nmse 5.400e-06 PASS
+slot 28 attn ctrl q vs numpy                 nmse 2.099e-14 PASS
+slot 28 attn q norm vs oracle                nmse 5.218e-06 (oracle occ 2) PASS
+slot 28 attn ctrl k vs numpy                 nmse 1.305e-14 PASS
+slot 28 attn k norm vs oracle                nmse 1.972e-06 (oracle occ 0) PASS
+slot 28 attn ctrl v vs numpy                 nmse 2.359e-14 PASS
+slot 28 attn v norm vs oracle                nmse 4.694e-06 (oracle occ 1) PASS
+slot 28 guard                                nmse 0.000e+00 PASS
+slot 28 ffn ctrl vs numpy                    nmse 1.861e-14 PASS
+slot 28 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.054e-14 PASS
+slot 28 ffn norm vs oracle                   nmse 4.824e-06 PASS
+slot 29 attn ctrl q vs numpy                 nmse 2.310e-14 PASS
+slot 29 attn q norm vs oracle                nmse 5.640e-06 (oracle occ 2) PASS
+slot 29 attn ctrl k vs numpy                 nmse 2.217e-14 PASS
+slot 29 attn k norm vs oracle                nmse 1.498e-06 (oracle occ 0) PASS
+slot 29 attn ctrl v vs numpy                 nmse 9.265e-15 PASS
+slot 29 attn v norm vs oracle                nmse 6.481e-07 (oracle occ 1) PASS
+slot 29 guard                                nmse 0.000e+00 PASS
+slot 29 ffn ctrl vs numpy                    nmse 4.732e-14 PASS
+slot 29 ffn ctrl+norm(ffn_norm) vs numpy     nmse 2.013e-14 PASS
+slot 29 ffn norm vs oracle                   nmse 2.403e-05 PASS
+slot 30 attn ctrl q vs numpy                 nmse 1.410e-14 PASS
+slot 30 attn q norm vs oracle                nmse 3.235e-06 (oracle occ 2) PASS
+slot 30 attn ctrl k vs numpy                 nmse 1.404e-14 PASS
+slot 30 attn k norm vs oracle                nmse 1.070e-06 (oracle occ 0) PASS
+slot 30 attn ctrl v vs numpy                 nmse 1.542e-14 PASS
+slot 30 attn v norm vs oracle                nmse 4.633e-06 (oracle occ 1) PASS
+slot 30 guard                                nmse 0.000e+00 PASS
+slot 30 ffn ctrl vs numpy                    nmse 2.754e-14 PASS
+slot 30 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.002e-14 PASS
+slot 30 ffn norm vs oracle                   nmse 5.697e-06 PASS
+slot 31 attn ctrl q vs numpy                 nmse 1.208e-14 PASS
+slot 31 attn q norm vs oracle                nmse 3.839e-06 (oracle occ 2) PASS
+slot 31 attn ctrl k vs numpy                 nmse 1.769e-14 PASS
+slot 31 attn k norm vs oracle                nmse 1.786e-06 (oracle occ 0) PASS
+slot 31 attn ctrl v vs numpy                 nmse 2.104e-14 PASS
+slot 31 attn v norm vs oracle                nmse 1.462e-06 (oracle occ 1) PASS
+slot 31 guard                                nmse 0.000e+00 PASS
+slot 31 ffn ctrl vs numpy                    nmse 2.252e-14 PASS
+slot 31 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.017e-14 PASS
+slot 31 ffn norm vs oracle                   nmse 3.529e-06 PASS
+slot 32 attn ctrl q vs numpy                 nmse 1.389e-14 PASS
+slot 32 attn q norm vs oracle                nmse 1.477e-06 (oracle occ 2) PASS
+slot 32 attn ctrl k vs numpy                 nmse 3.302e-14 PASS
+slot 32 attn k norm vs oracle                nmse 2.661e-06 (oracle occ 0) PASS
+slot 32 attn ctrl v vs numpy                 nmse 1.436e-14 PASS
+slot 32 attn v norm vs oracle                nmse 8.599e-07 (oracle occ 1) PASS
+slot 32 guard                                nmse 0.000e+00 PASS
+slot 32 ffn ctrl vs numpy                    nmse 1.636e-14 PASS
+slot 32 ffn ctrl+norm(ffn_norm) vs numpy     nmse 9.865e-15 PASS
+slot 32 ffn norm vs oracle                   nmse 3.154e-06 PASS
+slot 33 attn ctrl q vs numpy                 nmse 1.036e-14 PASS
+slot 33 attn q norm vs oracle                nmse 1.286e-06 (oracle occ 2) PASS
+slot 33 attn ctrl k vs numpy                 nmse 1.891e-14 PASS
+slot 33 attn k norm vs oracle                nmse 2.574e-06 (oracle occ 0) PASS
+slot 33 attn ctrl v vs numpy                 nmse 1.275e-14 PASS
+slot 33 attn v norm vs oracle                nmse 5.482e-07 (oracle occ 1) PASS
+slot 33 guard                                nmse 0.000e+00 PASS
+slot 33 ffn ctrl vs numpy                    nmse 1.767e-14 PASS
+slot 33 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.011e-14 PASS
+slot 33 ffn norm vs oracle                   nmse 4.365e-06 PASS
+slot 34 attn ctrl q vs numpy                 nmse 2.153e-14 PASS
+slot 34 attn q norm vs oracle                nmse 3.806e-06 (oracle occ 2) PASS
+slot 34 attn ctrl k vs numpy                 nmse 1.143e-14 PASS
+slot 34 attn k norm vs oracle                nmse 1.104e-06 (oracle occ 0) PASS
+slot 34 attn ctrl v vs numpy                 nmse 1.111e-14 PASS
+slot 34 attn v norm vs oracle                nmse 1.437e-06 (oracle occ 1) PASS
+slot 34 guard                                nmse 0.000e+00 PASS
+slot 34 ffn ctrl vs numpy                    nmse 1.586e-14 PASS
+slot 34 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.037e-14 PASS
+slot 34 ffn norm vs oracle                   nmse 1.949e-06 PASS
+slot 35 attn ctrl q vs numpy                 nmse 1.371e-14 PASS
+slot 35 attn q norm vs oracle                nmse 1.674e-06 (oracle occ 2) PASS
+slot 35 attn ctrl k vs numpy                 nmse 8.600e-15 PASS
+slot 35 attn k norm vs oracle                nmse 5.240e-07 (oracle occ 0) PASS
+slot 35 attn ctrl v vs numpy                 nmse 5.139e-15 PASS
+slot 35 attn v norm vs oracle                nmse 6.461e-07 (oracle occ 1) PASS
+slot 35 guard                                nmse 0.000e+00 PASS
+slot 35 ffn ctrl vs numpy                    nmse 2.287e-14 PASS
+slot 35 ffn ctrl+norm(ffn_norm) vs numpy     nmse 2.108e-14 PASS
+slot 35 ffn norm vs oracle                   nmse 7.753e-06 PASS
+slot 36 attn ctrl q vs numpy                 nmse 2.365e-14 PASS
+slot 36 attn q norm vs oracle                nmse 1.976e-06 (oracle occ 2) PASS
+slot 36 attn ctrl k vs numpy                 nmse 2.182e-14 PASS
+slot 36 attn k norm vs oracle                nmse 4.195e-06 (oracle occ 0) PASS
+slot 36 attn ctrl v vs numpy                 nmse 1.747e-14 PASS
+slot 36 attn v norm vs oracle                nmse 1.248e-06 (oracle occ 1) PASS
+slot 36 guard                                nmse 0.000e+00 PASS
+slot 36 ffn ctrl vs numpy                    nmse 1.018e-14 PASS
+slot 36 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.226e-14 PASS
+slot 36 ffn norm vs oracle                   nmse 1.219e-06 PASS
+slot 37 attn ctrl q vs numpy                 nmse 2.061e-14 PASS
+slot 37 attn q norm vs oracle                nmse 2.638e-06 (oracle occ 2) PASS
+slot 37 attn ctrl k vs numpy                 nmse 1.043e-14 PASS
+slot 37 attn k norm vs oracle                nmse 8.293e-07 (oracle occ 0) PASS
+slot 37 attn ctrl v vs numpy                 nmse 1.037e-14 PASS
+slot 37 attn v norm vs oracle                nmse 9.809e-07 (oracle occ 1) PASS
+slot 37 guard                                nmse 0.000e+00 PASS
+slot 37 ffn ctrl vs numpy                    nmse 1.292e-14 PASS
+slot 37 ffn ctrl+norm(ffn_norm) vs numpy     nmse 9.659e-15 PASS
+slot 37 ffn norm vs oracle                   nmse 3.393e-06 PASS
+slot 38 attn ctrl q vs numpy                 nmse 1.697e-14 PASS
+slot 38 attn q norm vs oracle                nmse 3.802e-06 (oracle occ 2) PASS
+slot 38 attn ctrl k vs numpy                 nmse 1.813e-14 PASS
+slot 38 attn k norm vs oracle                nmse 1.326e-06 (oracle occ 0) PASS
+slot 38 attn ctrl v vs numpy                 nmse 9.843e-15 PASS
+slot 38 attn v norm vs oracle                nmse 1.442e-06 (oracle occ 1) PASS
+slot 38 guard                                nmse 0.000e+00 PASS
+slot 38 ffn ctrl vs numpy                    nmse 1.891e-14 PASS
+slot 38 ffn ctrl+norm(ffn_norm) vs numpy     nmse 9.336e-15 PASS
+slot 38 ffn norm vs oracle                   nmse 3.447e-06 PASS
+slot 39 attn ctrl q vs numpy                 nmse 3.340e-14 PASS
+slot 39 attn q norm vs oracle                nmse 5.088e-06 (oracle occ 2) PASS
+slot 39 attn ctrl k vs numpy                 nmse 1.423e-14 PASS
+slot 39 attn k norm vs oracle                nmse 2.048e-06 (oracle occ 0) PASS
+slot 39 attn ctrl v vs numpy                 nmse 1.529e-14 PASS
+slot 39 attn v norm vs oracle                nmse 1.535e-06 (oracle occ 1) PASS
+slot 39 guard                                nmse 0.000e+00 PASS
+slot 39 ffn ctrl vs numpy                    nmse 4.139e-14 PASS
+slot 39 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.301e-14 PASS
+slot 39 ffn norm vs oracle                   nmse 7.040e-06 PASS
+slot 40 attn ctrl q vs numpy                 nmse 3.421e-14 PASS
+slot 40 attn q norm vs oracle                nmse 5.710e-06 (oracle occ 2) PASS
+slot 40 attn ctrl k vs numpy                 nmse 2.014e-14 PASS
+slot 40 attn k norm vs oracle                nmse 1.578e-06 (oracle occ 0) PASS
+slot 40 attn ctrl v vs numpy                 nmse 1.365e-14 PASS
+slot 40 attn v norm vs oracle                nmse 3.306e-06 (oracle occ 1) PASS
+slot 40 guard                                nmse 0.000e+00 PASS
+slot 40 ffn ctrl vs numpy                    nmse 1.836e-14 PASS
+slot 40 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.178e-14 PASS
+slot 40 ffn norm vs oracle                   nmse 3.873e-06 PASS
+slot 41 attn ctrl q vs numpy                 nmse 5.120e-14 PASS
+slot 41 attn q norm vs oracle                nmse 6.442e-06 (oracle occ 2) PASS
+slot 41 attn ctrl k vs numpy                 nmse 2.427e-14 PASS
+slot 41 attn k norm vs oracle                nmse 2.201e-06 (oracle occ 0) PASS
+slot 41 attn ctrl v vs numpy                 nmse 8.241e-15 PASS
+slot 41 attn v norm vs oracle                nmse 7.747e-07 (oracle occ 1) PASS
+slot 41 guard                                nmse 0.000e+00 PASS
+slot 41 ffn ctrl vs numpy                    nmse 5.497e-14 PASS
+slot 41 ffn ctrl+norm(ffn_norm) vs numpy     nmse 2.223e-14 PASS
+slot 41 ffn norm vs oracle                   nmse 8.975e-06 PASS
+slot 42 attn ctrl q vs numpy                 nmse 1.995e-14 PASS
+slot 42 attn q norm vs oracle                nmse 4.133e-06 (oracle occ 2) PASS
+slot 42 attn ctrl k vs numpy                 nmse 1.538e-14 PASS
+slot 42 attn k norm vs oracle                nmse 1.041e-06 (oracle occ 0) PASS
+slot 42 attn ctrl v vs numpy                 nmse 2.230e-14 PASS
+slot 42 attn v norm vs oracle                nmse 2.278e-06 (oracle occ 1) PASS
+slot 42 guard                                nmse 0.000e+00 PASS
+slot 42 ffn ctrl vs numpy                    nmse 3.755e-14 PASS
+slot 42 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.378e-14 PASS
+slot 42 ffn norm vs oracle                   nmse 3.607e-06 PASS
+slot 43 attn ctrl q vs numpy                 nmse 1.532e-14 PASS
+slot 43 attn q norm vs oracle                nmse 3.429e-06 (oracle occ 2) PASS
+slot 43 attn ctrl k vs numpy                 nmse 1.208e-14 PASS
+slot 43 attn k norm vs oracle                nmse 1.136e-06 (oracle occ 0) PASS
+slot 43 attn ctrl v vs numpy                 nmse 1.444e-14 PASS
+slot 43 attn v norm vs oracle                nmse 9.223e-07 (oracle occ 1) PASS
+slot 43 guard                                nmse 0.000e+00 PASS
+slot 43 ffn ctrl vs numpy                    nmse 2.317e-14 PASS
+slot 43 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.070e-14 PASS
+slot 43 ffn norm vs oracle                   nmse 5.789e-06 PASS
+slot 44 attn ctrl q vs numpy                 nmse 1.192e-14 PASS
+slot 44 attn q norm vs oracle                nmse 3.691e-06 (oracle occ 2) PASS
+slot 44 attn ctrl k vs numpy                 nmse 2.250e-14 PASS
+slot 44 attn k norm vs oracle                nmse 4.652e-06 (oracle occ 0) PASS
+slot 44 attn ctrl v vs numpy                 nmse 1.061e-14 PASS
+slot 44 attn v norm vs oracle                nmse 1.220e-06 (oracle occ 1) PASS
+slot 44 guard                                nmse 0.000e+00 PASS
+slot 44 ffn ctrl vs numpy                    nmse 2.156e-14 PASS
+slot 44 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.219e-14 PASS
+slot 44 ffn norm vs oracle                   nmse 3.657e-06 PASS
+slot 45 attn ctrl q vs numpy                 nmse 1.346e-14 PASS
+slot 45 attn q norm vs oracle                nmse 1.558e-06 (oracle occ 2) PASS
+slot 45 attn ctrl k vs numpy                 nmse 1.983e-14 PASS
+slot 45 attn k norm vs oracle                nmse 2.658e-06 (oracle occ 0) PASS
+slot 45 attn ctrl v vs numpy                 nmse 8.491e-15 PASS
+slot 45 attn v norm vs oracle                nmse 6.794e-07 (oracle occ 1) PASS
+slot 45 guard                                nmse 0.000e+00 PASS
+slot 45 ffn ctrl vs numpy                    nmse 2.847e-14 PASS
+slot 45 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.108e-14 PASS
+slot 45 ffn norm vs oracle                   nmse 3.890e-06 PASS
+slot 46 attn ctrl q vs numpy                 nmse 2.116e-14 PASS
+slot 46 attn q norm vs oracle                nmse 1.313e-06 (oracle occ 2) PASS
+slot 46 attn ctrl k vs numpy                 nmse 9.877e-15 PASS
+slot 46 attn k norm vs oracle                nmse 8.557e-07 (oracle occ 0) PASS
+slot 46 attn ctrl v vs numpy                 nmse 1.142e-14 PASS
+slot 46 attn v norm vs oracle                nmse 7.441e-07 (oracle occ 1) PASS
+slot 46 guard                                nmse 0.000e+00 PASS
+slot 46 ffn ctrl vs numpy                    nmse 1.411e-14 PASS
+slot 46 ffn ctrl+norm(ffn_norm) vs numpy     nmse 9.601e-15 PASS
+slot 46 ffn norm vs oracle                   nmse 1.251e-06 PASS
+slot 47 attn ctrl q vs numpy                 nmse 1.198e-14 PASS
+slot 47 attn q norm vs oracle                nmse 1.424e-06 (oracle occ 2) PASS
+slot 47 attn ctrl k vs numpy                 nmse 7.141e-15 PASS
+slot 47 attn k norm vs oracle                nmse 4.046e-07 (oracle occ 0) PASS
+slot 47 attn ctrl v vs numpy                 nmse 7.600e-15 PASS
+slot 47 attn v norm vs oracle                nmse 7.683e-07 (oracle occ 1) PASS
+slot 47 guard                                nmse 0.000e+00 PASS
+slot 47 ffn ctrl vs numpy                    nmse 1.502e-14 PASS
+slot 47 ffn ctrl+norm(ffn_norm) vs numpy     nmse 1.005e-14 PASS
+slot 47 ffn norm vs oracle                   nmse 1.070e-06 PASS
+TOTAL 240 FAIL 0

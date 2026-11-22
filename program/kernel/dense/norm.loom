@@ -76,6 +76,41 @@ kernel.def @inkling_rms_norm(%rows: index) {
   kernel.return
 }
 
+// Three columns of one row block in one launch. Column c starts c * col_step bytes after origin and has its own weight.
+kernel.def @inkling_rms_norm_cols(%rows: index) {
+  %c1 = index.constant 1 : index
+  %c3 = index.constant 3 : index
+  %threads = index.constant 256 : index
+  kernel.launch.config workgroups(%rows, %c3, %c1) workgroup_size(%threads, %c1, %c1) : index
+} launch(%control: buffer, %count_origin: offset, %width: index, %origin: offset, %col_step: offset, %epsilon: f32, %input: buffer, %w0: buffer, %w1: buffer, %w2: buffer, %output: buffer) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %row = kernel.workgroup.id<x> : index
+  %col = kernel.workgroup.id<y> : index
+  %count = func.call @inkling_dense_live_rows(%control, %count_origin) : (buffer, offset) -> (index)
+  %live = index.cmp ult, %row, %count : index
+  scf.if %live {
+    %true = scalar.constant true : i1
+    %col_bytes = index.scale %col, %col_step : index, offset -> offset
+    %base = index.add %origin, %col_bytes : offset
+    %row_origin = func.call @inkling_dense_row_origin(%base, %row, %width) : (offset, index, index) -> (offset)
+    %is0 = index.cmp eq, %col, %c0 : index
+    %is1 = index.cmp eq, %col, %c1 : index
+    %weight = scf.if %is0 -> (buffer) {
+      scf.yield %w0 : buffer
+    } else {
+      %w12 = scf.if %is1 -> (buffer) {
+        scf.yield %w1 : buffer
+      } else {
+        scf.yield %w2 : buffer
+      }
+      scf.yield %w12 : buffer
+    }
+    func.call @inkling_dense_rms_row(%width, %input, %row_origin, %output, %row_origin, %weight, %true, %epsilon) : (index, buffer, offset, buffer, offset, buffer, i1, f32)
+  }
+  kernel.return
+}
+
 kernel.def @inkling_rms_norm_plain(%rows: index) {
   %c1 = index.constant 1 : index
   %threads = index.constant 256 : index

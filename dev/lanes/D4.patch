@@ -1,0 +1,285 @@
+diff -ruN package_base_T10/dispatch/hooks_attn.loom package_D4/dispatch/hooks_attn.loom
+--- package_base_T10/dispatch/hooks_attn.loom	2026-11-21 17:35:01.873232700 -0800
++++ package_D4/dispatch/hooks_attn.loom	2026-11-21 21:03:59.412317800 -0800
+@@ -24,7 +24,7 @@
+ 
+ target.decl @inkling_rdna4
+ 
+-// Decode split size in 64-key blocks. Local visits use 1 block, global visits grow with the context (docs/KERNELS_attn.md).
++// Smallest decode split in 64-key blocks. The kernels raise it so that a visit has at most 64 splits (docs/OPT_D4.md).
+ template.decl @inkling.tune.attn.split_blocks(%context: index, %global: index) -> (index)
+ 
+ template.def<@inkling.tune.attn.split_blocks> priority(-1) @inkling_attn_split_blocks_default(%context: index, %global: index) -> (index) {
+@@ -37,36 +37,12 @@
+ }
+ 
+ template.def<@inkling.tune.attn.split_blocks> target(@inkling_rdna3) @inkling_attn_split_blocks_gfx1151(%context: index, %global: index) -> (index) {
+-  %c0 = index.constant 0 : index
+-  %c1 = index.constant 1 : index
+-  %c2 = index.constant 2 : index
+-  %c4 = index.constant 4 : index
+-  %c8 = index.constant 8 : index
+-  %c4096 = index.constant 4096 : index
+-  %c16384 = index.constant 16384 : index
+-  %small = index.cmp ule, %context, %c4096 : index
+-  %medium = index.cmp ule, %context, %c16384 : index
+-  %upper = scf.select %medium, %c4, %c8 : index
+-  %grown = scf.select %small, %c2, %upper : index
+-  %is_global = index.cmp ne, %global, %c0 : index
+-  %value = scf.select %is_global, %grown, %c1 : index
++  %value = index.constant 1 : index
+   template.return %value : index
+ }
+ 
+ template.def<@inkling.tune.attn.split_blocks> target(@inkling_rdna4) @inkling_attn_split_blocks_gfx1201(%context: index, %global: index) -> (index) {
+-  %c0 = index.constant 0 : index
+-  %c1 = index.constant 1 : index
+-  %c2 = index.constant 2 : index
+-  %c4 = index.constant 4 : index
+-  %c8 = index.constant 8 : index
+-  %c4096 = index.constant 4096 : index
+-  %c16384 = index.constant 16384 : index
+-  %small = index.cmp ule, %context, %c4096 : index
+-  %medium = index.cmp ule, %context, %c16384 : index
+-  %upper = scf.select %medium, %c4, %c8 : index
+-  %grown = scf.select %small, %c2, %upper : index
+-  %is_global = index.cmp ne, %global, %c0 : index
+-  %value = scf.select %is_global, %grown, %c1 : index
++  %value = index.constant 1 : index
+   template.return %value : index
+ }
+ 
+@@ -134,7 +110,8 @@
+   %vis = scf.select %g, %vis_g, %i17 : index
+   %splitm1 = index.sub %split, %i1 : index
+   %vis_up = index.add %vis, %splitm1 : index
+-  %max_splits = index.div %vis_up, %split : index
++  %max_splits0 = index.div %vis_up, %split : index
++  %max_splits = index.min %max_splits0, %i64 : index
+   %i15 = index.constant 15 : index
+   %cap15 = index.add %cap, %i15 : index
+   %i16 = index.constant 16 : index
+diff -ruN package_base_T10/kernel/attn/attn_merge.loom package_D4/kernel/attn/attn_merge.loom
+--- package_base_T10/kernel/attn/attn_merge.loom	2026-11-21 17:35:01.745264800 -0800
++++ package_D4/kernel/attn/attn_merge.loom	2026-11-21 18:18:03.460488200 -0800
+@@ -1,4 +1,5 @@
+ // Combines the decode splits of one head: the sink logit joins the softmax here, then the gate multiplies the result.
++func.decl @inkling_attn_decode_split(%split_blocks: index, %blocks: index) -> (index)
+ func.decl @inkling_attn_span_record(%spans: buffer, %span_cap: index, %s: index) -> (index, index, index, index, offset, i1)
+ 
+ kernel.def export("inkling_attn_merge") @inkling_attn_merge(%span_cap: index) {
+@@ -42,7 +43,8 @@
+     %b_hi = index.div %pos_a, %c64 : index
+     %nb = index.sub %b_hi, %b_lo : index
+     %nb1 = index.add %nb, %c1 : index
+-    %sb = index.assume %split_blocks [range(%split_blocks, 1, 1024)] : index
++    %eff = func.call @inkling_attn_decode_split(%split_blocks, %nb1) : (index, index) -> (index)
++    %sb = index.assume %eff [range(%eff, 1, 1024)] : index
+     %sbm = index.sub %sb, %c1 : index
+     %nb_r = index.add %nb1, %sbm : index
+     %nb_a = index.assume %nb_r [range(%nb_r, 0, 2147483647)] : index
+diff -ruN package_base_T10/kernel/attn/attn_tile.loom package_D4/kernel/attn/attn_tile.loom
+--- package_base_T10/kernel/attn/attn_tile.loom	2026-11-21 17:35:01.749341500 -0800
++++ package_D4/kernel/attn/attn_tile.loom	2026-11-21 18:18:03.714894500 -0800
+@@ -1,4 +1,5 @@
+ func.decl @inkling_attn_span_record(%spans: buffer, %span_cap: index, %s: index) -> (index, index, index, index, offset, i1)
++func.decl @inkling_attn_decode_split(%split_blocks: index, %blocks: index) -> (index)
+ 
+ func.decl @inkling_attn_find_tile(%spans: buffer, %span_cap: index, %tile: index) -> (i1, index, index, index, index, offset, index)
+ 
+@@ -43,7 +44,7 @@
+   %loads = index.div %c1024, %threads : index
+   %block_pos = index.mul %block, %c64 : index
+   %head_col = index.mul %g, %c128 : index
+-  scf.for %it = [%c0 to %loads step %c1] {
++  scf.for %it = [%c0 to %loads step %c1] unroll {
+     %idx0 = index.madd %it, %threads, %tid : index
+     %idx = index.assume %idx0 [range(%idx0, 0, 1023)] : index
+     %row = index.div %idx, %c16 : index
+@@ -259,15 +260,12 @@
+   %prob_stage_bytes = index.constant 3072 : offset
+   %small_stage_bytes = index.constant 1024 : offset
+   %prod_stage_bytes = index.constant 8192 : offset
+-  %ml_stage_bytes = index.constant 256 : offset
+   %q_stage = buffer.alloca<workgroup> align(16) %q_stage_bytes : buffer
+   %kv_stage = buffer.alloca<workgroup> align(16) %kv_stage_bytes : buffer
+   %score_stage = buffer.alloca<workgroup> align(16) %score_stage_bytes : buffer
+   %prob_stage = buffer.alloca<workgroup> align(16) %prob_stage_bytes : buffer
+   %r_stage = buffer.alloca<workgroup> align(16) %small_stage_bytes : buffer
+-  %scale_stage = buffer.alloca<workgroup> align(16) %small_stage_bytes : buffer
+   %prod_stage = buffer.alloca<workgroup> align(16) %prod_stage_bytes : buffer
+-  %ml_stage = buffer.alloca<workgroup> align(16) %ml_stage_bytes : buffer
+ 
+   scf.if %found {
+     %kv_end = index.add %pos0, %len : index
+@@ -285,9 +283,11 @@
+     %b_lo = index.div %kmin_a, %c64 : index
+     %b_hi = index.div %p_hi_a, %c64 : index
+     %b_end = index.add %b_hi, %c1 : index
+-    %split_off = index.mul %wg_z, %split_blocks : index
++    %nblocks = index.sub %b_end, %b_lo : index
++    %eff_split = func.call @inkling_attn_decode_split(%split_blocks, %nblocks) : (index, index) -> (index)
++    %split_off = index.mul %wg_z, %eff_split : index
+     %sb0_dec = index.add %b_lo, %split_off : index
+-    %sb1_dec0 = index.add %sb0_dec, %split_blocks : index
++    %sb1_dec0 = index.add %sb0_dec, %eff_split : index
+     %sb1_dec = index.min %sb1_dec0, %b_end : index
+     %sb0 = scf.select %dec, %sb0_dec, %b_lo : index
+     %sb1 = scf.select %dec, %sb1_dec, %b_end : index
+@@ -304,9 +304,9 @@
+       %kv_view = buffer.view %kv_stage[%zero] : buffer -> view<64x136xf16>
+       %score_view = buffer.view %score_stage[%zero] : buffer -> view<64x24xf32>
+       %r_stage_view = buffer.view %r_stage[%zero] : buffer -> view<16x16xf32>
+-      %scale_view = buffer.view %scale_stage[%zero] : buffer -> view<16x16xf32>
++      %scale_view = buffer.view %r_stage[%zero] : buffer -> view<16x16xf32>
+       %prod_view = buffer.view %prod_stage[%zero] : buffer -> view<16x128xf32>
+-      %ml_view = buffer.view %ml_stage[%zero] : buffer -> view<16x2xf32>
++      %ml_view = buffer.view %score_stage[%zero] : buffer -> view<16x2xf32>
+       %prob_t_layout = encoding.layout.strided [1, 24] : encoding<layout>
+       %qpk = index.div %c128, %width : index
+       %zero_q = vector.splatf 0.0 : vector<[%qpk]xf16>
+diff -ruN package_base_T10/lib/inkling/attn_common.loom package_D4/lib/inkling/attn_common.loom
+--- package_base_T10/lib/inkling/attn_common.loom	2026-11-21 17:35:01.545459400 -0800
++++ package_D4/lib/inkling/attn_common.loom	2026-11-21 19:09:45.477976000 -0800
+@@ -129,3 +129,13 @@
+   }
+   func.return %found, %begin, %len, %pos, %row, %slot, %tile_in : i1, index, index, index, index, offset, index
+ }
++
++func.def public inline @inkling_attn_decode_split(%split_blocks: index, %blocks: index) -> (index) {
++  %c63 = index.constant 63 : index
++  %c64 = index.constant 64 : index
++  %blocks_a = index.assume %blocks [range(%blocks, 0, 2147483647)] : index
++  %up = index.add %blocks_a, %c63 : index
++  %need = index.div %up, %c64 : index
++  %split = index.max %split_blocks, %need : index
++  func.return %split : index
++}
+diff -ruN package_base_T10/test/attn/attn_perf.py package_D4/test/attn/attn_perf.py
+--- package_base_T10/test/attn/attn_perf.py	2026-11-21 17:35:01.452671800 -0800
++++ package_D4/test/attn/attn_perf.py	2026-11-21 18:18:16.083570400 -0800
+@@ -154,6 +154,8 @@
+         perf.add(f"dec_l_1024_b{bps}", build_tile("dec", False, 1500, 1, bps))
+     perf.add("dec_g_1024_b4_grid128", build_tile("dec", True, 1024, 1, 4, 128))
+     perf.add("dec_g_4096_b4_grid128", build_tile("dec", True, 4096, 1, 4, 128))
++    for ctx in (1024, 4096, 8192, 16384, 32768):
++        perf.add(f"dec_g_{ctx}_dyn", build_tile("dec", True, ctx, 1, 1, 64))
+     perf.add("dec_l_1024_b1_grid17", build_tile("dec", False, 1500, 1, 1, 17))
+     perf.add("merge_g_32768", build_merge(True, 32768, 8))
+     perf.add("merge_l", build_merge(False, 1500, 8))
+diff -ruN pa2/scripts/ab_greedy.sh pb2/scripts/ab_greedy.sh
+--- pa2/scripts/ab_greedy.sh	1969-12-31 16:00:00.000000000 -0800
++++ pb2/scripts/ab_greedy.sh	2026-11-21 21:08:55.099743800 -0800
+@@ -0,0 +1,23 @@
++#!/usr/bin/env bash
++# usage: ab_greedy.sh <r9700|strix> <model dir> <out json>   (box; run under flock -s) serves a variant and writes greedy_check.py output
++set -u
++G=${1:?gpu}; M=${2:?dir}; OUT=${3:?out}
++V=$HOME/inkling/optD4; HERE=$(cd "$(dirname "$0")" && pwd)
++case $G in
++  r9700) PRESET=chat-r9700; PORT=18192; DEV='amdgpu://GPU-e0880c05003c324d?completion_spin_ns=4294967295' ;;
++  strix) PRESET=chat; PORT=18193; DEV='amdgpu://id/000000e2000000808e270f2b0bbb4e00?completion_spin_ns=4294967295' ;;
++esac
++URL=http://127.0.0.1:$PORT; T=$HOME/loom/.tools/bin/python
++export LOOM_ROOT=$HOME/loom PYTHONDONTWRITEBYTECODE=1
++. "$HOME/loom/.venv/bin/activate"
++( exec nohup loom-serve --device="$DEV" --model="$M" --preset="$PRESET" --pool_backing=fixed --listen=127.0.0.1:$PORT --workers=8 > "$V/ablogs/greedy.$$.log" 2>&1 < /dev/null ) &
++PID=$!
++stopit() { if tr '\0' ' ' < /proc/$PID/cmdline 2>/dev/null | grep -q loom-serve; then kill -TERM $PID; for _ in $(seq 120); do kill -0 $PID 2>/dev/null || break; sleep 1; done; fi; }
++trap stopit EXIT
++for _ in $(seq 1800); do
++  kill -0 $PID 2>/dev/null || { echo "loom-serve died"; exit 1; }
++  curl -s -m 2 $URL/v1/status 2>/dev/null | grep -q '"registration": *"ready"' && break
++  curl -s -m 2 $URL/v1/status 2>/dev/null | grep -q '"registration": *"failed"' && { echo "registration failed"; exit 1; }
++  sleep 0.5
++done
++$T -I "$HERE/greedy_check.py" $URL thinkingmachines/Inkling-2-Mini "$OUT"
+diff -ruN pa2/scripts/gen_hooks.py pb2/scripts/gen_hooks.py
+--- pa2/scripts/gen_hooks.py	2026-11-21 21:08:54.431485300 -0800
++++ pb2/scripts/gen_hooks.py	2026-11-21 21:08:54.755058500 -0800
+@@ -471,7 +471,7 @@
+ 
+ target.decl @inkling_rdna4
+ 
+-// Decode split size in 64-key blocks. Local visits use 1 block, global visits grow with the context (docs/KERNELS_attn.md).
++// Smallest decode split in 64-key blocks. The kernels raise it so that a visit has at most 64 splits (docs/OPT_D4.md).
+ template.decl @inkling.tune.attn.split_blocks(%context: index, %global: index) -> (index)
+ 
+ template.def<@inkling.tune.attn.split_blocks> priority(-1) @inkling_attn_split_blocks_default(%context: index, %global: index) -> (index) {
+@@ -486,19 +486,7 @@
+ """]
+     for arch, alias in [("rdna3", "gfx1151"), ("rdna4", "gfx1201")]:
+         out.append("""template.def<@inkling.tune.attn.split_blocks> target(@inkling_%s) @inkling_attn_split_blocks_%s(%%context: index, %%global: index) -> (index) {
+-  %%c0 = index.constant 0 : index
+-  %%c1 = index.constant 1 : index
+-  %%c2 = index.constant 2 : index
+-  %%c4 = index.constant 4 : index
+-  %%c8 = index.constant 8 : index
+-  %%c4096 = index.constant 4096 : index
+-  %%c16384 = index.constant 16384 : index
+-  %%small = index.cmp ule, %%context, %%c4096 : index
+-  %%medium = index.cmp ule, %%context, %%c16384 : index
+-  %%upper = scf.select %%medium, %%c4, %%c8 : index
+-  %%grown = scf.select %%small, %%c2, %%upper : index
+-  %%is_global = index.cmp ne, %%global, %%c0 : index
+-  %%value = scf.select %%is_global, %%grown, %%c1 : index
++  %%value = index.constant 1 : index
+   template.return %%value : index
+ }
+ 
+@@ -538,7 +526,8 @@
+     max_blocks = b.div("max_blocks", ctx, b.i(64))
+     vis_g = b.add("vis_g", max_blocks, b.i(1))
+     vis = b.op("vis", "scf.select %s, %s, %s : index" % (g, vis_g, b.i(17)))
+-    max_splits = b.div("max_splits", b.add("vis_up", vis, b.op("splitm1", "index.sub %s, %s : index" % (split, b.i(1)))), split)
++    max_splits0 = b.div("max_splits0", b.add("vis_up", vis, b.op("splitm1", "index.sub %s, %s : index" % (split, b.i(1)))), split)
++    max_splits = b.op("max_splits", "index.min %s, %s : index" % (max_splits0, b.i(64)))
+     tile_bound = b.add("tile_bound", b.div("cap16", b.add("cap15", cap, b.i(15)), b.i(16)), sc)
+     partial_n = b.mul("partial_n", sc, max_splits)
+     partial_bytes = b.scale("partial_bytes", partial_n, b.o(24 * 136 * 4))
+diff -ruN pa2/scripts/greedy_check.py pb2/scripts/greedy_check.py
+--- pa2/scripts/greedy_check.py	1969-12-31 16:00:00.000000000 -0800
++++ pb2/scripts/greedy_check.py	2026-11-21 21:08:55.095745000 -0800
+@@ -0,0 +1,19 @@
++"""usage: greedy_check.py URL MODEL OUT.json   Greedy 64 token outputs for the oracle prompts A, B, C and for 8k and 32k character documents."""
++import json
++import os
++import sys
++
++sys.path.insert(0, os.environ.get("SKILLS_BENCH", os.path.expanduser("~/inkling/loom-skills/skills/loom-benchmark/scripts")))
++from bench_common import doc, stream, thinking_extra
++
++url, model, out = sys.argv[1:4]
++P = os.path.expanduser("~/inkling/optD4/prompts")
++ESSAY = "Write a long, detailed essay discussing this documentation.\n\n"
++cases = {"A": open(f"{P}/A.txt").read(), "B": open(f"{P}/B.txt").read(), "C": open(f"{P}/C_user.txt").read(),
++         "L8k": ESSAY + doc(8000), "L32k": ESSAY + doc(32000)}
++res = {}
++for k, text in cases.items():
++    s = stream(url, model, [{"role": "user", "content": text}], 64, extra=thinking_extra("off"), timeout=900)
++    res[k] = dict(text=s["text"], tokens=s["tokens"], prompt_tokens=s["prompt_tokens"])
++    print(k, s["prompt_tokens"], s["tokens"], flush=True)
++json.dump(res, open(out, "w"), indent=1)
+diff -ruN pa2/scripts/greedy_lp.py pb2/scripts/greedy_lp.py
+--- pa2/scripts/greedy_lp.py	1969-12-31 16:00:00.000000000 -0800
++++ pb2/scripts/greedy_lp.py	2026-11-21 21:08:55.106411300 -0800
+@@ -0,0 +1,19 @@
++"""usage: greedy_lp.py URL MODEL OUT.json   32k character document, greedy 40 tokens with top-2 logprobs per token."""
++import json
++import os
++import sys
++import requests
++
++sys.path.insert(0, os.environ.get("SKILLS_BENCH", os.path.expanduser("~/inkling/loom-skills/skills/loom-benchmark/scripts")))
++from bench_common import doc, thinking_extra
++
++url, model, out = sys.argv[1:4]
++body = {"model": model, "messages": [{"role": "user", "content": "Write a long, detailed essay discussing this documentation.\n\n" + doc(32000)}],
++        "max_tokens": 40, "temperature": 0, "logprobs": True, "top_logprobs": 2}
++body.update(thinking_extra("off") or {})
++r = requests.post(url + "/v1/chat/completions", json=body, timeout=900)
++j = r.json()
++lp = j["choices"][0].get("logprobs") or {}
++rows = [(c["token"], c["logprob"], [(t["token"], t["logprob"]) for t in c.get("top_logprobs", [])]) for c in lp.get("content", [])]
++json.dump(dict(text=j["choices"][0]["message"].get("content"), rows=rows, status=r.status_code), open(out, "w"), indent=1)
++print(r.status_code, len(rows))

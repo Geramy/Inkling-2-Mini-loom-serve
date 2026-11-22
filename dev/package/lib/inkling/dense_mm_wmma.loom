@@ -1,0 +1,75 @@
+// I/O helpers of the matrix-op GEMM kernels. The accumulator fragment layout is the gfx11 wave32 result layout (see dense_wmma.loom).
+
+func.decl @inkling_dense_col_origin(%origin: offset, %col: index, %last: index, %stride: index) -> (offset)
+
+func.decl @inkling_dense_epilogue(%value: f32, %act: index, %cap: f32) -> (f32)
+
+func.decl @inkling_dense_store(%dst: buffer, %col_origin: offset, %n_rows: index, %row: index, %value: f32)
+
+// The load has no guard. The clamp keeps it inside the row of k_size values (k_size >= 8). Callers do not store values from a clamped index.
+func.def public inline @inkling_dense_mm_wmma_load_input8_clamped(%input: buffer, %col_origin: offset, %k_size: index, %index: index) -> (vector<8xf32>) {
+  %c7 = index.constant 7 : index
+  %c8 = index.constant 8 : index
+  %index1 = index.assume %index [range(%index, 0, 2147483646)] : index
+  %k_span = index.assume %k_size [range(%k_size, 8, 2147483647)] : index
+  %span_last = index.sub %k_span, %c8 : index
+  %limit0 = index.sub %k_span, %c7 : index
+  %index2 = index.min %index1, %span_last : index
+  %clamped, %limit = index.assume %index2, %limit0 [lt(%index2, %limit0)] : index, index
+  %extent = index.add %limit, %c7 : index
+  %input_view = buffer.view %input[%col_origin] : buffer -> view<[%extent]xf32>
+  %values = vector.load %input_view[%clamped] : view<[%extent]xf32> -> vector<8xf32>
+  func.return %values : vector<8xf32>
+}
+
+func.def public inline @inkling_dense_mm_wmma_store1(%dst: buffer, %d_origin: offset, %d_stride: index, %col: index, %live: index, %last_live: index, %row: index, %n_rows: index, %value: f32, %act: index, %cap: f32) {
+  %col_valid = index.cmp ult, %col, %live : index
+  scf.if %col_valid {
+    %col_origin = func.call @inkling_dense_col_origin(%d_origin, %col, %last_live, %d_stride) : (offset, index, index, index) -> (offset)
+    %y = func.call @inkling_dense_epilogue(%value, %act, %cap) : (f32, index, f32) -> (f32)
+    func.call @inkling_dense_store(%dst, %col_origin, %n_rows, %row, %y) : (buffer, offset, index, index, f32)
+  }
+  func.return
+}
+
+// Values out of range are not stored. col0 and row0 are the corner of a 16 x 16 fragment.
+func.def public inline @inkling_dense_mm_wmma_store(%dst: buffer, %d_origin: offset, %d_stride: index, %col0: index, %live: index, %last_live: index, %row0: index, %n_rows: index, %acc: vector<8xf32>, %act: index, %cap: f32) {
+  %lane0 = kernel.subgroup.lane.id : index
+  %lane = index.assume %lane0 [range(%lane0, 0, 31)] : index
+  %c2 = index.constant 2 : index
+  %c4 = index.constant 4 : index
+  %c6 = index.constant 6 : index
+  %c8 = index.constant 8 : index
+  %c10 = index.constant 10 : index
+  %c12 = index.constant 12 : index
+  %c14 = index.constant 14 : index
+  %c16 = index.constant 16 : index
+  %lane_col = index.div %lane, %c16 : index
+  %lane_row = index.rem %lane, %c16 : index
+  %row = index.add %row0, %lane_row : index
+  %col_e0 = index.add %col0, %lane_col : index
+  %col_e1 = index.add %col_e0, %c2 : index
+  %col_e2 = index.add %col_e0, %c4 : index
+  %col_e3 = index.add %col_e0, %c6 : index
+  %col_e4 = index.add %col_e0, %c8 : index
+  %col_e5 = index.add %col_e0, %c10 : index
+  %col_e6 = index.add %col_e0, %c12 : index
+  %col_e7 = index.add %col_e0, %c14 : index
+  %v0 = vector.extract %acc[0] : vector<8xf32> -> f32
+  %v1 = vector.extract %acc[1] : vector<8xf32> -> f32
+  %v2 = vector.extract %acc[2] : vector<8xf32> -> f32
+  %v3 = vector.extract %acc[3] : vector<8xf32> -> f32
+  %v4 = vector.extract %acc[4] : vector<8xf32> -> f32
+  %v5 = vector.extract %acc[5] : vector<8xf32> -> f32
+  %v6 = vector.extract %acc[6] : vector<8xf32> -> f32
+  %v7 = vector.extract %acc[7] : vector<8xf32> -> f32
+  func.call @inkling_dense_mm_wmma_store1(%dst, %d_origin, %d_stride, %col_e0, %live, %last_live, %row, %n_rows, %v0, %act, %cap) : (buffer, offset, index, index, index, index, index, index, f32, index, f32)
+  func.call @inkling_dense_mm_wmma_store1(%dst, %d_origin, %d_stride, %col_e1, %live, %last_live, %row, %n_rows, %v1, %act, %cap) : (buffer, offset, index, index, index, index, index, index, f32, index, f32)
+  func.call @inkling_dense_mm_wmma_store1(%dst, %d_origin, %d_stride, %col_e2, %live, %last_live, %row, %n_rows, %v2, %act, %cap) : (buffer, offset, index, index, index, index, index, index, f32, index, f32)
+  func.call @inkling_dense_mm_wmma_store1(%dst, %d_origin, %d_stride, %col_e3, %live, %last_live, %row, %n_rows, %v3, %act, %cap) : (buffer, offset, index, index, index, index, index, index, f32, index, f32)
+  func.call @inkling_dense_mm_wmma_store1(%dst, %d_origin, %d_stride, %col_e4, %live, %last_live, %row, %n_rows, %v4, %act, %cap) : (buffer, offset, index, index, index, index, index, index, f32, index, f32)
+  func.call @inkling_dense_mm_wmma_store1(%dst, %d_origin, %d_stride, %col_e5, %live, %last_live, %row, %n_rows, %v5, %act, %cap) : (buffer, offset, index, index, index, index, index, index, f32, index, f32)
+  func.call @inkling_dense_mm_wmma_store1(%dst, %d_origin, %d_stride, %col_e6, %live, %last_live, %row, %n_rows, %v6, %act, %cap) : (buffer, offset, index, index, index, index, index, index, f32, index, f32)
+  func.call @inkling_dense_mm_wmma_store1(%dst, %d_origin, %d_stride, %col_e7, %live, %last_live, %row, %n_rows, %v7, %act, %cap) : (buffer, offset, index, index, index, index, index, index, f32, index, f32)
+  func.return
+}

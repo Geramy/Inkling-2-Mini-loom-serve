@@ -117,6 +117,42 @@ func.def public inline @inkling_conv_commit_row(%a: buffer, %old0: f32, %old1: f
   func.return %v : f32
 }
 
+// One channel of the state commit of one span: the new history rows from the old rows and the rows of %a.
+func.def public inline @inkling_conv_commit_item(%spans: buffer, %state: buffer, %a: buffer, %site: index, %visit: index, %span: index, %c: index) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c2 = index.constant 2 : index
+  %row_len = index.constant 6656 : index
+  %origin = index.constant 0 : offset
+  %one_byte = index.constant 1 : offset
+  %header = buffer.view %spans[%origin] : buffer -> view<4xi32>
+  %count_word = view.load %header[0] : view<4xi32> -> i32
+  %count = index.cast %count_word : i32 to index
+  %span_ok = index.cmp ult, %span, %count : index
+  scf.if %span_ok {
+    %first, %length, %read, %write = func.call @inkling_conv_record(%spans, %span) : (buffer, index) -> (index, index, offset, offset)
+    %nonempty = index.cmp ne, %length, %c0 : index
+    scf.if %nonempty {
+      %visit_bytes = index.scale %visit, %one_byte : index, offset -> offset
+      %read_base = index.add %read, %visit_bytes : offset
+      %write_base = index.add %write, %visit_bytes : offset
+      %old0 = func.call @inkling_conv_tap(%state, %a, %read_base, %site, %first, %c0, %c) : (buffer, buffer, offset, index, index, index, index) -> (f32)
+      %old1 = func.call @inkling_conv_tap(%state, %a, %read_base, %site, %first, %c1, %c) : (buffer, buffer, offset, index, index, index, index) -> (f32)
+      %old2 = func.call @inkling_conv_tap(%state, %a, %read_base, %site, %first, %c2, %c) : (buffer, buffer, offset, index, index, index, index) -> (f32)
+      %n0 = func.call @inkling_conv_commit_row(%a, %old0, %old1, %old2, %first, %length, %c0, %c) : (buffer, f32, f32, f32, index, index, index, index) -> (f32)
+      %n1 = func.call @inkling_conv_commit_row(%a, %old0, %old1, %old2, %first, %length, %c1, %c) : (buffer, f32, f32, f32, index, index, index, index) -> (f32)
+      %n2 = func.call @inkling_conv_commit_row(%a, %old0, %old1, %old2, %first, %length, %c2, %c) : (buffer, f32, f32, f32, index, index, index, index) -> (f32)
+      %e0 = index.add %site, %c : index
+      %e1 = index.madd %c1, %row_len, %e0 : index
+      %e2 = index.madd %c2, %row_len, %e0 : index
+      func.call @inkling_conv_store(%state, %write_base, %e0, %n0) : (buffer, offset, index, f32)
+      func.call @inkling_conv_store(%state, %write_base, %e1, %n1) : (buffer, offset, index, f32)
+      func.call @inkling_conv_store(%state, %write_base, %e2, %n2) : (buffer, offset, index, f32)
+    }
+  }
+  func.return
+}
+
 kernel.def export("inkling_conv_res") @inkling_conv_res(%cap: index) {
   %one = index.constant 1 : index
   %groups = index.constant 9 : index
@@ -199,42 +235,11 @@ kernel.def export("inkling_conv_commit") @inkling_conv_commit(%span_cap: index) 
 } launch(%span_cap_in: index, %site_in: index, %visit_in: index, %spans: buffer, %state: buffer, %a: buffer) {
   %site = index.assume %site_in [range(%site_in, 0, 6656)] : index
   %visit = index.assume %visit_in [range(%visit_in, 0, 2147483647)] : index
-  %c0 = index.constant 0 : index
-  %c1 = index.constant 1 : index
-  %c2 = index.constant 2 : index
   %c256 = index.constant 256 : index
-  %c63 = index.constant 63 : index
-  %row_len = index.constant 6656 : index
-  %origin = index.constant 0 : offset
-  %one_byte = index.constant 1 : offset
   %span = kernel.workgroup.id<x> : index
   %group = kernel.workgroup.id<y> : index
   %tid = kernel.workitem.id<x> : index
   %c = index.madd %group, %c256, %tid : index
-  %header = buffer.view %spans[%origin] : buffer -> view<4xi32>
-  %count_word = view.load %header[0] : view<4xi32> -> i32
-  %count = index.cast %count_word : i32 to index
-  %span_ok = index.cmp ult, %span, %count : index
-  scf.if %span_ok {
-    %first, %length, %read, %write = func.call @inkling_conv_record(%spans, %span) : (buffer, index) -> (index, index, offset, offset)
-    %nonempty = index.cmp ne, %length, %c0 : index
-    scf.if %nonempty {
-      %visit_bytes = index.scale %visit, %one_byte : index, offset -> offset
-      %read_base = index.add %read, %visit_bytes : offset
-      %write_base = index.add %write, %visit_bytes : offset
-      %old0 = func.call @inkling_conv_tap(%state, %a, %read_base, %site, %first, %c0, %c) : (buffer, buffer, offset, index, index, index, index) -> (f32)
-      %old1 = func.call @inkling_conv_tap(%state, %a, %read_base, %site, %first, %c1, %c) : (buffer, buffer, offset, index, index, index, index) -> (f32)
-      %old2 = func.call @inkling_conv_tap(%state, %a, %read_base, %site, %first, %c2, %c) : (buffer, buffer, offset, index, index, index, index) -> (f32)
-      %n0 = func.call @inkling_conv_commit_row(%a, %old0, %old1, %old2, %first, %length, %c0, %c) : (buffer, f32, f32, f32, index, index, index, index) -> (f32)
-      %n1 = func.call @inkling_conv_commit_row(%a, %old0, %old1, %old2, %first, %length, %c1, %c) : (buffer, f32, f32, f32, index, index, index, index) -> (f32)
-      %n2 = func.call @inkling_conv_commit_row(%a, %old0, %old1, %old2, %first, %length, %c2, %c) : (buffer, f32, f32, f32, index, index, index, index) -> (f32)
-      %e0 = index.add %site, %c : index
-      %e1 = index.madd %c1, %row_len, %e0 : index
-      %e2 = index.madd %c2, %row_len, %e0 : index
-      func.call @inkling_conv_store(%state, %write_base, %e0, %n0) : (buffer, offset, index, f32)
-      func.call @inkling_conv_store(%state, %write_base, %e1, %n1) : (buffer, offset, index, f32)
-      func.call @inkling_conv_store(%state, %write_base, %e2, %n2) : (buffer, offset, index, f32)
-    }
-  }
+  func.call @inkling_conv_commit_item(%spans, %state, %a, %site, %visit, %span, %c) : (buffer, buffer, buffer, index, index, index, index)
   kernel.return
 }

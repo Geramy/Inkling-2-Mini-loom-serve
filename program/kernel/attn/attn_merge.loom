@@ -1,4 +1,5 @@
 // Combines the decode splits of one head: the sink logit joins the softmax here, then the gate multiplies the result.
+func.decl @inkling_attn_decode_split(%split_blocks: index, %blocks: index) -> (index)
 func.decl @inkling_attn_span_record(%spans: buffer, %span_cap: index, %s: index) -> (index, index, index, index, offset, i1)
 
 kernel.def export("inkling_attn_merge") @inkling_attn_merge(%span_cap: index) {
@@ -42,7 +43,8 @@ kernel.def export("inkling_attn_merge") @inkling_attn_merge(%span_cap: index) {
     %b_hi = index.div %pos_a, %c64 : index
     %nb = index.sub %b_hi, %b_lo : index
     %nb1 = index.add %nb, %c1 : index
-    %sb = index.assume %split_blocks [range(%split_blocks, 1, 1024)] : index
+    %eff = func.call @inkling_attn_decode_split(%split_blocks, %nb1) : (index, index) -> (index)
+    %sb = index.assume %eff [range(%eff, 1, 1024)] : index
     %sbm = index.sub %sb, %c1 : index
     %nb_r = index.add %nb1, %sbm : index
     %nb_a = index.assume %nb_r [range(%nb_r, 0, 2147483647)] : index
