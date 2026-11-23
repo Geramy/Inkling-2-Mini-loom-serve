@@ -1,0 +1,111 @@
+target.decl @inkling_wave64
+
+// Wave64 version of down.loom. One 8-lane group for each output row, 8 rows for each wave, 2 waves for each workgroup. The results are bit-identical to down.loom.
+
+func.decl @inkling_experts_records(%n: index) -> (index)
+func.decl @inkling_experts_row_bytes(%wtype: index, %units: index) -> (offset)
+func.decl @inkling_experts_unit_load(%wtype: index, %w: buffer, %row: offset, %units: index, %unit: index) -> (vector<16xf16>, f32)
+func.decl @inkling_unit_dot(%codes: vector<16xf16>, %x: vector<16xf16>, %scale: f32) -> (f32)
+
+kernel.def target(@inkling_wave64) export("inkling_experts_down_w64") @inkling_experts_down_w64(%n: index) {
+  %c1 = index.constant 1 : index
+  %c144 = index.constant 144 : index
+  %c128 = index.constant 128 : index
+  %records = func.call pure @inkling_experts_records(%n) : (index) -> (index)
+  kernel.launch.config workgroups(%c144, %records, %c1) workgroup_size(%c128, %c1, %c1) : index
+} launch(%n: index, %wtype: index, %act: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %dout: buffer) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c2 = index.constant 2 : index
+  %c4 = index.constant 4 : index
+  %c8 = index.constant 8 : index
+  %c9 = index.constant 9 : index
+  %c16 = index.constant 16 : index
+  %c72 = index.constant 72 : index
+  %c1152 = index.constant 1152 : index
+  %c2304 = index.constant 2304 : index
+  %origin = index.constant 0 : offset
+  %records_origin = index.constant 16 : offset
+  %rec_raw = kernel.workgroup.id<y> : index
+  %gx = kernel.workgroup.id<x> : index
+  %wave = kernel.subgroup.id : index
+  %lane = kernel.subgroup.lane.id : index
+  %group = index.div %lane, %c8 : index
+  %lr = index.rem %lane, %c8 : index
+  %capacity = func.call pure @inkling_experts_records(%n) : (index) -> (index)
+  %routes = index.mul %n, %c8 : index
+  %rec = index.assume %rec_raw [ge(%rec_raw, 0), lt(%rec_raw, %capacity)] : index
+  %header = buffer.view %tasks[%origin] : buffer -> view<1xi32>
+  %count32 = view.load %header[0] : view<1xi32> -> i32
+  %count = index.cast %count32 : i32 to index
+  %live_record = index.cmp ult, %rec, %count : index
+  scf.if %live_record {
+    %table = buffer.view %tasks[%records_origin] : buffer -> view<[%capacity]x34xi32>
+    %expert32 = view.load %table[%rec, 0] : view<[%capacity]x34xi32> -> i32
+    %live32 = view.load %table[%rec, 1] : view<[%capacity]x34xi32> -> i32
+    %expert_raw = index.cast %expert32 : i32 to index
+    %live_raw = index.cast %live32 : i32 to index
+    %expert = index.assume %expert_raw [ge(%expert_raw, 0), lt(%expert_raw, 128)] : index
+    %live = index.assume %live_raw [ge(%live_raw, 0), le(%live_raw, 8)] : index
+    %row_base = index.mul %gx, %c16 : index
+    %wave_row = index.mul %wave, %c8 : index
+    %row0 = index.add %row_base, %wave_row : index
+    %row = index.add %row0, %group : index
+    %row_bytes = func.call @inkling_experts_row_bytes(%wtype, %c72) : (index, index) -> (offset)
+    %expert_rows = index.mul %expert, %c2304 : index
+    %w_row = index.add %expert_rows, %row : index
+    %w_byte = index.scale %w_row, %row_bytes : index, offset -> offset
+    %zero8 = vector.splatf 0.0 : vector<8xf32>
+    %av = buffer.view %act[%origin] : buffer -> view<[%routes]x[%c1152]xf16>
+    %acc = scf.for %i = [%c0 to %c9 step %c1](%a = %zero8 : vector<8xf32>) -> (vector<8xf32>) {
+      %i8 = index.mul %i, %c8 : index
+      %unit = index.add %i8, %lr : index
+      %codes, %scale = func.call @inkling_experts_unit_load(%wtype, %w, %w_byte, %c72, %unit) : (index, buffer, offset, index, index) -> (vector<16xf16>, f32)
+      %elem_raw = index.mul %unit, %c16 : index
+      %elem0 = index.assume %elem_raw [ge(%elem_raw, 0), le(%elem_raw, 1136)] : index
+      %next = scf.for %t = [%c0 to %c8 step %c1](%v = %a : vector<8xf32>) -> (vector<8xf32>) unroll schedule(linear) {
+        %active = index.cmp ult, %t, %live : index
+        %prior = vector.extract %v[%t] : vector<8xf32> -> f32
+        %updated = scf.if %active -> (f32) {
+          %field = index.add %t, %c2 : index
+          %route32 = view.load %table[%rec, %field] : view<[%capacity]x34xi32> -> i32
+          %route_raw = index.cast %route32 : i32 to index
+          %route = index.assume %route_raw [ge(%route_raw, 0), lt(%route_raw, %routes)] : index
+          %xr = vector.load %av[%route, %elem0] : view<[%routes]x[%c1152]xf16> -> vector<16xf16>
+          %d = func.call @inkling_unit_dot(%codes, %xr, %scale) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
+          %s = scalar.addf %prior, %d : f32
+          scf.yield %s : f32
+        } else {
+          scf.yield %prior : f32
+        }
+        %v2 = vector.insert %updated into %v[%t] : f32, vector<8xf32>
+        scf.yield %v2 : vector<8xf32>
+      }
+      scf.yield %next : vector<8xf32>
+    }
+    %sum = kernel.subgroup.reduce<addf> %acc {cluster_size = 8} : vector<8xf32>
+    %leader = index.cmp eq, %lr, %c0 : index
+    scf.if %leader {
+      %is_fp4 = index.cmp eq, %wtype, %c0 : index
+      %sv = buffer.view %scales[%origin] : buffer -> view<128xf32>
+      %es = view.load %sv[%expert] : view<128xf32> -> f32
+      %one = scalar.constant 1.0 : f32
+      %outer = scf.select %is_fp4, %es, %one : f32
+      %dv = buffer.view %dout[%origin] : buffer -> view<[%routes]x[%c2304]xf32>
+      %row_ok = index.assume %row [ge(%row, 0), lt(%row, 2304)] : index
+      scf.for %t = [%c0 to %c8 step %c1] unroll schedule(linear) {
+        %active = index.cmp ult, %t, %live : index
+        scf.if %active {
+          %field = index.add %t, %c2 : index
+          %route32 = view.load %table[%rec, %field] : view<[%capacity]x34xi32> -> i32
+          %route_raw = index.cast %route32 : i32 to index
+          %route = index.assume %route_raw [ge(%route_raw, 0), lt(%route_raw, %routes)] : index
+          %raw = vector.extract %sum[%t] : vector<8xf32> -> f32
+          %value = scalar.mulf %raw, %outer : f32
+          view.store %value, %dv[%route, %row_ok] : f32, view<[%routes]x[%c2304]xf32>
+        }
+      }
+    }
+  }
+  kernel.return
+}

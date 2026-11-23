@@ -4,11 +4,7 @@
 
 func.decl @inkling_experts_records(%n: index) -> (index)
 
-kernel.def export("inkling_experts_routes") @inkling_experts_routes() {
-  %c1 = index.constant 1 : index
-  %c128 = index.constant 128 : index
-  kernel.launch.config workgroups(%c1, %c1, %c1) workgroup_size(%c128, %c1, %c1) : index
-} launch(%n: index, %tile: index, %ids: buffer, %tasks: buffer) {
+func.def public inline @inkling_experts_route_groups(%n: index, %tile: index, %ids: buffer, %tasks: buffer) {
   %c0 = index.constant 0 : index
   %c1 = index.constant 1 : index
   %c2 = index.constant 2 : index
@@ -89,5 +85,14 @@ kernel.def export("inkling_experts_routes") @inkling_experts_routes() {
     %route_word = index.cast %r : index to i32
     view.store %route_word, %table[%rec, %field] : i32, view<[%records]x[%stride]xi32>
   }
+  func.return
+}
+
+kernel.def export("inkling_experts_routes") @inkling_experts_routes() {
+  %c1 = index.constant 1 : index
+  %c128 = index.constant 128 : index
+  kernel.launch.config workgroups(%c1, %c1, %c1) workgroup_size(%c128, %c1, %c1) : index
+} launch(%n: index, %tile: index, %ids: buffer, %tasks: buffer) {
+  func.call @inkling_experts_route_groups(%n, %tile, %ids, %tasks) : (index, index, buffer, buffer)
   kernel.return
 }

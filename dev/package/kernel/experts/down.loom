@@ -3,6 +3,8 @@
 
 func.decl @inkling_experts_records(%n: index) -> (index)
 func.decl @inkling_experts_row_bytes(%wtype: index, %units: index) -> (offset)
+func.decl @inkling_nvfp4_unit_raw(%w: buffer, %row: offset, %units: index, %unit: index) -> (i32, i32, i32)
+func.decl @inkling_nvfp4_unit_decode(%scales: i32, %v0: i32, %v1: i32, %unit: index) -> (vector<16xf16>, f32)
 func.decl @inkling_experts_unit_load(%wtype: index, %w: buffer, %row: offset, %units: index, %unit: index) -> (vector<16xf16>, f32)
 func.decl @inkling_unit_dot(%codes: vector<16xf16>, %x: vector<16xf16>, %scale: f32) -> (f32)
 
@@ -56,31 +58,75 @@ kernel.def export("inkling_experts_down") @inkling_experts_down(%n: index) {
     %w_byte = index.scale %w_row, %row_bytes : index, offset -> offset
     %zero8 = vector.splatf 0.0 : vector<8xf32>
     %av = buffer.view %act[%origin] : buffer -> view<[%routes]x[%c1152]xf16>
-    %acc = scf.for %i = [%c0 to %c9 step %c1](%a = %zero8 : vector<8xf32>) -> (vector<8xf32>) {
-      %i8 = index.mul %i, %c8 : index
-      %unit = index.add %i8, %lr : index
-      %codes, %scale = func.call @inkling_experts_unit_load(%wtype, %w, %w_byte, %c72, %unit) : (index, buffer, offset, index, index) -> (vector<16xf16>, f32)
-      %elem_raw = index.mul %unit, %c16 : index
-      %elem0 = index.assume %elem_raw [ge(%elem_raw, 0), le(%elem_raw, 1136)] : index
-      %next = scf.for %t = [%c0 to %c8 step %c1](%v = %a : vector<8xf32>) -> (vector<8xf32>) unroll schedule(linear) {
-        %active = index.cmp ult, %t, %live : index
-        %prior = vector.extract %v[%t] : vector<8xf32> -> f32
-        %updated = scf.if %active -> (f32) {
-          %field = index.add %t, %c2 : index
-          %route32 = view.load %table[%rec, %field] : view<[%capacity]x34xi32> -> i32
-          %route_raw = index.cast %route32 : i32 to index
-          %route = index.assume %route_raw [ge(%route_raw, 0), lt(%route_raw, %routes)] : index
-          %xr = vector.load %av[%route, %elem0] : view<[%routes]x[%c1152]xf16> -> vector<16xf16>
-          %d = func.call @inkling_unit_dot(%codes, %xr, %scale) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
-          %s = scalar.addf %prior, %d : f32
-          scf.yield %s : f32
-        } else {
-          scf.yield %prior : f32
-        }
-        %v2 = vector.insert %updated into %v[%t] : f32, vector<8xf32>
-        scf.yield %v2 : vector<8xf32>
+    // Fast path: NVFP4 and one live route. The loads of the next unit are issued before the current unit is decoded. The sums have the same order as in the generic loop.
+    %tag = index.madd %wtype, %c16, %live : index
+    %fast = index.cmp eq, %tag, %c1 : index
+    %acc = scf.if %fast -> (vector<8xf32>) {
+      %route_f32 = view.load %table[%rec, %c2] : view<[%capacity]x34xi32> -> i32
+      %route_f_raw = index.cast %route_f32 : i32 to index
+      %route_f = index.assume %route_f_raw [ge(%route_f_raw, 0), lt(%route_f_raw, %routes)] : index
+      %cG = index.constant 1 : index
+      %cN = index.constant 9 : index
+      %cLast = index.constant 8 : index
+      %k8_0 = index.constant 0 : index
+      %u0_0 = index.add %lr, %k8_0 : index
+      %pre_a0, %pre_b0, %pre_c0 = func.call @inkling_nvfp4_unit_raw(%w, %w_byte, %c72, %u0_0) : (buffer, offset, index, index) -> (i32, i32, i32)
+      %ef0 = index.mul %u0_0, %c16 : index
+      %efa0 = index.assume %ef0 [ge(%ef0, 0), le(%ef0, 1136)] : index
+      %x0_0 = vector.load %av[%route_f, %efa0] : view<[%routes]x[%c1152]xf16> -> vector<16xf16>
+      %zero_f = scalar.constant 0.0 : f32
+      %fa, %r_wa0, %r_wb0, %r_wc0, %r_cx0 = scf.for %i = [%c0 to %cN step %c1](%pa = %zero_f : f32, %wa0 = %pre_a0 : i32, %wb0 = %pre_b0 : i32, %wc0 = %pre_c0 : i32, %cx0 = %x0_0 : vector<16xf16>) -> (f32, i32, i32, i32, vector<16xf16>) {
+        %i1 = index.add %i, %c1 : index
+        %more = index.cmp ult, %i1, %cN : index
+        %inext = scf.select %more, %i1, %cLast : index
+        %ig = index.mul %i, %cG : index
+        %ing = index.mul %inext, %cG : index
+        %ck0 = index.constant 0 : index
+        %ia0 = index.add %ig, %ck0 : index
+        %ib0 = index.mul %ia0, %c8 : index
+        %unit0 = index.add %ib0, %lr : index
+        %na0 = index.add %ing, %ck0 : index
+        %nb0 = index.mul %na0, %c8 : index
+        %unit_n0 = index.add %nb0, %lr : index
+        %n_a0, %n_b0, %n_c0 = func.call @inkling_nvfp4_unit_raw(%w, %w_byte, %c72, %unit_n0) : (buffer, offset, index, index) -> (i32, i32, i32)
+        %en_raw0 = index.mul %unit_n0, %c16 : index
+        %en0 = index.assume %en_raw0 [ge(%en_raw0, 0), le(%en_raw0, 1136)] : index
+        %xn0 = vector.load %av[%route_f, %en0] : view<[%routes]x[%c1152]xf16> -> vector<16xf16>
+        %codes0, %scale0 = func.call @inkling_nvfp4_unit_decode(%wa0, %wb0, %wc0, %unit0) : (i32, i32, i32, index) -> (vector<16xf16>, f32)
+        %d0 = func.call @inkling_unit_dot(%codes0, %cx0, %scale0) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
+        %s0 = scalar.addf %pa, %d0 : f32
+        scf.yield %s0, %n_a0, %n_b0, %n_c0, %xn0 : f32, i32, i32, i32, vector<16xf16>
       }
-      scf.yield %next : vector<8xf32>
+      %fa8 = vector.insert %fa into %zero8[0] : f32, vector<8xf32>
+      scf.yield %fa8 : vector<8xf32>
+    } else {
+      %nacc = scf.for %i = [%c0 to %c9 step %c1](%a = %zero8 : vector<8xf32>) -> (vector<8xf32>) {
+        %i8 = index.mul %i, %c8 : index
+        %unit = index.add %i8, %lr : index
+        %codes, %scale = func.call @inkling_experts_unit_load(%wtype, %w, %w_byte, %c72, %unit) : (index, buffer, offset, index, index) -> (vector<16xf16>, f32)
+        %elem_raw = index.mul %unit, %c16 : index
+        %elem0 = index.assume %elem_raw [ge(%elem_raw, 0), le(%elem_raw, 1136)] : index
+        %next = scf.for %t = [%c0 to %c8 step %c1](%v = %a : vector<8xf32>) -> (vector<8xf32>) unroll schedule(linear) {
+          %active = index.cmp ult, %t, %live : index
+          %prior = vector.extract %v[%t] : vector<8xf32> -> f32
+          %updated = scf.if %active -> (f32) {
+            %field = index.add %t, %c2 : index
+            %route32 = view.load %table[%rec, %field] : view<[%capacity]x34xi32> -> i32
+            %route_raw = index.cast %route32 : i32 to index
+            %route = index.assume %route_raw [ge(%route_raw, 0), lt(%route_raw, %routes)] : index
+            %xr = vector.load %av[%route, %elem0] : view<[%routes]x[%c1152]xf16> -> vector<16xf16>
+            %d = func.call @inkling_unit_dot(%codes, %xr, %scale) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
+            %s = scalar.addf %prior, %d : f32
+            scf.yield %s : f32
+          } else {
+            scf.yield %prior : f32
+          }
+          %v2 = vector.insert %updated into %v[%t] : f32, vector<8xf32>
+          scf.yield %v2 : vector<8xf32>
+        }
+        scf.yield %next : vector<8xf32>
+      }
+      scf.yield %nacc : vector<8xf32>
     }
     %sum = kernel.subgroup.reduce<addf> %acc {cluster_size = 8} : vector<8xf32>
     %leader = index.cmp eq, %lr, %c0 : index

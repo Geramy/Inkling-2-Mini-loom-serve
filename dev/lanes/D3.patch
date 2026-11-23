@@ -1,0 +1,1337 @@
+diff -ruN a/package/dispatch/hooks_experts.loom b/package/dispatch/hooks_experts.loom
+--- a/package/dispatch/hooks_experts.loom	2026-11-22 16:31:56.375953700 -0800
++++ b/package/dispatch/hooks_experts.loom	2026-11-22 16:31:57.327196800 -0800
+@@ -12,6 +12,8 @@
+ 
+ kernel.decl @inkling_experts_routes() launch(%n: index, %tile: index, %ids: buffer, %tasks: buffer)
+ 
++kernel.decl @inkling_router_decode() launch(%n: index, %tile: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer, %tasks: buffer)
++
+ kernel.decl @inkling_router_logits(%n: index) launch(%n: index, %x: buffer, %rw: buffer, %logits: buffer, %x16: buffer)
+ 
+ kernel.decl @inkling_router_select(%n: index) launch(%n: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer)
+@@ -31,7 +33,6 @@
+   %w3 = command.parameter %parameters, "blk.{}.exp_probs_b.bias"[%layer] : view<128xf32>
+   %wb4 = command.parameter.base %w3 : view<128xf32> -> buffer
+   kernel.launch @inkling_router_logits[%cap](%cap, %xn, %wb2, %small, %gate) : [index](index, buffer, buffer, buffer, buffer)
+-  kernel.launch @inkling_router_select[%cap](%cap, %small, %wb4, %ab, %ob) : [index](index, buffer, buffer, buffer, buffer)
+   command.return
+ }
+ 
+@@ -57,6 +58,7 @@
+   %is_q8e = index.cmp eq, %dense, %i0 : index
+   %i48 = index.constant 48 : index
+   %wide = index.cmp uge, %cap, %i48 : index
++  %decode_rows = index.cmp ule, %cap, %i8 : index
+   %i64 = index.constant 64 : index
+   %tasks = buffer.alloca<global> align(256) %tasks_total : buffer
+   %act = buffer.alloca<global> align(256) %act_bytes : buffer
+@@ -89,15 +91,25 @@
+   }
+     scf.yield %q8gu, %q8dn, %wb2, %wb2 : buffer, buffer, buffer, buffer
+   }
++  scf.if %decode_rows {
++  kernel.launch @inkling_router_decode(%cap, %i8, %small, %wb2, %ab, %ob, %tasks) : (index, index, buffer, buffer, buffer, buffer, buffer)
++  } else {
++  kernel.launch @inkling_router_select[%cap](%cap, %small, %wb2, %ab, %ob) : [index](index, buffer, buffer, buffer, buffer)
++  }
+   scf.if %wide {
+   kernel.launch @inkling_experts_routes(%cap, %i64, %ab, %tasks) : (index, index, buffer, buffer)
+   kernel.launch @inkling_experts_gate_up_wmma[%cap](%cap, %wtype, %gate, %tasks, %gu3, %gus5, %act) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+   kernel.launch @inkling_experts_down_wmma[%cap](%cap, %wtype, %act, %tasks, %dn4, %dns6, %dout) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+   } else {
++  scf.if %decode_rows {
++  kernel.launch @inkling_experts_gate_up[%cap](%cap, %wtype, %gate, %tasks, %gu3, %gus5, %act) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
++  kernel.launch @inkling_experts_down[%cap](%cap, %wtype, %act, %tasks, %dn4, %dns6, %dout) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
++  } else {
+   kernel.launch @inkling_experts_routes(%cap, %i8, %ab, %tasks) : (index, index, buffer, buffer)
+   kernel.launch @inkling_experts_gate_up[%cap](%cap, %wtype, %gate, %tasks, %gu3, %gus5, %act) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+   kernel.launch @inkling_experts_down[%cap](%cap, %wtype, %act, %tasks, %dn4, %dns6, %dout) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+   }
++  }
+   kernel.launch @inkling_experts_combine[%cap](%cap, %dout, %ob, %y) : [index](index, buffer, buffer, buffer)
+   command.return
+ }
+diff -ruN a/package/dispatch/hooks_mix.loom b/package/dispatch/hooks_mix.loom
+--- a/package/dispatch/hooks_mix.loom	2026-11-22 16:31:56.402463400 -0800
++++ b/package/dispatch/hooks_mix.loom	2026-11-22 16:31:57.353015500 -0800
+@@ -6,8 +6,12 @@
+ 
+ kernel.decl @inkling_ctrl_apply(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %spans: buffer, %x: buffer, %m: buffer, %forget0: buffer, %forget1: buffer, %forget2: buffer, %gain0: buffer, %gain1: buffer, %gain2: buffer, %z: buffer, %out: buffer)
+ 
++kernel.decl @inkling_ctrl_apply_z(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %spans: buffer, %x: buffer, %m: buffer, %forget0: buffer, %forget1: buffer, %forget2: buffer, %gain0: buffer, %gain1: buffer, %gain2: buffer, %rinv_x: buffer, %rinv_m: buffer, %part: buffer, %out: buffer)
++
+ kernel.decl @inkling_ctrl_down(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %spans: buffer, %x: buffer, %m: buffer, %down0: buffer, %down1: buffer, %down2: buffer, %part: buffer)
+ 
++kernel.decl @inkling_ctrl_down_msg(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %blocks_off: index, %cur_off: index, %spans: buffer, %x: buffer, %bank: buffer, %query: buffer, %down0: buffer, %down1: buffer, %down2: buffer, %msg: buffer, %rinv_m: buffer, %part: buffer)
++
+ kernel.decl @inkling_ctrl_z(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %spans: buffer, %rinv_x: buffer, %rinv_m: buffer, %part: buffer, %z: buffer)
+ 
+ kernel.decl @inkling_mix_states(%cap: index, %ncommit: index, %nq: index) launch(%cap_in: index, %ncommit_in: index, %nq: index, %nb_in: index, %block_stride_in: index, %col_stride_in: index, %mode_in: index, %w_stride_in: index, %sel_on_in: index, %blocks_off: index, %cur_off: index, %out_off: index, %commit_site_in: index, %commit_visit_in: index, %spans: buffer, %sel: buffer, %blocks: buffer, %cur: buffer, %query: buffer, %norm_w: buffer, %out: buffer, %rinv_out: buffer, %commit_state: buffer, %commit_a: buffer)
+@@ -224,23 +228,24 @@
+   %capnc2 = index.mul %cap, %i3 : index
+   %z_bytes = index.scale %capnc2, %o256 : index, offset -> offset
+   %i1 = index.constant 1 : index
+-  %i4 = index.constant 4 : index
+   %prev_pass = index.sub %pass, %i1 : index
+   %i2 = index.constant 2 : index
+   %bank_set0 = index.mul %prev_pass, %i2 : index
+   %bank_set = index.mul %bank_set0, %cE : index
+   %bank_cur = index.add %bank_set, %cE : index
+-  %i0 = index.constant 0 : index
+   %dense = config.get @inkling.dense_type : index
++  %i0 = index.constant 0 : index
+   %ctrl_f32 = index.cmp eq, %dense, %i0 : index
+   %xstep = scf.select %g, %i1, %i0 : index
++  %i8 = index.constant 8 : index
++  %decode_rows = index.cmp ule, %cap, %i8 : index
++  %i4 = index.constant 4 : index
+   %msg = buffer.alloca<global> align(256) %msg_bytes : buffer
+   %rinv_m = buffer.alloca<global> align(256) %rinv_bytes : buffer
+   %part = buffer.alloca<global> align(256) %part_bytes : buffer
+   %z = buffer.alloca<global> align(256) %z_bytes : buffer
+   %w1 = command.parameter %parameters, "blk.{}.loop_msg_query.weight"[%layer] : view<4x2304xf32>
+   %wb2 = command.parameter.base %w1 : view<4x2304xf32> -> buffer
+-  kernel.launch @inkling_mix_states[%cap, %i0, %i4](%cap, %i0, %i4, %i1, %cE, %cE, %i0, %i0, %i0, %bank_set, %bank_cur, %i0, %i0, %i0, %span_table, %xn, %bank, %bank, %wb2, %xn, %msg, %rinv_m, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+   %pick3 = scf.if %ctrl_f32 -> (buffer) {
+   %w4 = command.parameter %parameters, "blk.{}.loop_q_ctrl_down.weight"[%layer] : view<64x4608xf32>
+   %wb5 = command.parameter.base %w4 : view<64x4608xf32> -> buffer
+@@ -322,9 +327,15 @@
+   %wb47 = command.parameter.base %w46 : view<2304x64xbf16> -> buffer
+     scf.yield %wb47 : buffer
+   }
++  scf.if %decode_rows {
++  kernel.launch @inkling_ctrl_down_msg[%cap, %i3](%cap, %i3, %i0, %xstep, %i0, %cE, %bank_set, %bank_cur, %span_table, %xn, %bank, %wb2, %pick3, %pick18, %pick33, %msg, %rinv_m, %part) : [index, index](index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
++  kernel.launch @inkling_ctrl_apply_z[%cap, %i3](%cap, %i3, %i0, %xstep, %i0, %cE, %span_table, %xn, %msg, %pick8, %pick23, %pick38, %pick13, %pick28, %pick43, %small, %rinv_m, %part, %x) : [index, index](index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
++  } else {
++  kernel.launch @inkling_mix_states[%cap, %i0, %i4](%cap, %i0, %i4, %i1, %cE, %cE, %i0, %i0, %i0, %bank_set, %bank_cur, %i0, %i0, %i0, %span_table, %xn, %bank, %bank, %wb2, %xn, %msg, %rinv_m, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+   kernel.launch @inkling_ctrl_down[%cap, %i3](%cap, %i3, %i0, %xstep, %i0, %cE, %span_table, %xn, %msg, %pick3, %pick18, %pick33, %part) : [index, index](index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+   kernel.launch @inkling_ctrl_z[%cap, %i3](%cap, %i3, %i0, %xstep, %i0, %span_table, %small, %rinv_m, %part, %z) : [index, index](index, index, index, index, index, buffer, buffer, buffer, buffer, buffer)
+   kernel.launch @inkling_ctrl_apply[%cap, %i3](%cap, %i3, %i0, %xstep, %i0, %cE, %span_table, %xn, %msg, %pick8, %pick23, %pick38, %pick13, %pick28, %pick43, %z, %x) : [index, index](index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
++  }
+   command.return
+ }
+ 
+@@ -346,23 +357,24 @@
+   %part_bytes = index.scale %parts, %o256 : index, offset -> offset
+   %capnc2 = index.mul %cap, %i1 : index
+   %z_bytes = index.scale %capnc2, %o256 : index, offset -> offset
+-  %i4 = index.constant 4 : index
+   %prev_pass = index.sub %pass, %i1 : index
+   %i2 = index.constant 2 : index
+   %bank_set0 = index.mul %prev_pass, %i2 : index
+   %bank_set = index.mul %bank_set0, %cE : index
+   %bank_cur = index.add %bank_set, %cE : index
+-  %i0 = index.constant 0 : index
+   %dense = config.get @inkling.dense_type : index
++  %i0 = index.constant 0 : index
+   %ctrl_f32 = index.cmp eq, %dense, %i0 : index
+   %i3 = index.constant 3 : index
++  %i8 = index.constant 8 : index
++  %decode_rows = index.cmp ule, %cap, %i8 : index
++  %i4 = index.constant 4 : index
+   %msg = buffer.alloca<global> align(256) %msg_bytes : buffer
+   %rinv_m = buffer.alloca<global> align(256) %rinv_bytes : buffer
+   %part = buffer.alloca<global> align(256) %part_bytes : buffer
+   %z = buffer.alloca<global> align(256) %z_bytes : buffer
+   %w1 = command.parameter %parameters, "blk.{}.loop_msg_query.weight"[%layer] : view<4x2304xf32>
+   %wb2 = command.parameter.base %w1 : view<4x2304xf32> -> buffer
+-  kernel.launch @inkling_mix_states[%cap, %i0, %i4](%cap, %i0, %i4, %i1, %cE, %cE, %i0, %i0, %i0, %bank_set, %bank_cur, %i0, %i0, %i0, %span_table, %xn, %bank, %bank, %wb2, %xn, %msg, %rinv_m, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+   %pick3 = scf.if %ctrl_f32 -> (buffer) {
+   %w4 = command.parameter %parameters, "blk.{}.loop_ffn_ctrl_down.weight"[%layer] : view<64x4608xf32>
+   %wb5 = command.parameter.base %w4 : view<64x4608xf32> -> buffer
+@@ -390,9 +402,15 @@
+   %wb17 = command.parameter.base %w16 : view<2304x64xbf16> -> buffer
+     scf.yield %wb17 : buffer
+   }
++  scf.if %decode_rows {
++  kernel.launch @inkling_ctrl_down_msg[%cap, %i1](%cap, %i1, %i0, %i0, %i3, %cE, %bank_set, %bank_cur, %span_table, %xn, %bank, %wb2, %pick3, %pick3, %pick3, %msg, %rinv_m, %part) : [index, index](index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
++  kernel.launch @inkling_ctrl_apply_z[%cap, %i1](%cap, %i1, %i0, %i0, %i3, %cE, %span_table, %xn, %msg, %pick8, %pick8, %pick8, %pick13, %pick13, %pick13, %small, %rinv_m, %part, %x) : [index, index](index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
++  } else {
++  kernel.launch @inkling_mix_states[%cap, %i0, %i4](%cap, %i0, %i4, %i1, %cE, %cE, %i0, %i0, %i0, %bank_set, %bank_cur, %i0, %i0, %i0, %span_table, %xn, %bank, %bank, %wb2, %xn, %msg, %rinv_m, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+   kernel.launch @inkling_ctrl_down[%cap, %i1](%cap, %i1, %i0, %i0, %i3, %cE, %span_table, %xn, %msg, %pick3, %pick3, %pick3, %part) : [index, index](index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+   kernel.launch @inkling_ctrl_z[%cap, %i1](%cap, %i1, %i0, %i0, %i3, %span_table, %small, %rinv_m, %part, %z) : [index, index](index, index, index, index, index, buffer, buffer, buffer, buffer, buffer)
+   kernel.launch @inkling_ctrl_apply[%cap, %i1](%cap, %i1, %i0, %i0, %i3, %cE, %span_table, %xn, %msg, %pick8, %pick8, %pick8, %pick13, %pick13, %pick13, %z, %x) : [index, index](index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
++  }
+   command.return
+ }
+ 
+diff -ruN a/package/dispatch/kernel_decls.loom b/package/dispatch/kernel_decls.loom
+--- a/package/dispatch/kernel_decls.loom	2026-11-22 16:31:56.381951100 -0800
++++ b/package/dispatch/kernel_decls.loom	2026-11-22 16:31:57.334010300 -0800
+@@ -64,6 +64,8 @@
+ 
+ kernel.decl @inkling_router_select(%n: index) launch(%n: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer)
+ 
++kernel.decl @inkling_router_decode() launch(%n: index, %tile: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer, %tasks: buffer)
++
+ kernel.decl @inkling_experts_routes() launch(%n: index, %tile: index, %ids: buffer, %tasks: buffer)
+ 
+ kernel.decl @inkling_conv_res(%cap: index) launch(%cap_in: index, %site_in: index, %visit_in: index, %push_in: index, %push_block_in: index, %block_stride_in: index, %bank_on_in: index, %bank_origin_in: index, %spans: buffer, %state: buffer, %a: buffer, %conv_w: buffer, %cur: buffer, %blocks: buffer, %bank: buffer)
+@@ -76,6 +78,10 @@
+ 
+ kernel.decl @inkling_ctrl_apply(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %spans: buffer, %x: buffer, %m: buffer, %forget0: buffer, %forget1: buffer, %forget2: buffer, %gain0: buffer, %gain1: buffer, %gain2: buffer, %z: buffer, %out: buffer)
+ 
++kernel.decl @inkling_ctrl_apply_z(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %spans: buffer, %x: buffer, %m: buffer, %forget0: buffer, %forget1: buffer, %forget2: buffer, %gain0: buffer, %gain1: buffer, %gain2: buffer, %rinv_x: buffer, %rinv_m: buffer, %part: buffer, %out: buffer)
++
++kernel.decl @inkling_ctrl_down_msg(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %blocks_off: index, %cur_off: index, %spans: buffer, %x: buffer, %bank: buffer, %query: buffer, %down0: buffer, %down1: buffer, %down2: buffer, %msg: buffer, %rinv_m: buffer, %part: buffer)
++
+ kernel.decl @inkling_mix_norm(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %col_stride_in: index, %w_stride_in: index, %spans: buffer, %x: buffer, %w: buffer, %out: buffer)
+ 
+ kernel.decl @inkling_mix_states(%cap: index, %ncommit: index, %nq: index) launch(%cap_in: index, %ncommit_in: index, %nq: index, %nb_in: index, %block_stride_in: index, %col_stride_in: index, %mode_in: index, %w_stride_in: index, %sel_on_in: index, %blocks_off: index, %cur_off: index, %out_off: index, %commit_site_in: index, %commit_visit_in: index, %spans: buffer, %sel: buffer, %blocks: buffer, %cur: buffer, %query: buffer, %norm_w: buffer, %out: buffer, %rinv_out: buffer, %commit_state: buffer, %commit_a: buffer)
+diff -ruN a/package/kernel/experts/router.loom b/package/kernel/experts/router.loom
+--- a/package/kernel/experts/router.loom	2026-11-22 16:31:56.581972800 -0800
++++ b/package/kernel/experts/router.loom	2026-11-22 16:31:57.198905000 -0800
+@@ -35,7 +35,8 @@
+   %lane = kernel.subgroup.lane.id : index
+   %xv = buffer.view %x[%origin] : buffer -> view<[%n]x[%c2304]xf32>
+   %t0 = index.mul %gy, %c4 : index
+-  %first = index.cmp eq, %gx, %c0 : index
++  %c5 = index.constant 5 : index
++  %first = index.cmp ult, %tid, %c5 : index
+   scf.if %first {
+     %x16v = buffer.view %x16[%origin] : buffer -> view<[%n]x[%c2304]xf16>
+     scf.for %j = [%c0 to %c4 step %c1] unroll schedule(linear) {
+@@ -43,7 +44,9 @@
+       %live = index.cmp ult, %token_raw, %n : index
+       scf.if %live {
+         %token = index.assume %token_raw [ge(%token_raw, 0), lt(%token_raw, %n)] : index
+-        scf.for %u = [%tid to %c144 step %c128] {
++        %u = index.madd %tid, %c32, %gx : index
++        %pack = index.cmp ult, %u, %c144 : index
++        scf.if %pack {
+           %e_raw = index.mul %u, %c16 : index
+           %e = index.assume %e_raw [ge(%e_raw, 0), le(%e_raw, 2288)] : index
+           %e1 = index.add %e, %c4 : index
+@@ -86,7 +89,7 @@
+   %lv = buffer.view %logits[%origin] : buffer -> view<[%n]x128xf32>
+   %zero4 = vector.splatf 0.0 : vector<4xf32>
+   %zero = scalar.constant 0.0 : f32
+-  %a0, %a1, %a2, %a3 = scf.for %i = [%c0 to %c18 step %c1](%p0 = %zero4 : vector<4xf32>, %p1 = %zero4 : vector<4xf32>, %p2 = %zero4 : vector<4xf32>, %p3 = %zero4 : vector<4xf32>) -> (vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>) {
++  %a0, %a1, %a2, %a3 = scf.for %i = [%c0 to %c18 step %c1](%p0 = %zero4 : vector<4xf32>, %p1 = %zero4 : vector<4xf32>, %p2 = %zero4 : vector<4xf32>, %p3 = %zero4 : vector<4xf32>) -> (vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>) unroll {
+     %k = index.madd %i, %c32, %lane : index
+     %k4_raw = index.mul %k, %c4 : index
+     %k4 = index.assume %k4_raw [ge(%k4_raw, 0), le(%k4_raw, 2300)] : index
+@@ -157,7 +160,103 @@
+   kernel.return
+ }
+ 
+-// One wave per token, four tokens per workgroup. A lane owns 4 consecutive experts. Ties go to the lower expert index.
++func.decl @inkling_experts_route_groups(%n: index, %tile: index, %ids: buffer, %tasks: buffer)
++
++// Top 8 of one token: a wave, a lane owns 4 consecutive experts. Ties go to the lower expert index.
++func.def public inline @inkling_router_select_one(%n: index, %token_raw: index, %lane: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer) {
++  %c0 = index.constant 0 : index
++  %c1 = index.constant 1 : index
++  %c2 = index.constant 2 : index
++  %c3 = index.constant 3 : index
++  %c4 = index.constant 4 : index
++  %c8 = index.constant 8 : index
++  %origin = index.constant 0 : offset
++  %token = index.assume %token_raw [ge(%token_raw, 0), lt(%token_raw, %n)] : index
++  %lv = buffer.view %logits[%origin] : buffer -> view<[%n]x128xf32>
++  %bv = buffer.view %bias[%origin] : buffer -> view<128xf32>
++  %idv = buffer.view %ids[%origin] : buffer -> view<[%n]x8xi32>
++  %wv = buffer.view %wts[%origin] : buffer -> view<[%n]x8xf32>
++  %e0_raw = index.mul %lane, %c4 : index
++  %e0 = index.assume %e0_raw [ge(%e0_raw, 0), le(%e0_raw, 124)] : index
++  %l4 = vector.load %lv[%token, %e0] : view<[%n]x128xf32> -> vector<4xf32>
++  %b4 = vector.load %bv[%e0] : view<128xf32> -> vector<4xf32>
++  %p4 = vector.logisticf<afn> %l4 : vector<4xf32>
++  %sel4 = vector.addf %p4, %b4 : vector<4xf32>
++  %ninf = scalar.constant -3.4028234663852886e+38 : f32
++  %big = scalar.constant 1000 : i32
++  %zero = scalar.constant 0.0 : f32
++  %zero8 = vector.splatf 0.0 : vector<8xf32>
++  %izero8 = vector.splati 0 : vector<8xi32>
++  %base32 = index.cast %e0 : index to i32
++  %sel_final, %pw, %pid = scf.for %r = [%c0 to %c8 step %c1](%sel = %sel4 : vector<4xf32>, %pv = %zero8 : vector<8xf32>, %iv = %izero8 : vector<8xi32>) -> (vector<4xf32>, vector<8xf32>, vector<8xi32>) unroll schedule(linear) {
++    %s0 = vector.extract %sel[0] : vector<4xf32> -> f32
++    %s1 = vector.extract %sel[1] : vector<4xf32> -> f32
++    %s2 = vector.extract %sel[2] : vector<4xf32> -> f32
++    %s3 = vector.extract %sel[3] : vector<4xf32> -> f32
++    %g01 = scalar.cmpf ogt, %s1, %s0 : f32
++    %v01 = scf.select %g01, %s1, %s0 : f32
++    %k0 = scalar.constant 0 : i32
++    %k1 = scalar.constant 1 : i32
++    %k2 = scalar.constant 2 : i32
++    %k3 = scalar.constant 3 : i32
++    %i01 = scf.select %g01, %k1, %k0 : i32
++    %g23 = scalar.cmpf ogt, %s3, %s2 : f32
++    %v23 = scf.select %g23, %s3, %s2 : f32
++    %i23 = scf.select %g23, %k3, %k2 : i32
++    %g = scalar.cmpf ogt, %v23, %v01 : f32
++    %bv_local = scf.select %g, %v23, %v01 : f32
++    %bi_local = scf.select %g, %i23, %i01 : i32
++    %m = kernel.subgroup.reduce<maxnumf> %bv_local : f32
++    %hit = scalar.cmpf oeq, %bv_local, %m : f32
++    %mask = kernel.subgroup.vote.ballot %hit : i1 -> i32
++    %win_lane_raw = scalar.cttzi %mask : i32
++    %win_lane = scalar.assume %win_lane_raw [range(%win_lane_raw, 0, 31)] : i32
++    %gi = scalar.addi %base32, %bi_local : i32
++    %win = kernel.subgroup.broadcast %gi from %win_lane : i32, i32
++    %rel = scalar.subi %win, %base32 : i32
++    %p0 = vector.extract %p4[0] : vector<4xf32> -> f32
++    %p1 = vector.extract %p4[1] : vector<4xf32> -> f32
++    %p2 = vector.extract %p4[2] : vector<4xf32> -> f32
++    %p3 = vector.extract %p4[3] : vector<4xf32> -> f32
++    %is0 = scalar.cmpi eq, %rel, %k0 : i32
++    %is1 = scalar.cmpi eq, %rel, %k1 : i32
++    %is2 = scalar.cmpi eq, %rel, %k2 : i32
++    %is3 = scalar.cmpi eq, %rel, %k3 : i32
++    %pb0 = scalar.cmpi eq, %bi_local, %k0 : i32
++    %pb1 = scalar.cmpi eq, %bi_local, %k1 : i32
++    %pb2 = scalar.cmpi eq, %bi_local, %k2 : i32
++    %q0 = scf.select %pb0, %p0, %p3 : f32
++    %q1 = scf.select %pb1, %p1, %q0 : f32
++    %q2 = scf.select %pb2, %p2, %q1 : f32
++    %pwin = kernel.subgroup.broadcast %q2 from %win_lane : f32, i32
++    %n0 = scf.select %is0, %ninf, %s0 : f32
++    %n1 = scf.select %is1, %ninf, %s1 : f32
++    %n2 = scf.select %is2, %ninf, %s2 : f32
++    %n3 = scf.select %is3, %ninf, %s3 : f32
++    %ns = vector.from_elements %n0, %n1, %n2, %n3 : vector<4xf32>
++    %pv2 = vector.insert %pwin into %pv[%r] : f32, vector<8xf32>
++    %iv2 = vector.insert %win into %iv[%r] : i32, vector<8xi32>
++    scf.yield %ns, %pv2, %iv2 : vector<4xf32>, vector<8xf32>, vector<8xi32>
++  }
++  %total = vector.reduce<addf> %pw, %zero : vector<8xf32>, f32
++  %eps = scalar.constant 1.0e-20 : f32
++  %den = scalar.addf %total, %eps : f32
++  %scale = scalar.constant 8.0 : f32
++  %leader = index.cmp eq, %lane, %c0 : index
++  scf.if %leader {
++    scf.for %r = [%c0 to %c8 step %c1] unroll schedule(linear) {
++      %p = vector.extract %pw[%r] : vector<8xf32> -> f32
++      %id = vector.extract %pid[%r] : vector<8xi32> -> i32
++      %q = scalar.divf %p, %den : f32
++      %w = scalar.mulf %q, %scale : f32
++      view.store %id, %idv[%token, %r] : i32, view<[%n]x8xi32>
++      view.store %w, %wv[%token, %r] : f32, view<[%n]x8xf32>
++    }
++  }
++  func.return
++}
++
++// One wave per token, four tokens per workgroup.
+ kernel.def export("inkling_router_select") @inkling_router_select(%n: index) {
+   %c1 = index.constant 1 : index
+   %c3 = index.constant 3 : index
+@@ -167,97 +266,31 @@
+   %groups = index.div %rounded, %c4 : index
+   kernel.launch.config workgroups(%groups, %c1, %c1) workgroup_size(%c128, %c1, %c1) : index
+ } launch(%n: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer) {
+-  %c0 = index.constant 0 : index
+-  %c1 = index.constant 1 : index
+-  %c2 = index.constant 2 : index
+-  %c3 = index.constant 3 : index
+   %c4 = index.constant 4 : index
+-  %c8 = index.constant 8 : index
+-  %origin = index.constant 0 : offset
+   %gx = kernel.workgroup.id<x> : index
+   %wave = kernel.subgroup.id : index
+   %lane = kernel.subgroup.lane.id : index
+   %token_raw = index.madd %gx, %c4, %wave : index
+   %live = index.cmp ult, %token_raw, %n : index
+   scf.if %live {
+-    %token = index.assume %token_raw [ge(%token_raw, 0), lt(%token_raw, %n)] : index
+-    %lv = buffer.view %logits[%origin] : buffer -> view<[%n]x128xf32>
+-    %bv = buffer.view %bias[%origin] : buffer -> view<128xf32>
+-    %idv = buffer.view %ids[%origin] : buffer -> view<[%n]x8xi32>
+-    %wv = buffer.view %wts[%origin] : buffer -> view<[%n]x8xf32>
+-    %e0_raw = index.mul %lane, %c4 : index
+-    %e0 = index.assume %e0_raw [ge(%e0_raw, 0), le(%e0_raw, 124)] : index
+-    %l4 = vector.load %lv[%token, %e0] : view<[%n]x128xf32> -> vector<4xf32>
+-    %b4 = vector.load %bv[%e0] : view<128xf32> -> vector<4xf32>
+-    %p4 = vector.logisticf<afn> %l4 : vector<4xf32>
+-    %sel4 = vector.addf %p4, %b4 : vector<4xf32>
+-    %ninf = scalar.constant -3.4028234663852886e+38 : f32
+-    %big = scalar.constant 1000 : i32
+-    %zero = scalar.constant 0.0 : f32
+-    %zero8 = vector.splatf 0.0 : vector<8xf32>
+-    %izero8 = vector.splati 0 : vector<8xi32>
+-    %base32 = index.cast %e0 : index to i32
+-    %sel_final, %pw, %pid = scf.for %r = [%c0 to %c8 step %c1](%sel = %sel4 : vector<4xf32>, %pv = %zero8 : vector<8xf32>, %iv = %izero8 : vector<8xi32>) -> (vector<4xf32>, vector<8xf32>, vector<8xi32>) unroll schedule(linear) {
+-      %s0 = vector.extract %sel[0] : vector<4xf32> -> f32
+-      %s1 = vector.extract %sel[1] : vector<4xf32> -> f32
+-      %s2 = vector.extract %sel[2] : vector<4xf32> -> f32
+-      %s3 = vector.extract %sel[3] : vector<4xf32> -> f32
+-      %g01 = scalar.cmpf ogt, %s1, %s0 : f32
+-      %v01 = scf.select %g01, %s1, %s0 : f32
+-      %k0 = scalar.constant 0 : i32
+-      %k1 = scalar.constant 1 : i32
+-      %k2 = scalar.constant 2 : i32
+-      %k3 = scalar.constant 3 : i32
+-      %i01 = scf.select %g01, %k1, %k0 : i32
+-      %g23 = scalar.cmpf ogt, %s3, %s2 : f32
+-      %v23 = scf.select %g23, %s3, %s2 : f32
+-      %i23 = scf.select %g23, %k3, %k2 : i32
+-      %g = scalar.cmpf ogt, %v23, %v01 : f32
+-      %bv_local = scf.select %g, %v23, %v01 : f32
+-      %bi_local = scf.select %g, %i23, %i01 : i32
+-      %m = kernel.subgroup.reduce<maxnumf> %bv_local : f32
+-      %hit = scalar.cmpf oeq, %bv_local, %m : f32
+-      %gi = scalar.addi %base32, %bi_local : i32
+-      %cand = scf.select %hit, %gi, %big : i32
+-      %win = kernel.subgroup.reduce<minui> %cand : i32
+-      %rel = scalar.subi %win, %base32 : i32
+-      %p0 = vector.extract %p4[0] : vector<4xf32> -> f32
+-      %p1 = vector.extract %p4[1] : vector<4xf32> -> f32
+-      %p2 = vector.extract %p4[2] : vector<4xf32> -> f32
+-      %p3 = vector.extract %p4[3] : vector<4xf32> -> f32
+-      %is0 = scalar.cmpi eq, %rel, %k0 : i32
+-      %is1 = scalar.cmpi eq, %rel, %k1 : i32
+-      %is2 = scalar.cmpi eq, %rel, %k2 : i32
+-      %is3 = scalar.cmpi eq, %rel, %k3 : i32
+-      %q0 = scf.select %is0, %p0, %zero : f32
+-      %q1 = scf.select %is1, %p1, %q0 : f32
+-      %q2 = scf.select %is2, %p2, %q1 : f32
+-      %q3 = scf.select %is3, %p3, %q2 : f32
+-      %pwin = kernel.subgroup.reduce<addf> %q3 : f32
+-      %n0 = scf.select %is0, %ninf, %s0 : f32
+-      %n1 = scf.select %is1, %ninf, %s1 : f32
+-      %n2 = scf.select %is2, %ninf, %s2 : f32
+-      %n3 = scf.select %is3, %ninf, %s3 : f32
+-      %ns = vector.from_elements %n0, %n1, %n2, %n3 : vector<4xf32>
+-      %pv2 = vector.insert %pwin into %pv[%r] : f32, vector<8xf32>
+-      %iv2 = vector.insert %win into %iv[%r] : i32, vector<8xi32>
+-      scf.yield %ns, %pv2, %iv2 : vector<4xf32>, vector<8xf32>, vector<8xi32>
+-    }
+-    %total = vector.reduce<addf> %pw, %zero : vector<8xf32>, f32
+-    %eps = scalar.constant 1.0e-20 : f32
+-    %den = scalar.addf %total, %eps : f32
+-    %scale = scalar.constant 8.0 : f32
+-    %leader = index.cmp eq, %lane, %c0 : index
+-    scf.if %leader {
+-      scf.for %r = [%c0 to %c8 step %c1] unroll schedule(linear) {
+-        %p = vector.extract %pw[%r] : vector<8xf32> -> f32
+-        %id = vector.extract %pid[%r] : vector<8xi32> -> i32
+-        %q = scalar.divf %p, %den : f32
+-        %w = scalar.mulf %q, %scale : f32
+-        view.store %id, %idv[%token, %r] : i32, view<[%n]x8xi32>
+-        view.store %w, %wv[%token, %r] : f32, view<[%n]x8xf32>
+-      }
+-    }
++    func.call @inkling_router_select_one(%n, %token_raw, %lane, %logits, %bias, %ids, %wts) : (index, index, index, buffer, buffer, buffer, buffer)
++  }
++  kernel.return
++}
++
++// Decode (n <= 16): top 8 and the expert routes in one workgroup. The waves select the tokens, a barrier, then the route table.
++kernel.def export("inkling_router_decode") @inkling_router_decode() {
++  %c1 = index.constant 1 : index
++  %c128 = index.constant 128 : index
++  kernel.launch.config workgroups(%c1, %c1, %c1) workgroup_size(%c128, %c1, %c1) : index
++} launch(%n: index, %tile: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer, %tasks: buffer) {
++  %c4 = index.constant 4 : index
++  %wave = kernel.subgroup.id : index
++  %lane = kernel.subgroup.lane.id : index
++  scf.for %token = [%wave to %n step %c4] {
++    func.call @inkling_router_select_one(%n, %token, %lane, %logits, %bias, %ids, %wts) : (index, index, index, buffer, buffer, buffer, buffer)
+   }
++  kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
++  func.call @inkling_experts_route_groups(%n, %tile, %ids, %tasks) : (index, index, buffer, buffer)
+   kernel.return
+ }
+diff -ruN a/package/kernel/experts/routes.loom b/package/kernel/experts/routes.loom
+--- a/package/kernel/experts/routes.loom	2026-11-22 16:31:56.593977200 -0800
++++ b/package/kernel/experts/routes.loom	2026-11-22 16:31:57.196905000 -0800
+@@ -4,11 +4,7 @@
+ 
+ func.decl @inkling_experts_records(%n: index) -> (index)
+ 
+-kernel.def export("inkling_experts_routes") @inkling_experts_routes() {
+-  %c1 = index.constant 1 : index
+-  %c128 = index.constant 128 : index
+-  kernel.launch.config workgroups(%c1, %c1, %c1) workgroup_size(%c128, %c1, %c1) : index
+-} launch(%n: index, %tile: index, %ids: buffer, %tasks: buffer) {
++func.def public inline @inkling_experts_route_groups(%n: index, %tile: index, %ids: buffer, %tasks: buffer) {
+   %c0 = index.constant 0 : index
+   %c1 = index.constant 1 : index
+   %c2 = index.constant 2 : index
+@@ -89,5 +85,14 @@
+     %route_word = index.cast %r : index to i32
+     view.store %route_word, %table[%rec, %field] : i32, view<[%records]x[%stride]xi32>
+   }
++  func.return
++}
++
++kernel.def export("inkling_experts_routes") @inkling_experts_routes() {
++  %c1 = index.constant 1 : index
++  %c128 = index.constant 128 : index
++  kernel.launch.config workgroups(%c1, %c1, %c1) workgroup_size(%c128, %c1, %c1) : index
++} launch(%n: index, %tile: index, %ids: buffer, %tasks: buffer) {
++  func.call @inkling_experts_route_groups(%n, %tile, %ids, %tasks) : (index, index, buffer, buffer)
+   kernel.return
+ }
+diff -ruN a/package/kernel/mix/ctrl.loom b/package/kernel/mix/ctrl.loom
+--- a/package/kernel/mix/ctrl.loom	2026-11-22 16:31:56.560974200 -0800
++++ b/package/kernel/mix/ctrl.loom	2026-11-22 16:31:57.169705000 -0800
+@@ -5,6 +5,12 @@
+ config.decl @inkling.mix.ctrl_bf16 : %value: index where [range(%value, 0, 1)]
+ config.decl @inkling.mix.ctrl_tokens : %value: index where [range(%value, 1, 64)]
+ 
++func.decl @inkling_mix_softmax(%lds: buffer, %q: index, %nb: index) -> (f32, f32)
++
++func.decl @inkling_mix_coeff(%lds: buffer, %q: index, %s: index, %max_q: f32, %inv_q: f32, %single: i1) -> (f32)
++
++func.decl @inkling_mix_axpy(%acc: vector<4xf32>, %c: f32, %x: vector<4xf32>) -> (vector<4xf32>)
++
+ func.def public inline @inkling_ctrl_weights4(%w: buffer, %elem: index, %bf16: i1) -> (vector<4xf32>) {
+   %origin = index.constant 0 : offset
+   %v = scf.if %bf16 -> (vector<4xf32>) {
+@@ -209,9 +215,94 @@
+   kernel.return
+ }
+ 
++// Gates of one token and one output row: tanh(forget z) and tanh(gain z). The weight rows are in registers (8 lanes per row), z is read from zbuf.
++func.def public inline @inkling_ctrl_gates(%zbuf: buffer, %z_base: index, %l: index, %f4a: vector<4xf32>, %f4b: vector<4xf32>, %g4a: vector<4xf32>, %g4b: vector<4xf32>) -> (f32, f32) {
++  %c4 = index.constant 4 : index
++  %c8 = index.constant 8 : index
++  %four = index.constant 4 : offset
++  %f0 = scalar.constant 0.0 : f32
++  %zi = index.mul %l, %c8 : index
++  %zi1 = index.add %zi, %c4 : index
++  %z_bytes = index.scale %z_base, %four : index, offset -> offset
++  %z_view = buffer.view %zbuf[%z_bytes] : buffer -> view<64xf32>
++  %z0 = vector.load %z_view[%zi] : view<64xf32> -> vector<4xf32>
++  %z1 = vector.load %z_view[%zi1] : view<64xf32> -> vector<4xf32>
++  %fa = vector.mulf %f4a, %z0 : vector<4xf32>
++  %fb = vector.fmaf %f4b, %z1, %fa : vector<4xf32>
++  %ga = vector.mulf %g4a, %z0 : vector<4xf32>
++  %gb = vector.fmaf %g4b, %z1, %ga : vector<4xf32>
++  %fl = vector.reduce<addf> %fb, %f0 : vector<4xf32>, f32
++  %gl = vector.reduce<addf> %gb, %f0 : vector<4xf32>, f32
++  %fs = kernel.subgroup.reduce<addf> %fl {cluster_size = 8} : f32
++  %gs = kernel.subgroup.reduce<addf> %gl {cluster_size = 8} : f32
++  %ft = scalar.tanhf<afn> %fs : f32
++  %gt = scalar.tanhf<afn> %gs : f32
++  func.return %ft, %gt : f32, f32
++}
++
++// x - tanh(forget z) x + tanh(gain z) m for one element.
++func.def public inline @inkling_ctrl_mixed(%ft: f32, %gt: f32, %xe: f32, %me: f32) -> (f32) {
++  %fx = scalar.mulf %ft, %xe : f32
++  %gm = scalar.mulf %gt, %me : f32
++  %d = scalar.subf %xe, %fx : f32
++  %y = scalar.addf %d, %gm : f32
++  func.return %y : f32
++}
++
++// The x and m elements of one (token, row) pair.
++func.def public inline @inkling_ctrl_xm(%x: buffer, %m: buffer, %token: index, %o: index, %x_col: index, %m_col: index, %col_stride: index) -> (f32, f32) {
++  %embd = index.constant 2304 : index
++  %xo_base = index.madd %x_col, %col_stride, %o : index
++  %xo = index.madd %token, %embd, %xo_base : index
++  %mo_base = index.madd %m_col, %col_stride, %o : index
++  %mo = index.madd %token, %embd, %mo_base : index
++  %xe = func.call @inkling_ctrl_f32(%x, %xo) : (buffer, index) -> (f32)
++  %me = func.call @inkling_ctrl_f32(%m, %mo) : (buffer, index) -> (f32)
++  func.return %xe, %me : f32, f32
++}
++
++func.def public inline @inkling_ctrl_out(%out: buffer, %c: index, %token: index, %o: index, %col_stride: index, %y: f32) {
++  %embd = index.constant 2304 : index
++  %oo_base = index.madd %c, %col_stride, %o : index
++  %oo = index.madd %token, %embd, %oo_base : index
++  func.call @inkling_ctrl_store(%out, %oo, %y) : (buffer, index, f32)
++  func.return
++}
++
++// One output row and one token: the gates are the dots of the two weight rows (in registers) with the 64 values of z (in LDS), then the element is written.
++func.def public inline @inkling_ctrl_row_token(%zlds: buffer, %tb: index, %bankf: vector<16x4xf32>, %bankg: vector<16x4xf32>, %xe: f32, %me: f32, %out: buffer, %c: index, %token: index, %o: index, %col_stride: index) {
++  %c0 = index.constant 0 : index
++  %c1 = index.constant 1 : index
++  %c4 = index.constant 4 : index
++  %c16 = index.constant 16 : index
++  %c64 = index.constant 64 : index
++  %origin = index.constant 0 : offset
++  %f0 = scalar.constant 0.0 : f32
++  %zero4 = vector.splatf 0.0 : vector<4xf32>
++  %zv = buffer.view %zlds[%origin] : buffer -> view<4096xf32>
++  %tb_base = index.mul %tb, %c64 : index
++  %af, %ag = scf.for %j = [%c0 to %c16 step %c1](%pf = %zero4 : vector<4xf32>, %pg = %zero4 : vector<4xf32>) -> (vector<4xf32>, vector<4xf32>) unroll {
++    %e = index.madd %j, %c4, %tb_base : index
++    %z4 = vector.load %zv[%e] : view<4096xf32> -> vector<4xf32>
++    %w_f = vector.extract %bankf[%j] : vector<16x4xf32> -> vector<4xf32>
++    %w_g = vector.extract %bankg[%j] : vector<16x4xf32> -> vector<4xf32>
++    %nf = vector.fmaf %w_f, %z4, %pf : vector<4xf32>
++    %ng = vector.fmaf %w_g, %z4, %pg : vector<4xf32>
++    scf.yield %nf, %ng : vector<4xf32>, vector<4xf32>
++  }
++  %fs = vector.reduce<addf> %af, %f0 : vector<4xf32>, f32
++  %gs = vector.reduce<addf> %ag, %f0 : vector<4xf32>, f32
++  %ft = scalar.tanhf<afn> %fs : f32
++  %gt = scalar.tanhf<afn> %gs : f32
++  %y = func.call @inkling_ctrl_mixed(%ft, %gt, %xe, %me) : (f32, f32, f32, f32) -> (f32)
++  func.call @inkling_ctrl_out(%out, %c, %token, %o, %col_stride, %y) : (buffer, index, index, index, index, f32)
++  func.return
++}
++
++// A workgroup owns 256 output rows and a tile of tokens (at most 64). The two weight rows of a thread stay in registers, the z values of the tile are staged in LDS, and every thread walks the tokens: no cross-lane reduction, one tanh pair per element, x, m and the output are read and written in rows of consecutive elements.
+ kernel.def export("inkling_ctrl_apply") @inkling_ctrl_apply(%cap: index, %nc: index) {
+   %one = index.constant 1 : index
+-  %groups = index.constant 72 : index
++  %groups = index.constant 9 : index
+   %tokens = config.get @inkling.mix.ctrl_tokens : index
+   %cap_up = index.add %cap, %tokens : index
+   %cap_dec = index.constant 1 : index
+@@ -226,17 +317,20 @@
+   %col_stride = index.assume %col_stride_in [range(%col_stride_in, 0, 2147483647)] : index
+   %c0 = index.constant 0 : index
+   %c1 = index.constant 1 : index
++  %c3 = index.constant 3 : index
+   %c4 = index.constant 4 : index
+-  %c8 = index.constant 8 : index
+-  %c32 = index.constant 32 : index
++  %c16 = index.constant 16 : index
+   %c64 = index.constant 64 : index
+-  %embd = index.constant 2304 : index
++  %c256 = index.constant 256 : index
+   %origin = index.constant 0 : offset
+   %four = index.constant 4 : offset
++  %lds_bytes = index.constant 16384 : offset
++  %f0 = scalar.constant 0.0 : f32
++  %zero4 = vector.splatf 0.0 : vector<4xf32>
++  %zero_bank = vector.splatf 0.0 : vector<16x4xf32>
+   %tokens = config.get @inkling.mix.ctrl_tokens : index
+   %bf16_cfg = config.get @inkling.mix.ctrl_bf16 : index
+   %bf16 = index.cmp ne, %bf16_cfg, %c0 : index
+-  %f0 = scalar.constant 0.0 : f32
+   %group = kernel.workgroup.id<x> : index
+   %tile = kernel.workgroup.id<y> : index
+   %c = kernel.workgroup.id<z> : index
+@@ -247,6 +341,143 @@
+   scf.if %tile_active {
+     %x_col = index.madd %c, %x_col_step, %x_col0 : index
+     %m_col = index.add %m_col0, %c : index
++    %o = index.madd %group, %c256, %tid : index
++    %row = index.mul %o, %c64 : index
++    %forget = func.call @inkling_ctrl_pick(%c, %forget0, %forget1, %forget2) : (index, buffer, buffer, buffer) -> (buffer)
++    %gain = func.call @inkling_ctrl_pick(%c, %gain0, %gain1, %gain2) : (index, buffer, buffer, buffer) -> (buffer)
++    %bankf = scf.for %j = [%c0 to %c16 step %c1](%b = %zero_bank : vector<16x4xf32>) -> (vector<16x4xf32>) unroll {
++      %we = index.madd %j, %c4, %row : index
++      %w4 = func.call @inkling_ctrl_weights4(%forget, %we, %bf16) : (buffer, index, i1) -> (vector<4xf32>)
++      %bn = vector.insert %w4 into %b[%j] : vector<4xf32>, vector<16x4xf32>
++      scf.yield %bn : vector<16x4xf32>
++    }
++    %bankg = scf.for %j = [%c0 to %c16 step %c1](%b = %zero_bank : vector<16x4xf32>) -> (vector<16x4xf32>) unroll {
++      %we = index.madd %j, %c4, %row : index
++      %w4 = func.call @inkling_ctrl_weights4(%gain, %we, %bf16) : (buffer, index, i1) -> (vector<4xf32>)
++      %bn = vector.insert %w4 into %b[%j] : vector<4xf32>, vector<16x4xf32>
++      scf.yield %bn : vector<16x4xf32>
++    }
++    %z_store = buffer.alloca<workgroup> align(16) %lds_bytes : buffer
++    %z_lds = buffer.view %z_store[%origin] : buffer -> view<4096xf32>
++    %nvec = index.mul %tokens, %c16 : index
++    scf.for %i = [%tid to %nvec step %c256] {
++      %tb = index.div %i, %c16 : index
++      %q = index.rem %i, %c16 : index
++      %token = index.add %first_token, %tb : index
++      %in_live = index.cmp ult, %token, %live : index
++      %z4 = scf.if %in_live -> (vector<4xf32>) {
++        %pc = index.madd %c, %cap_in, %token : index
++        %zb = index.mul %pc, %c64 : index
++        %z_bytes = index.scale %zb, %four : index, offset -> offset
++        %z_view = buffer.view %z[%z_bytes] : buffer -> view<64xf32>
++        %qe = index.mul %q, %c4 : index
++        %v = vector.load %z_view[%qe] : view<64xf32> -> vector<4xf32>
++        scf.yield %v : vector<4xf32>
++      } else {
++        scf.yield %zero4 : vector<4xf32>
++      }
++      %le = index.mul %i, %c4 : index
++      vector.store %z4, %z_lds[%le] : vector<4xf32>, view<4096xf32>
++    }
++    kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
++    %tokens_up = index.add %tokens, %c3 : index
++    %quads = index.div %tokens_up, %c4 : index
++    scf.for %g = [%c0 to %quads step %c1] {
++      %tb0 = index.mul %g, %c4 : index
++      %tb1 = index.add %tb0, %c1 : index
++      %tb2 = index.add %tb1, %c1 : index
++      %tb3 = index.add %tb2, %c1 : index
++      %t0 = index.add %first_token, %tb0 : index
++      %t1 = index.add %first_token, %tb1 : index
++      %t2 = index.add %first_token, %tb2 : index
++      %t3 = index.add %first_token, %tb3 : index
++      %i0 = index.cmp ult, %tb0, %tokens : index
++      %i1 = index.cmp ult, %tb1, %tokens : index
++      %i2 = index.cmp ult, %tb2, %tokens : index
++      %i3 = index.cmp ult, %tb3, %tokens : index
++      %l0 = index.cmp ult, %t0, %live : index
++      %l1 = index.cmp ult, %t1, %live : index
++      %l2 = index.cmp ult, %t2, %live : index
++      %l3 = index.cmp ult, %t3, %live : index
++      %ok0 = scalar.andi %i0, %l0 : i1
++      %ok1 = scalar.andi %i1, %l1 : i1
++      %ok2 = scalar.andi %i2, %l2 : i1
++      %ok3 = scalar.andi %i3, %l3 : i1
++      %x0, %m0 = scf.if %ok0 -> (f32, f32) {
++        %a, %b = func.call @inkling_ctrl_xm(%x, %m, %t0, %o, %x_col, %m_col, %col_stride) : (buffer, buffer, index, index, index, index, index) -> (f32, f32)
++        scf.yield %a, %b : f32, f32
++      } else {
++        scf.yield %f0, %f0 : f32, f32
++      }
++      %x1, %m1 = scf.if %ok1 -> (f32, f32) {
++        %a, %b = func.call @inkling_ctrl_xm(%x, %m, %t1, %o, %x_col, %m_col, %col_stride) : (buffer, buffer, index, index, index, index, index) -> (f32, f32)
++        scf.yield %a, %b : f32, f32
++      } else {
++        scf.yield %f0, %f0 : f32, f32
++      }
++      %x2, %m2 = scf.if %ok2 -> (f32, f32) {
++        %a, %b = func.call @inkling_ctrl_xm(%x, %m, %t2, %o, %x_col, %m_col, %col_stride) : (buffer, buffer, index, index, index, index, index) -> (f32, f32)
++        scf.yield %a, %b : f32, f32
++      } else {
++        scf.yield %f0, %f0 : f32, f32
++      }
++      %x3, %m3 = scf.if %ok3 -> (f32, f32) {
++        %a, %b = func.call @inkling_ctrl_xm(%x, %m, %t3, %o, %x_col, %m_col, %col_stride) : (buffer, buffer, index, index, index, index, index) -> (f32, f32)
++        scf.yield %a, %b : f32, f32
++      } else {
++        scf.yield %f0, %f0 : f32, f32
++      }
++      scf.if %ok0 {
++        func.call @inkling_ctrl_row_token(%z_store, %tb0, %bankf, %bankg, %x0, %m0, %out, %c, %t0, %o, %col_stride) : (buffer, index, vector<16x4xf32>, vector<16x4xf32>, f32, f32, buffer, index, index, index, index)
++      }
++      scf.if %ok1 {
++        func.call @inkling_ctrl_row_token(%z_store, %tb1, %bankf, %bankg, %x1, %m1, %out, %c, %t1, %o, %col_stride) : (buffer, index, vector<16x4xf32>, vector<16x4xf32>, f32, f32, buffer, index, index, index, index)
++      }
++      scf.if %ok2 {
++        func.call @inkling_ctrl_row_token(%z_store, %tb2, %bankf, %bankg, %x2, %m2, %out, %c, %t2, %o, %col_stride) : (buffer, index, vector<16x4xf32>, vector<16x4xf32>, f32, f32, buffer, index, index, index, index)
++      }
++      scf.if %ok3 {
++        func.call @inkling_ctrl_row_token(%z_store, %tb3, %bankf, %bankg, %x3, %m3, %out, %c, %t3, %o, %col_stride) : (buffer, index, vector<16x4xf32>, vector<16x4xf32>, f32, f32, buffer, index, index, index, index)
++      }
++    }
++  }
++  kernel.return
++}
++
++// Decode form of ctrl_apply (one token per workgroup): sums the ctrl_down partials into z in the order of ctrl_z, so ctrl_z is not launched.
++kernel.def export("inkling_ctrl_apply_z") @inkling_ctrl_apply_z(%cap: index, %nc: index) {
++  %one = index.constant 1 : index
++  %groups = index.constant 72 : index
++  %threads = index.constant 256 : index
++  kernel.launch.config workgroups(%groups, %cap, %nc) workgroup_size(%threads, %one, %one) : index
++} launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %spans: buffer, %x: buffer, %m: buffer, %forget0: buffer, %forget1: buffer, %forget2: buffer, %gain0: buffer, %gain1: buffer, %gain2: buffer, %rinv_x: buffer, %rinv_m: buffer, %part: buffer, %out: buffer) {
++  %x_col0 = index.assume %x_col0_in [range(%x_col0_in, 0, 3)] : index
++  %x_col_step = index.assume %x_col_step_in [range(%x_col_step_in, 0, 1)] : index
++  %m_col0 = index.assume %m_col0_in [range(%m_col0_in, 0, 3)] : index
++  %col_stride = index.assume %col_stride_in [range(%col_stride_in, 0, 2147483647)] : index
++  %c0 = index.constant 0 : index
++  %c1 = index.constant 1 : index
++  %c4 = index.constant 4 : index
++  %c8 = index.constant 8 : index
++  %c32 = index.constant 32 : index
++  %c64 = index.constant 64 : index
++  %embd = index.constant 2304 : index
++  %full = index.constant 4608 : index
++  %origin = index.constant 0 : offset
++  %z_bytes = index.constant 256 : offset
++  %f0 = scalar.constant 0.0 : f32
++  %chunk = config.get @inkling.mix.ctrl_chunk : index
++  %bf16_cfg = config.get @inkling.mix.ctrl_bf16 : index
++  %bf16 = index.cmp ne, %bf16_cfg, %c0 : index
++  %group = kernel.workgroup.id<x> : index
++  %token = kernel.workgroup.id<y> : index
++  %c = kernel.workgroup.id<z> : index
++  %tid = kernel.workitem.id<x> : index
++  %live = func.call @inkling_ctrl_live(%spans) : (buffer) -> (index)
++  %active = index.cmp ult, %token, %live : index
++  scf.if %active {
++    %x_col = index.madd %c, %x_col_step, %x_col0 : index
++    %m_col = index.add %m_col0, %c : index
+     %o_local = index.div %tid, %c8 : index
+     %l = index.rem %tid, %c8 : index
+     %o = index.madd %group, %c32, %o_local : index
+@@ -262,42 +493,287 @@
+     %g4a = func.call @inkling_ctrl_weights4(%gain, %we, %bf16) : (buffer, index, i1) -> (vector<4xf32>)
+     %g4b = func.call @inkling_ctrl_weights4(%gain, %we1, %bf16) : (buffer, index, i1) -> (vector<4xf32>)
+     %lane0 = index.cmp eq, %l, %c0 : index
+-    scf.for %tb = [%c0 to %tokens step %c1] {
+-      %token = index.add %first_token, %tb : index
+-      %token_live = index.cmp ult, %token, %live : index
+-      scf.if %token_live {
+-        %pc = index.madd %c, %cap_in, %token : index
+-        %z_base = index.mul %pc, %c64 : index
+-        %z_bytes = index.scale %z_base, %four : index, offset -> offset
+-        %z_view = buffer.view %z[%z_bytes] : buffer -> view<64xf32>
+-        %z0 = vector.load %z_view[%zi] : view<64xf32> -> vector<4xf32>
+-        %z1 = vector.load %z_view[%zi1] : view<64xf32> -> vector<4xf32>
+-        %fa = vector.mulf %f4a, %z0 : vector<4xf32>
+-        %fb = vector.fmaf %f4b, %z1, %fa : vector<4xf32>
+-        %ga = vector.mulf %g4a, %z0 : vector<4xf32>
+-        %gb = vector.fmaf %g4b, %z1, %ga : vector<4xf32>
+-        %fl = vector.reduce<addf> %fb, %f0 : vector<4xf32>, f32
+-        %gl = vector.reduce<addf> %gb, %f0 : vector<4xf32>, f32
+-        %fs = kernel.subgroup.reduce<addf> %fl {cluster_size = 8} : f32
+-        %gs = kernel.subgroup.reduce<addf> %gl {cluster_size = 8} : f32
+-        %ft = scalar.tanhf<afn> %fs : f32
+-        %gt = scalar.tanhf<afn> %gs : f32
++    %xe, %me = scf.if %lane0 -> (f32, f32) {
++      %a, %b = func.call @inkling_ctrl_xm(%x, %m, %token, %o, %x_col, %m_col, %col_stride) : (buffer, buffer, index, index, index, index, index) -> (f32, f32)
++      scf.yield %a, %b : f32, f32
++    } else {
++      scf.yield %f0, %f0 : f32, f32
++    }
++    %z_store = buffer.alloca<workgroup> align(16) %z_bytes : buffer
++    %z_lds = buffer.view %z_store[%origin] : buffer -> view<64xf32>
++    %is_z = index.cmp ult, %tid, %c64 : index
++    scf.if %is_z {
++      %rx_i0 = index.madd %x_col, %cap_in, %token : index
++      %rm_i0 = index.madd %m_col, %cap_in, %token : index
++      %rx_i = index.assume %rx_i0 [range(%rx_i0, 0, 2147483640)] : index
++      %rm_i = index.assume %rm_i0 [range(%rm_i0, 0, 2147483640)] : index
++      %rx = func.call @inkling_ctrl_f32(%rinv_x, %rx_i) : (buffer, index) -> (f32)
++      %rm = func.call @inkling_ctrl_f32(%rinv_m, %rm_i) : (buffer, index) -> (f32)
++      %kcs = index.div %full, %chunk : index
++      %chunk_x = index.div %embd, %chunk : index
++      %pc = index.madd %c, %cap_in, %token : index
++      %pk0 = index.mul %pc, %kcs : index
++      %zx = scf.for %k = [%c0 to %chunk_x step %c1](%a = %f0 : f32) -> (f32) unroll {
++        %pk = index.add %pk0, %k : index
++        %pe0 = index.madd %pk, %c64, %tid : index
++        %pe = index.assume %pe0 [range(%pe0, 0, 2147483640)] : index
++        %p = func.call @inkling_ctrl_f32(%part, %pe) : (buffer, index) -> (f32)
++        %s = scalar.addf %a, %p : f32
++        scf.yield %s : f32
++      }
++      %zm = scf.for %k = [%chunk_x to %kcs step %c1](%a = %f0 : f32) -> (f32) unroll {
++        %pk = index.add %pk0, %k : index
++        %pe0 = index.madd %pk, %c64, %tid : index
++        %pe = index.assume %pe0 [range(%pe0, 0, 2147483640)] : index
++        %p = func.call @inkling_ctrl_f32(%part, %pe) : (buffer, index) -> (f32)
++        %s = scalar.addf %a, %p : f32
++        scf.yield %s : f32
++      }
++      %zx_s = scalar.mulf %zx, %rx : f32
++      %z_val = scalar.fmaf %zm, %rm, %zx_s : f32
++      view.store %z_val, %z_lds[%tid] : f32, view<64xf32>
++    }
++    kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
++    %ft, %gt = func.call @inkling_ctrl_gates(%z_store, %c0, %l, %f4a, %f4b, %g4a, %g4b) : (buffer, index, index, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>) -> (f32, f32)
++    scf.if %lane0 {
++      %y = func.call @inkling_ctrl_mixed(%ft, %gt, %xe, %me) : (f32, f32, f32, f32) -> (f32)
++      func.call @inkling_ctrl_out(%out, %c, %token, %o, %col_stride, %y) : (buffer, index, index, index, index, f32)
++    }
++  }
++  kernel.return
++}
++
++// Decode form of the message mix plus ctrl_down (one token per workgroup, 288 threads). Workgroups of the x half of the input run as ctrl_down. Workgroups of the m half first build the message column of the controller (the arithmetic of inkling_mix_states with nb 1, mode 0, one query) in LDS; the first of them writes the rms factor of the column, each writes its slice of the column for ctrl_apply_z.
++kernel.def export("inkling_ctrl_down_msg") @inkling_ctrl_down_msg(%cap: index, %nc: index) {
++  %one = index.constant 1 : index
++  %chunk = config.get @inkling.mix.ctrl_chunk : index
++  %full = index.constant 4608 : index
++  %chunks = index.div %full, %chunk : index
++  %threads = index.constant 288 : index
++  kernel.launch.config workgroups(%chunks, %cap, %nc) workgroup_size(%threads, %one, %one) : index
++} launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %blocks_off: index, %cur_off: index, %spans: buffer, %x: buffer, %bank: buffer, %query: buffer, %down0: buffer, %down1: buffer, %down2: buffer, %msg: buffer, %rinv_m: buffer, %part: buffer) {
++  %x_col0 = index.assume %x_col0_in [range(%x_col0_in, 0, 3)] : index
++  %x_col_step = index.assume %x_col_step_in [range(%x_col_step_in, 0, 1)] : index
++  %m_col0 = index.assume %m_col0_in [range(%m_col0_in, 0, 3)] : index
++  %col_stride = index.assume %col_stride_in [range(%col_stride_in, 0, 2147483647)] : index
++  %c0 = index.constant 0 : index
++  %c1 = index.constant 1 : index
++  %c2 = index.constant 2 : index
++  %c4 = index.constant 4 : index
++  %c9 = index.constant 9 : index
++  %c16 = index.constant 16 : index
++  %c18 = index.constant 18 : index
++  %c32 = index.constant 32 : index
++  %c36 = index.constant 36 : index
++  %c48 = index.constant 48 : index
++  %c64 = index.constant 64 : index
++  %c128 = index.constant 128 : index
++  %c256 = index.constant 256 : index
++  %embd = index.constant 2304 : index
++  %full = index.constant 4608 : index
++  %origin = index.constant 0 : offset
++  %four = index.constant 4 : offset
++  %lds_bytes = index.constant 11520 : offset
++  %f0 = scalar.constant 0.0 : f32
++  %eps = scalar.constant 1.0e-6 : f32
++  %inv_embd = scalar.constant 4.3402777777777777e-4 : f32
++  %inv_scale = scalar.constant 2.0833333333333332e-2 : f32
++  %zero4 = vector.splatf 0.0 : vector<4xf32>
++  %chunk = config.get @inkling.mix.ctrl_chunk : index
++  %bf16_cfg = config.get @inkling.mix.ctrl_bf16 : index
++  %bf16 = index.cmp ne, %bf16_cfg, %c0 : index
++  %kc = kernel.workgroup.id<x> : index
++  %token = kernel.workgroup.id<y> : index
++  %c = kernel.workgroup.id<z> : index
++  %tid = kernel.workitem.id<x> : index
++  %live = func.call @inkling_ctrl_live(%spans) : (buffer) -> (index)
++  %active = index.cmp ult, %token, %live : index
++  scf.if %active {
++    %wave = index.div %tid, %c32 : index
++    %lane = index.rem %tid, %c32 : index
++    %chunk_x = index.div %embd, %chunk : index
++    %in_x = index.cmp ult, %kc, %chunk_x : index
++    %x_col = index.madd %c, %x_col_step, %x_col0 : index
++    %m_col = index.add %m_col0, %c : index
++    %chunk_start = index.mul %kc, %chunk : index
++    %m_rel = index.sub %chunk_start, %embd : index
++    %m_start0 = scf.select %in_x, %c0, %m_rel : index
++    %m_start = index.assume %m_start0 [range(%m_start0, 0, 2304)] : index
++    %down = func.call @inkling_ctrl_pick(%c, %down0, %down1, %down2) : (index, buffer, buffer, buffer) -> (buffer)
++    %row_raw = index.div %tid, %c4 : index
++    %c63 = index.constant 63 : index
++    %row = index.min %row_raw, %c63 : index
++    %kl = index.rem %tid, %c4 : index
++    %dot_thread = index.cmp ult, %tid, %c256 : index
++    %row_base = index.mul %row, %full : index
++    %w_base = index.add %row_base, %chunk_start : index
++    %nj = index.div %chunk, %c16 : index
++    %bank0 = vector.splatf 0.0 : vector<[%nj]x4xf32>
++    %wbank = scf.for %j = [%c0 to %nj step %c1](%b = %bank0 : vector<[%nj]x4xf32>) -> (vector<[%nj]x4xf32>) unroll {
++      %vec = index.madd %j, %c4, %kl : index
++      %e = index.mul %vec, %c4 : index
++      %we = index.add %w_base, %e : index
++      %w4 = func.call @inkling_ctrl_weights4(%down, %we, %bf16) : (buffer, index, i1) -> (vector<4xf32>)
++      %b_next = vector.insert %w4 into %b[%j] : vector<4xf32>, vector<[%nj]x4xf32>
++      scf.yield %b_next : vector<[%nj]x4xf32>
++    }
++    %lds = buffer.alloca<workgroup> align(16) %lds_bytes : buffer
++    %lds_view = buffer.view %lds[%origin] : buffer -> view<2880xf32>
++    %is_m = index.cmp uge, %kc, %chunk_x : index
++    scf.if %is_m {
++      %tok_e = index.mul %token, %embd : index
++      %state_off0 = index.add %tok_e, %blocks_off : index
++      %state_off1 = index.add %tok_e, %cur_off : index
++      %wave_s = index.min %wave, %c1 : index
++      %is_s1 = index.cmp eq, %wave_s, %c1 : index
++      %state_off = scf.select %is_s1, %state_off1, %state_off0 : index
++      %state_bytes = index.scale %state_off, %four : index, offset -> offset
++      %state_view = buffer.view %bank[%state_bytes] : buffer -> view<2304xf32>
++      %q_off = index.mul %m_col, %embd : index
++      %qv = buffer.view %query[%origin] : buffer -> view<9216xf32>
++      %lane4 = index.mul %lane, %c4 : index
++      %wave_base = index.mul %wave, %c256 : index
++      %e0_raw = index.add %wave_base, %lane4 : index
++      %e0 = index.assume %e0_raw [range(%e0_raw, 0, 2172)] : index
++      %e1 = index.add %e0, %c128 : index
++      %sv0_bytes = index.scale %state_off0, %four : index, offset -> offset
++      %sv1_bytes = index.scale %state_off1, %four : index, offset -> offset
++      %sv0 = buffer.view %bank[%sv0_bytes] : buffer -> view<2304xf32>
++      %sv1 = buffer.view %bank[%sv1_bytes] : buffer -> view<2304xf32>
++      %px00 = vector.load %sv0[%e0] : view<2304xf32> -> vector<4xf32>
++      %px01 = vector.load %sv0[%e1] : view<2304xf32> -> vector<4xf32>
++      %px10 = vector.load %sv1[%e0] : view<2304xf32> -> vector<4xf32>
++      %px11 = vector.load %sv1[%e1] : view<2304xf32> -> vector<4xf32>
++      %score_wave = index.cmp ult, %wave, %c2 : index
++      scf.if %score_wave {
++        %ss, %d0 = scf.for %j = [%c0 to %c18 step %c1](%a = %zero4 : vector<4xf32>, %a0 = %zero4 : vector<4xf32>) -> (vector<4xf32>, vector<4xf32>) unroll {
++          %packet = index.madd %j, %c32, %lane : index
++          %e_raw = index.mul %packet, %c4 : index
++          %e = index.assume %e_raw [range(%e_raw, 0, 2300)] : index
++          %xs = vector.load %state_view[%e] : view<2304xf32> -> vector<4xf32>
++          %qi_raw = index.add %q_off, %e : index
++          %qi = index.assume %qi_raw [range(%qi_raw, 0, 9212)] : index
++          %u0 = vector.load %qv[%qi] : view<9216xf32> -> vector<4xf32>
++          %a_next = vector.fmaf %xs, %xs, %a : vector<4xf32>
++          %n0 = vector.fmaf %xs, %u0, %a0 : vector<4xf32>
++          scf.yield %a_next, %n0 : vector<4xf32>, vector<4xf32>
++        }
++        %ss_lane = vector.reduce<addf> %ss, %f0 : vector<4xf32>, f32
++        %sumsq = kernel.subgroup.reduce<addf> %ss_lane {cluster_size = 32} : f32
++        %mean = scalar.mulf %sumsq, %inv_embd : f32
++        %biased = scalar.addf %mean, %eps : f32
++        %rinv = scalar.rsqrtf %biased : f32
++        %dot0_lane = vector.reduce<addf> %d0, %f0 : vector<4xf32>, f32
++        %dot0 = kernel.subgroup.reduce<addf> %dot0_lane {cluster_size = 32} : f32
++        %scale = scalar.mulf %rinv, %inv_scale : f32
++        %lane0 = index.cmp eq, %lane, %c0 : index
+         scf.if %lane0 {
+-          %xo_base = index.madd %x_col, %col_stride, %o : index
+-          %xo = index.madd %token, %embd, %xo_base : index
+-          %mo_base = index.madd %m_col, %col_stride, %o : index
+-          %mo = index.madd %token, %embd, %mo_base : index
+-          %xe = func.call @inkling_ctrl_f32(%x, %xo) : (buffer, index) -> (f32)
+-          %me = func.call @inkling_ctrl_f32(%m, %mo) : (buffer, index) -> (f32)
+-          %fx = scalar.mulf %ft, %xe : f32
+-          %gm = scalar.mulf %gt, %me : f32
+-          %d = scalar.subf %xe, %fx : f32
+-          %y = scalar.addf %d, %gm : f32
+-          %oo_base = index.madd %c, %col_stride, %o : index
+-          %oo = index.madd %token, %embd, %oo_base : index
+-          func.call @inkling_ctrl_store(%out, %oo, %y) : (buffer, index, f32)
++          %s0 = scalar.mulf %dot0, %scale : f32
++          %rslot = index.add %c36, %wave : index
++          view.store %s0, %lds_view[%wave] : f32, view<2880xf32>
++          view.store %rinv, %lds_view[%rslot] : f32, view<2880xf32>
+         }
+       }
++      kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
++      %max0, %inv0 = func.call @inkling_mix_softmax(%lds, %c0, %c1) : (buffer, index, index) -> (f32, f32)
++      %no = index.constant 0 : index
++      %single = index.cmp eq, %no, %c1 : index
++      %cw0 = func.call @inkling_mix_coeff(%lds, %c0, %c0, %max0, %inv0, %single) : (buffer, index, index, f32, f32, i1) -> (f32)
++      %cw1 = func.call @inkling_mix_coeff(%lds, %c0, %c1, %max0, %inv0, %single) : (buffer, index, index, f32, f32, i1) -> (f32)
++      %ya0 = func.call @inkling_mix_axpy(%zero4, %cw0, %px00) : (vector<4xf32>, f32, vector<4xf32>) -> (vector<4xf32>)
++      %ya1 = func.call @inkling_mix_axpy(%zero4, %cw0, %px01) : (vector<4xf32>, f32, vector<4xf32>) -> (vector<4xf32>)
++      %y0 = func.call @inkling_mix_axpy(%ya0, %cw1, %px10) : (vector<4xf32>, f32, vector<4xf32>) -> (vector<4xf32>)
++      %y1 = func.call @inkling_mix_axpy(%ya1, %cw1, %px11) : (vector<4xf32>, f32, vector<4xf32>) -> (vector<4xf32>)
++      %yy0 = vector.mulf %y0, %y0 : vector<4xf32>
++      %yy1 = vector.fmaf %y1, %y1, %yy0 : vector<4xf32>
++      %t0 = vector.reduce<addf> %yy1, %f0 : vector<4xf32>, f32
++      %z0 = kernel.subgroup.reduce<addf> %t0 {cluster_size = 32} : f32
++      %ya = index.add %c64, %e0 : index
++      %yb = index.add %c64, %e1 : index
++      vector.store %y0, %lds_view[%ya] : vector<4xf32>, view<2880xf32>
++      vector.store %y1, %lds_view[%yb] : vector<4xf32>, view<2880xf32>
++      %lane0b = index.cmp eq, %lane, %c0 : index
++      scf.if %lane0b {
++        %pslot = index.add %c48, %wave : index
++        view.store %z0, %lds_view[%pslot] : f32, view<2880xf32>
++      }
++      kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
++      %first_m = index.cmp eq, %kc, %chunk_x : index
++      %t_is0 = index.cmp eq, %tid, %c0 : index
++      %write_rinv = scalar.andi %first_m, %t_is0 : i1
++      %total = scf.for %w = [%c0 to %c9 step %c1](%t = %f0 : f32) -> (f32) unroll {
++        %ps = index.add %c48, %w : index
++        %part_s = view.load %lds_view[%ps] : view<2880xf32> -> f32
++        %t_next = scalar.addf %t, %part_s : f32
++        scf.yield %t_next : f32
++      }
++      %m = scalar.mulf %total, %inv_embd : f32
++      %mb = scalar.addf %m, %eps : f32
++      %inv_out = scalar.rsqrtf %mb : f32
++      scf.if %write_rinv {
++        %cap_q = index.mul %cap_in, %c4 : index
++        %rv = buffer.view %rinv_m[%origin] : buffer -> view<[%cap_q]xf32>
++        %ri_raw = index.madd %m_col, %cap_in, %token : index
++        %ri = index.assume %ri_raw [range(%ri_raw, 0, 2147483640), lt(%ri_raw, %cap_q)] : index
++        view.store %inv_out, %rv[%ri] : f32, view<[%cap_q]xf32>
++      }
++      %slice_vecs = index.div %chunk, %c4 : index
++      %slice_thread = index.cmp ult, %tid, %slice_vecs : index
++      scf.if %slice_thread {
++        %te = index.mul %tid, %c4 : index
++        %ls0 = index.add %m_start, %te : index
++        %ls_raw = index.add %ls0, %c64 : index
++        %ls = index.assume %ls_raw [range(%ls_raw, 0, 2876)] : index
++        %v = vector.load %lds_view[%ls] : view<2880xf32> -> vector<4xf32>
++        %mo0 = index.madd %m_col, %col_stride, %tok_e : index
++        %mo = index.add %mo0, %ls0 : index
++        %mb2 = index.scale %mo, %four : index, offset -> offset
++        %mv = buffer.view %msg[%mb2] : buffer -> view<4xf32>
++        vector.store %v, %mv[%c0] : vector<4xf32>, view<4xf32>
++      }
++    }
++    %col_base = index.mul %x_col, %col_stride : index
++    %tok_base = index.madd %token, %embd, %col_base : index
++    %x_base = index.add %tok_base, %chunk_start : index
++    %l_base = index.add %m_start, %c64 : index
++    %sum = scf.if %in_x -> (f32) {
++      %in_bytes = index.scale %x_base, %four : index, offset -> offset
++      %in_view = buffer.view %x[%in_bytes] : buffer -> view<512xf32>
++      %acc = scf.for %j = [%c0 to %nj step %c1](%a = %zero4 : vector<4xf32>) -> (vector<4xf32>) unroll {
++        %vec = index.madd %j, %c4, %kl : index
++        %e = index.mul %vec, %c4 : index
++        %xv = vector.load %in_view[%e] : view<512xf32> -> vector<4xf32>
++        %w4 = vector.extract %wbank[%j] : vector<[%nj]x4xf32> -> vector<4xf32>
++        %s = vector.fmaf %w4, %xv, %a : vector<4xf32>
++        scf.yield %s : vector<4xf32>
++      }
++      %lane_sum = vector.reduce<addf> %acc, %f0 : vector<4xf32>, f32
++      %r = kernel.subgroup.reduce<addf> %lane_sum {cluster_size = 4} : f32
++      scf.yield %r : f32
++    } else {
++      %in_bytes = index.scale %l_base, %four : index, offset -> offset
++      %in_view = buffer.view %lds[%in_bytes] : buffer -> view<512xf32>
++      %acc = scf.for %j = [%c0 to %nj step %c1](%a = %zero4 : vector<4xf32>) -> (vector<4xf32>) unroll {
++        %vec = index.madd %j, %c4, %kl : index
++        %e = index.mul %vec, %c4 : index
++        %xv = vector.load %in_view[%e] : view<512xf32> -> vector<4xf32>
++        %w4 = vector.extract %wbank[%j] : vector<[%nj]x4xf32> -> vector<4xf32>
++        %s = vector.fmaf %w4, %xv, %a : vector<4xf32>
++        scf.yield %s : vector<4xf32>
++      }
++      %lane_sum = vector.reduce<addf> %acc, %f0 : vector<4xf32>, f32
++      %r = kernel.subgroup.reduce<addf> %lane_sum {cluster_size = 4} : f32
++      scf.yield %r : f32
++    }
++    %writer0 = index.cmp eq, %kl, %c0 : index
++    %writer = scalar.andi %writer0, %dot_thread : i1
++    scf.if %writer {
++      %kcs = index.div %full, %chunk : index
++      %pc = index.madd %c, %cap_in, %token : index
++      %pk = index.madd %pc, %kcs, %kc : index
++      %pe0 = index.madd %pk, %c64, %row : index
++      %pe = index.assume %pe0 [range(%pe0, 0, 2147483640)] : index
++      func.call @inkling_ctrl_store(%part, %pe, %sum) : (buffer, index, f32)
+     }
+   }
+   kernel.return
+diff -ruN a/package/test/experts/test_router_decode.py b/package/test/experts/test_router_decode.py
+--- a/package/test/experts/test_router_decode.py	1969-12-31 16:00:00.000000000 -0800
++++ b/package/test/experts/test_router_decode.py	2026-11-22 16:31:57.323196600 -0800
+@@ -0,0 +1,85 @@
++#!/usr/bin/env python3
++"""inkling_router_decode (select and routes in one workgroup) against inkling_router_select followed by inkling_experts_routes and against a host reference.
++Usage: test_router_decode.py gfx1201|gfx1151. Random logits with many ties, n = 1..8 rows. Ids, weights and the route table must equal the split kernels and the host reference."""
++import sys, os
++import numpy as np
++from runner import Case
++
++arch = sys.argv[1] if len(sys.argv) > 1 else "gfx1201"
++work = os.path.expanduser(f"~/inkling/optD3/work/router_decode_{arch}")
++fails = 0
++TILE = 8
++
++
++def check(label, ok):
++    global fails
++    fails += not ok
++    print(f"{label}: {'PASS' if ok else 'FAIL'}")
++
++
++def build(n, logits, bias, fused):
++    c = Case("fused" if fused else "split", os.path.join(work, f"{'f' if fused else 's'}{n}"))
++    recs = min(n * 8, n + 128)
++    c.inp("logits", logits)
++    c.inp("bias", bias)
++    c.zeros("ids", (n, 8), np.int32)
++    c.zeros("wts", (n, 8), np.float32)
++    c.zeros("tasks", (4 + recs * 34,), np.int32)
++    c.lit("n", n)
++    c.lit("tile", TILE)
++    if fused:
++        c.launch("inkling_router_decode", [], [("n", "index"), ("tile", "index"), ("logits", "logits"), ("bias", "bias"), ("ids", "ids"), ("wts", "wts"), ("tasks", "tasks")],
++                 ("", "%n: index, %tile: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer, %tasks: buffer"))
++    else:
++        c.launch("inkling_router_select", ["n"], [("n", "index"), ("logits", "logits"), ("bias", "bias"), ("ids", "ids"), ("wts", "wts")],
++                 ("%n: index", "%n: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer"))
++        c.launch("inkling_experts_routes", [], [("n", "index"), ("tile", "index"), ("ids", "ids"), ("tasks", "tasks")],
++                 ("", "%n: index, %tile: index, %ids: buffer, %tasks: buffer"))
++    for o in ("ids", "wts", "tasks"):
++        c.out(o)
++    return c.run(arch, ["router.loom", "routes.loom"])
++
++
++def records(t, stride=34):
++    count = int(t[0])
++    out = []
++    for r in range(count):
++        base = 4 + r * stride
++        e, live = int(t[base]), int(t[base + 1])
++        out.append((e, live, tuple(sorted(int(v) for v in t[base + 2:base + 2 + live]))))
++    return count, out
++
++
++def ref_records(ids):
++    """n <= 8: one record per used expert (an expert has at most one route per token), ordered by expert index."""
++    by = {}
++    for t in range(ids.shape[0]):
++        for s in range(8):
++            by.setdefault(int(ids[t, s]), []).append(t * 8 + s)
++    recs = [(e, len(v), tuple(sorted(v))) for e, v in sorted(by.items())]
++    return len(recs), recs
++
++
++rng = np.random.default_rng(7)
++for n in (1, 2, 3, 4, 5, 6, 7, 8):
++    for kind in ("tied", "random"):
++        if kind == "tied":
++            logits = np.round(rng.standard_normal((n, 128)) * 2).astype(np.float32) / 2
++            bias = np.round(rng.standard_normal(128)).astype(np.float32) / 4
++        else:
++            logits = (rng.standard_normal((n, 128)) * 3).astype(np.float32)
++            bias = (rng.standard_normal(128) * 0.1).astype(np.float32)
++        a = build(n, logits, bias, False)
++        b = build(n, logits, bias, True)
++        p = 1.0 / (1.0 + np.exp(-logits.astype(np.float64)))
++        sel = p + bias.astype(np.float64)
++        ref_ids = np.array([sorted(range(128), key=lambda e: (-sel[t, e], e))[:8] for t in range(n)], np.int32)
++        ref_w = np.take_along_axis(p, ref_ids, axis=1)
++        ref_w = ref_w / (ref_w.sum(axis=1, keepdims=True) + 1e-20) * 8.0
++        check(f"n {n} {kind} split ids vs numpy (ties to the lower index)", np.array_equal(a["ids"], ref_ids))
++        check(f"n {n} {kind} split weights vs numpy", float(np.abs(a["wts"] - ref_w).max()) < 1e-5)
++        check(f"n {n} {kind} fused ids and weights equal the split kernels", np.array_equal(a["ids"], b["ids"]) and np.array_equal(a["wts"], b["wts"]))
++        check(f"n {n} {kind} fused route table equals the split kernels", records(a["tasks"]) == records(b["tasks"]))
++        check(f"n {n} {kind} fused route table vs numpy ids", records(b["tasks"]) == ref_records(ref_ids))
++print("FAILS", fails)
++sys.exit(1 if fails else 0)
+diff -ruN a/package/test/mix/test_ctrl.py b/package/test/mix/test_ctrl.py
+--- a/package/test/mix/test_ctrl.py	2026-11-22 16:31:56.694520500 -0800
++++ b/package/test/mix/test_ctrl.py	2026-11-22 16:31:57.297659400 -0800
+@@ -1,4 +1,5 @@
+ """Tests of the loop message mix and controller kernels against the oracle (prompt A, slots 24..47). Usage: test_ctrl.py [gfx1201|gfx1151] [chunk]"""
++import os
+ import sys
+ 
+ import numpy as np
+@@ -9,6 +10,7 @@
+ 
+ rows = []
+ TOKENS = 1
++FOLD = os.environ.get("CTRL_FOLD") == "1"
+ SRC = ["mix_states.loom", "conv_res.loom", "ctrl.loom"]
+ 
+ 
+@@ -40,6 +42,8 @@
+         ("inkling_ctrl_apply", (cap, nc), [x_col0, x_col_step, m_col0, cs], ["spans", "x", "m", "f0", "f1", "f2", "g0", "g1", "g2", "z", "out"]),
+         ("inkling_mix_norm", (cap, nc), [cs, E if kind == "global" else 0], ["spans", "out", "w", "nout"]),
+     ]
++    if FOLD:
++        steps[1:3] = [("inkling_ctrl_apply_z", (cap, nc), [x_col0, x_col_step, m_col0, cs], ["spans", "x", "m", "f0", "f1", "f2", "g0", "g1", "g2", "rx", "rm", "part", "out"])]
+     r = run_steps(SRC, bufs, steps, device, {"inkling.mix.ctrl_chunk": chunk, "inkling.mix.ctrl_tokens": tokens, "inkling.mix.ctrl_bf16": int(bf16)})
+     return r["out"], r["nout"]
+ 
+diff -ruN a/package/test/mix/test_ctrl_msg.py b/package/test/mix/test_ctrl_msg.py
+--- a/package/test/mix/test_ctrl_msg.py	1969-12-31 16:00:00.000000000 -0800
++++ b/package/test/mix/test_ctrl_msg.py	2026-11-22 16:31:57.299163300 -0800
+@@ -0,0 +1,81 @@
++"""inkling_ctrl_down_msg + inkling_ctrl_apply_z (decode) against inkling_mix_states (message mix) + ctrl_down + ctrl_z + ctrl_apply on random data.
++Usage: test_ctrl_msg.py [gfx1201|gfx1151] [chunk]. The message columns and the rms factors must be bit equal, the controller output must agree to 1e-12 (nmse)."""
++import sys
++
++import numpy as np
++
++from harness import nmse, run_steps
++from inkg import *
++from test_mix import SENT, spans_buf
++
++SRC = ["mix_states.loom", "conv_res.loom", "ctrl.loom"]
++rows = []
++
++
++def case(device, chunk, nc, x_col_step, m_col0, t, cap, bf16, seed):
++    rng = np.random.default_rng(seed)
++    cs = cap * E
++    ncx = 3 if x_col_step else 1
++    x = np.zeros((ncx, cap, E), np.float32)
++    x[:, :t] = (rng.standard_normal((ncx, t, E)) * 2).astype(np.float32)
++    rx = np.zeros((ncx, cap), np.float32)
++    rx[:, :t] = rms_inv(x[:, :t])[..., 0]
++    bank = np.zeros((2, cap, E), np.float32)
++    bank[:, :t] = (rng.standard_normal((2, t, E)) * 1.5).astype(np.float32)
++    query = (rng.standard_normal((4, E)) * 0.05).astype(np.float32)
++    nwb = np.ones((4, E), np.float32)
++
++    def w(shape, s):
++        a = (rng.standard_normal(shape) * s).astype(np.float32)
++        return a.reshape(-1).view(np.int16) if False else a.reshape(-1)
++
++    sets = [(w((64, 4608), 0.02), w((E, 64), 0.1), w((E, 64), 0.1)) for _ in range(nc)]
++    sets += [sets[-1]] * (3 - nc)
++    if bf16:
++        sets = [tuple(((a.view(np.uint32) >> 16).astype(np.uint16)).view(np.int16) for a in s) for s in sets]
++    bufs = {"spans": spans_buf(t), "sel": np.zeros(4, np.int32), "x": x, "bank": bank, "query": query, "nw": nwb,
++            "d0": sets[0][0], "d1": sets[1][0], "d2": sets[2][0], "f0": sets[0][1], "f1": sets[1][1], "f2": sets[2][1], "g0": sets[0][2], "g1": sets[1][2], "g2": sets[2][2],
++            "rx": rx, "z": np.full((3, cap, 64), SENT, np.float32), "cs0": np.zeros(4, np.float32), "cs1": np.zeros(4, np.float32),
++            "msgA": np.full((4, cap, E), SENT, np.float32), "rmA": np.full((4, cap), SENT, np.float32), "partA": np.full((3, cap, 4608 // chunk, 64), SENT, np.float32),
++            "outA": np.full((3, cap, E), SENT, np.float32),
++            "msgB": np.full((4, cap, E), SENT, np.float32), "rmB": np.full((4, cap), SENT, np.float32), "partB": np.full((3, cap, 4608 // chunk, 64), SENT, np.float32),
++            "outB": np.full((3, cap, E), SENT, np.float32)}
++    steps = [
++        ("inkling_mix_states", (cap, 0, 4), [1, cs, cs, 0, 0, 0, 0, cs, 0, 0, 0], ["spans", "sel", "bank", "bank", "query", "nw", "msgA", "rmA", "cs0", "cs1"]),
++        ("inkling_ctrl_down", (cap, nc), [0, x_col_step, m_col0, cs], ["spans", "x", "msgA", "d0", "d1", "d2", "partA"]),
++        ("inkling_ctrl_z", (cap, nc), [0, x_col_step, m_col0], ["spans", "rx", "rmA", "partA", "z"]),
++        ("inkling_ctrl_apply", (cap, nc), [0, x_col_step, m_col0, cs], ["spans", "x", "msgA", "f0", "f1", "f2", "g0", "g1", "g2", "z", "outA"]),
++        ("inkling_ctrl_down_msg", (cap, nc), [0, x_col_step, m_col0, cs, 0, cs], ["spans", "x", "bank", "query", "d0", "d1", "d2", "msgB", "rmB", "partB"]),
++        ("inkling_ctrl_apply_z", (cap, nc), [0, x_col_step, m_col0, cs], ["spans", "x", "msgB", "f0", "f1", "f2", "g0", "g1", "g2", "rx", "rmB", "partB", "outB"]),
++    ]
++    r = run_steps(SRC, bufs, steps, device, {"inkling.mix.ctrl_chunk": chunk, "inkling.mix.ctrl_tokens": 1, "inkling.mix.ctrl_bf16": int(bf16)})
++    name = "nc %d m_col0 %d t %d cap %d chunk %d %s" % (nc, m_col0, t, cap, chunk, "bf16" if bf16 else "f32")
++    for c in range(nc):
++        col = m_col0 + c
++        a, b = r["msgA"][col, :t], r["msgB"][col, :t]
++        ok = np.array_equal(a, b)
++        rows.append(("%s msg col %d bit equal" % (name, col), 0.0 if ok else nmse(b, a), ok))
++        print("%-60s %s" % (rows[-1][0], "PASS" if ok else "FAIL (nmse %.3e)" % nmse(b, a)), flush=True)
++        ok = np.array_equal(r["rmA"][col, :t], r["rmB"][col, :t])
++        rows.append(("%s rinv_m col %d bit equal" % (name, col), 0.0, ok))
++        print("%-60s %s" % (rows[-1][0], "PASS" if ok else "FAIL"), flush=True)
++    e = nmse(r["outB"][:nc, :t], r["outA"][:nc, :t])
++    rows.append(("%s controller output" % name, e, e < 1e-12))
++    print("%-60s nmse %.3e %s" % (rows[-1][0], e, "PASS" if e < 1e-12 else "FAIL"), flush=True)
++    guard = np.array_equal(r["outB"][:, t:], np.full((3, cap - t, E), SENT, np.float32))
++    rows.append(("%s guard" % name, 0.0, guard))
++    print("%-60s %s" % (rows[-1][0], "PASS" if guard else "FAIL"), flush=True)
++
++
++if __name__ == "__main__":
++    device = sys.argv[1] if len(sys.argv) > 1 else "gfx1201"
++    chunk = int(sys.argv[2]) if len(sys.argv) > 2 else 256
++    seed = 1
++    for bf16 in (False, True):
++        for t, cap in ((1, 1), (1, 8), (3, 4), (8, 8)):
++            case(device, chunk, 3, 1, 0, t, cap, bf16, seed); seed += 1
++            case(device, chunk, 3, 0, 0, t, cap, bf16, seed); seed += 1
++            case(device, chunk, 1, 0, 3, t, cap, bf16, seed); seed += 1
++    bad = [r for r in rows if not r[2]]
++    print("TOTAL %d FAIL %d" % (len(rows), len(bad)))
++    sys.exit(1 if bad else 0)
+diff -ruN a/scripts/gen_hooks.py b/scripts/gen_hooks.py
+--- a/scripts/gen_hooks.py	2026-11-22 16:31:57.899875200 -0800
++++ b/scripts/gen_hooks.py	2026-11-22 16:31:58.187248900 -0800
+@@ -374,18 +374,26 @@
+     b.emit("%%part = buffer.alloca<global> align(256) %s : buffer" % part_bytes)
+     b.emit("%%z = buffer.alloca<global> align(256) %s : buffer" % z_bytes)
+     q = b.weight("blk.{}.loop_msg_query.weight", "4x2304xf32")
+-    mix_states(b, b.i(1), b.i(4), 0, q, "%msg", "%bank", "%bank", "%rinv_m", (bank_offs(b, 0), bank_offs(b, 1), b.i(0)))
++    boff, coff = bank_offs(b, 0), bank_offs(b, 1)
+     down, forget, gain = ctrl_weights(b, kinds)
+     step = b.flag("xstep", g) if g else b.i(0)
+     ncv = b.i(nc)
+     spans = "%span_table"
+     xc0, mc0 = b.i(0), b.i(m_col0)
++    b.emit("scf.if %s {" % b.cmp("decode_rows", "ule", cap, b.i(8)))
++    args = [cap, ncv, xc0, step, mc0, cE, boff, coff, spans, "%xn", "%bank", q] + down + ["%msg", "%rinv_m", "%part"]
++    klaunch(b, "inkling_ctrl_down_msg", [cap, ncv], list(zip(args, ["index"] * 8 + ["buffer"] * 10)))
++    args = [cap, ncv, xc0, step, mc0, cE, spans, "%xn", "%msg"] + forget + gain + ["%small", "%rinv_m", "%part", "%x"]
++    klaunch(b, "inkling_ctrl_apply_z", [cap, ncv], list(zip(args, ["index"] * 6 + ["buffer"] * 13)))
++    b.emit("} else {")
++    mix_states(b, b.i(1), b.i(4), 0, q, "%msg", "%bank", "%bank", "%rinv_m", (boff, coff, b.i(0)))
+     args = [cap, ncv, xc0, step, mc0, cE, spans, "%xn", "%msg"] + down + ["%part"]
+     klaunch(b, "inkling_ctrl_down", [cap, ncv], list(zip(args, ["index"] * 6 + ["buffer"] * 7)))
+     args = [cap, ncv, xc0, step, mc0, spans, "%small", "%rinv_m", "%part", "%z"]
+     klaunch(b, "inkling_ctrl_z", [cap, ncv], list(zip(args, ["index"] * 5 + ["buffer"] * 5)))
+     args = [cap, ncv, xc0, step, mc0, cE, spans, "%xn", "%msg"] + forget + gain + ["%z", "%x"]
+     klaunch(b, "inkling_ctrl_apply", [cap, ncv], list(zip(args, ["index"] * 6 + ["buffer"] * 11)))
++    b.emit("}")
+ 
+ 
+ def conv_visit(b):
+@@ -619,7 +627,6 @@
+     rw = b.weight("blk.{}.ffn_gate_inp.weight")
+     bias = b.weight("blk.{}.exp_probs_b.bias")
+     klaunch(b, "inkling_router_logits", [cap], list(zip([cap, "%xn", rw, "%small", "%gate"], ["index"] + ["buffer"] * 4)))
+-    klaunch(b, "inkling_router_select", [cap], list(zip([cap, "%small", bias, "%ab", "%ob"], ["index"] + ["buffer"] * 4)))
+     out.append(hook("router", b))
+     # experts
+     b = Body()
+@@ -659,16 +666,27 @@
+     b.emit("}")
+     wide = b.cmp("wide", "uge", cap, b.i(48))
+ 
+-    def chain(tile, gu_k, dn_k):
+-        klaunch(b, "inkling_experts_routes", [], list(zip([cap, b.i(tile), "%ab", "%tasks"], ["index", "index", "buffer", "buffer"])))
++    def chain(tile, gu_k, dn_k, routes=True):
++        if routes:
++            klaunch(b, "inkling_experts_routes", [], list(zip([cap, b.i(tile), "%ab", "%tasks"], ["index", "index", "buffer", "buffer"])))
+         klaunch(b, gu_k, [cap], list(zip([cap, wtype, "%gate", "%tasks", gu, gus, "%act"], ["index", "index"] + ["buffer"] * 5)))
+         klaunch(b, dn_k, [cap], list(zip([cap, wtype, "%act", "%tasks", dn, dns, "%dout"], ["index", "index"] + ["buffer"] * 5)))
+ 
++    decode = b.cmp("decode_rows", "ule", cap, b.i(8))
++    b.emit("scf.if %s {" % decode)
++    klaunch(b, "inkling_router_decode", [], list(zip([cap, b.i(8), "%small", bias, "%ab", "%ob", "%tasks"], ["index", "index"] + ["buffer"] * 5)))
++    b.emit("} else {")
++    klaunch(b, "inkling_router_select", [cap], list(zip([cap, "%small", bias, "%ab", "%ob"], ["index"] + ["buffer"] * 4)))
++    b.emit("}")
+     b.emit("scf.if %s {" % wide)
+     chain(64, "inkling_experts_gate_up_wmma", "inkling_experts_down_wmma")
+     b.emit("} else {")
++    b.emit("scf.if %s {" % decode)
++    chain(8, "inkling_experts_gate_up", "inkling_experts_down", routes=False)
++    b.emit("} else {")
+     chain(8, "inkling_experts_gate_up", "inkling_experts_down")
+     b.emit("}")
++    b.emit("}")
+     klaunch(b, "inkling_experts_combine", [cap], list(zip([cap, "%dout", "%ob", "%y"], ["index"] + ["buffer"] * 3)))
+     out.append(hook("experts", b))
+     return "".join(out)

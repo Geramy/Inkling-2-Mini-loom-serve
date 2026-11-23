@@ -87,6 +87,7 @@ for l in body.splitlines():
     lines.append(l)
 open(out, "w").write("\n".join(lines) + "\n")
 PY
+  [ -z "${QS_DROP_PARAMETER_MODE:-}" ] || sed -i "s# --parameter_mode=preload##" "$QS/cmds.sh"
   sed -i "s#--output=unsloth-Inkling-2-Mini-loom#--output=$QS/unsloth-Inkling-2-Mini-loom#; s#--materialize=copy#--materialize=share#; s#--model=unsloth-Inkling-2-Mini-loom#--model=$QS/unsloth-Inkling-2-Mini-loom#" "$QS/cmds.sh"
   sed 's/^/  qs: /' "$QS/cmds.sh" | cut -c1-230
   FETCH=$(grep '^loom-fetch' "$QS/cmds.sh"); SERVE=$(grep '^loom-serve' "$QS/cmds.sh")

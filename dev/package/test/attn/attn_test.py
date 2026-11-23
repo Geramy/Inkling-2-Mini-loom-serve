@@ -11,9 +11,9 @@ import argparse, json, os, re, subprocess, sys
 import numpy as np
 
 HOME = os.path.expanduser("~")
-ROOT = f"{HOME}/inkling/inkE"
+ROOT = os.environ.get("ATTN_ROOT", f"{HOME}/inkling/inkE")
 ORACLE = os.environ.get("ATTN_ORACLE", f"{HOME}/inkling/inkB/oracle/dumps")
-LONG = os.environ.get("ATTN_LONG", f"{ROOT}/oracle_long/Q8_K_XL_L1")
+LONG = os.environ.get("ATTN_LONG", f"{HOME}/inkling/inkE/oracle_long/Q8_K_XL_L1")
 GGUF = f"{HOME}/models/inkling2-mini/Mainline_Support/Inkling-2-Mini-UD-Q8_K_XL.gguf"
 FIX = f"{ROOT}/fixtures"
 OUT = f"{ROOT}/out"
@@ -199,8 +199,11 @@ DECL = {
              "%k_raw: buffer, %v_raw: buffer"),
     "append": ("inkling_attn_kv_append", "%cap: index, %span_cap: index, %global: index, %max_blocks: index, %kv_origin: offset, "
                "%spans: buffer, %rows: buffer, %state: buffer, %k_act: buffer, %v_act: buffer"),
+    "post": ("inkling_attn_post", "%cap: index, %span_cap: index, %global: index, %split_blocks: index, %max_splits: index, %max_blocks: index, "
+             "%kv_origin: offset, %conv_origin: offset, %spans: buffer, %rows: buffer, %state: buffer, %sink: buffer, %gate: buffer, %out: buffer, "
+             "%partial: buffer, %k_act: buffer, %v_act: buffer, %k_raw: buffer, %v_raw: buffer"),
 }
-PER_CHUNK = ("spans", "q_raw", "k_raw", "v_raw", "r_raw", "dyn_k", "dyn_v", "sink", "gate", "q", "r", "k_act", "v_act", "out", "partial", "cap")
+PER_CHUNK = ("spans", "q_raw", "k_raw", "v_raw", "r_raw", "dyn_k", "dyn_v", "sink", "gate", "q", "r", "k_act", "v_act", "out", "partial", "cap", "post")
 
 
 def nmse(a, b):
@@ -275,15 +278,19 @@ def run_epochs(dev, name, seqs, epochs, bps=8):
         c.zeros(p + "out", [n, 3072])
         c.zeros(p + "partial", [span_cap * 24 * max_splits * 136])
         c.lit(p + "cap", n)
+        c.lit(p + "post", span_cap * 40 + n)
         c.lit(p + "tiles", sum(-(-(b - a) // 16) for _, a, b, _ in spans) + span_cap)
         c.launch(*DECL["prep"], [p + "cap"], S("cap span_cap global conv_origin spans state q_raw k_raw v_raw r_raw dyn_k dyn_v "
                                                "w_q_clip w_rel_clip w_k_conv w_v_conv q r k_act v_act"))
         tile = "cap span_cap {m} global split_blocks max_splits max_blocks kv_origin spans rows state q r k_act v_act rel_bias sink gate out partial"
         c.launch(*DECL["tile"], [p + "tiles", "heads", "one"], S(tile.format(m="mode0")))
         c.launch(*DECL["tile"], ["span_cap", "kv8", "max_splits"], S(tile.format(m="mode1")))
-        c.launch(*DECL["merge"], ["span_cap"], S("cap span_cap global split_blocks max_splits spans sink gate out partial"))
-        c.launch(*DECL["conv"], ["span_cap"], S("span_cap cap conv_origin spans state k_raw v_raw"))
-        c.launch(*DECL["append"], [p + "cap"], S("cap span_cap global max_blocks kv_origin spans rows state k_act v_act"))
+        if os.environ.get("ATTN_SEPARATE"):
+            c.launch(*DECL["merge"], ["span_cap"], S("cap span_cap global split_blocks max_splits spans sink gate out partial"))
+            c.launch(*DECL["conv"], ["span_cap"], S("span_cap cap conv_origin spans state k_raw v_raw"))
+            c.launch(*DECL["append"], [p + "cap"], S("cap span_cap global max_blocks kv_origin spans rows state k_act v_act"))
+        else:
+            c.launch(*DECL["post"], [p + "post"], S("cap span_cap global split_blocks max_splits max_blocks kv_origin conv_origin spans rows state sink gate out partial k_act v_act k_raw v_raw"))
         for x in ("q", "r", "k_act", "v_act", "out"):
             c.write(p + x, f"{name}/{p}{x}.npy")
     if not run_loom(c, dev):

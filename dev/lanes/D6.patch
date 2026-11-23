@@ -1,0 +1,375 @@
+diff -ruN package_T10b/kernel/experts/down.loom package_D6/kernel/experts/down.loom
+--- package_T10b/kernel/experts/down.loom	2026-11-21 21:35:39.458213100 -0800
++++ package_D6/kernel/experts/down.loom	2026-11-22 14:15:24.221016900 -0800
+@@ -3,6 +3,8 @@
+ 
+ func.decl @inkling_experts_records(%n: index) -> (index)
+ func.decl @inkling_experts_row_bytes(%wtype: index, %units: index) -> (offset)
++func.decl @inkling_nvfp4_unit_raw(%w: buffer, %row: offset, %units: index, %unit: index) -> (i32, i32, i32)
++func.decl @inkling_nvfp4_unit_decode(%scales: i32, %v0: i32, %v1: i32, %unit: index) -> (vector<16xf16>, f32)
+ func.decl @inkling_experts_unit_load(%wtype: index, %w: buffer, %row: offset, %units: index, %unit: index) -> (vector<16xf16>, f32)
+ func.decl @inkling_unit_dot(%codes: vector<16xf16>, %x: vector<16xf16>, %scale: f32) -> (f32)
+ 
+@@ -56,31 +58,75 @@
+     %w_byte = index.scale %w_row, %row_bytes : index, offset -> offset
+     %zero8 = vector.splatf 0.0 : vector<8xf32>
+     %av = buffer.view %act[%origin] : buffer -> view<[%routes]x[%c1152]xf16>
+-    %acc = scf.for %i = [%c0 to %c9 step %c1](%a = %zero8 : vector<8xf32>) -> (vector<8xf32>) {
+-      %i8 = index.mul %i, %c8 : index
+-      %unit = index.add %i8, %lr : index
+-      %codes, %scale = func.call @inkling_experts_unit_load(%wtype, %w, %w_byte, %c72, %unit) : (index, buffer, offset, index, index) -> (vector<16xf16>, f32)
+-      %elem_raw = index.mul %unit, %c16 : index
+-      %elem0 = index.assume %elem_raw [ge(%elem_raw, 0), le(%elem_raw, 1136)] : index
+-      %next = scf.for %t = [%c0 to %c8 step %c1](%v = %a : vector<8xf32>) -> (vector<8xf32>) unroll schedule(linear) {
+-        %active = index.cmp ult, %t, %live : index
+-        %prior = vector.extract %v[%t] : vector<8xf32> -> f32
+-        %updated = scf.if %active -> (f32) {
+-          %field = index.add %t, %c2 : index
+-          %route32 = view.load %table[%rec, %field] : view<[%capacity]x34xi32> -> i32
+-          %route_raw = index.cast %route32 : i32 to index
+-          %route = index.assume %route_raw [ge(%route_raw, 0), lt(%route_raw, %routes)] : index
+-          %xr = vector.load %av[%route, %elem0] : view<[%routes]x[%c1152]xf16> -> vector<16xf16>
+-          %d = func.call @inkling_unit_dot(%codes, %xr, %scale) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
+-          %s = scalar.addf %prior, %d : f32
+-          scf.yield %s : f32
+-        } else {
+-          scf.yield %prior : f32
++    // Fast path: NVFP4 and one live route. The loads of the next unit are issued before the current unit is decoded. The sums have the same order as in the generic loop.
++    %tag = index.madd %wtype, %c16, %live : index
++    %fast = index.cmp eq, %tag, %c1 : index
++    %acc = scf.if %fast -> (vector<8xf32>) {
++      %route_f32 = view.load %table[%rec, %c2] : view<[%capacity]x34xi32> -> i32
++      %route_f_raw = index.cast %route_f32 : i32 to index
++      %route_f = index.assume %route_f_raw [ge(%route_f_raw, 0), lt(%route_f_raw, %routes)] : index
++      %cG = index.constant 1 : index
++      %cN = index.constant 9 : index
++      %cLast = index.constant 8 : index
++      %k8_0 = index.constant 0 : index
++      %u0_0 = index.add %lr, %k8_0 : index
++      %pre_a0, %pre_b0, %pre_c0 = func.call @inkling_nvfp4_unit_raw(%w, %w_byte, %c72, %u0_0) : (buffer, offset, index, index) -> (i32, i32, i32)
++      %ef0 = index.mul %u0_0, %c16 : index
++      %efa0 = index.assume %ef0 [ge(%ef0, 0), le(%ef0, 1136)] : index
++      %x0_0 = vector.load %av[%route_f, %efa0] : view<[%routes]x[%c1152]xf16> -> vector<16xf16>
++      %zero_f = scalar.constant 0.0 : f32
++      %fa, %r_wa0, %r_wb0, %r_wc0, %r_cx0 = scf.for %i = [%c0 to %cN step %c1](%pa = %zero_f : f32, %wa0 = %pre_a0 : i32, %wb0 = %pre_b0 : i32, %wc0 = %pre_c0 : i32, %cx0 = %x0_0 : vector<16xf16>) -> (f32, i32, i32, i32, vector<16xf16>) {
++        %i1 = index.add %i, %c1 : index
++        %more = index.cmp ult, %i1, %cN : index
++        %inext = scf.select %more, %i1, %cLast : index
++        %ig = index.mul %i, %cG : index
++        %ing = index.mul %inext, %cG : index
++        %ck0 = index.constant 0 : index
++        %ia0 = index.add %ig, %ck0 : index
++        %ib0 = index.mul %ia0, %c8 : index
++        %unit0 = index.add %ib0, %lr : index
++        %na0 = index.add %ing, %ck0 : index
++        %nb0 = index.mul %na0, %c8 : index
++        %unit_n0 = index.add %nb0, %lr : index
++        %n_a0, %n_b0, %n_c0 = func.call @inkling_nvfp4_unit_raw(%w, %w_byte, %c72, %unit_n0) : (buffer, offset, index, index) -> (i32, i32, i32)
++        %en_raw0 = index.mul %unit_n0, %c16 : index
++        %en0 = index.assume %en_raw0 [ge(%en_raw0, 0), le(%en_raw0, 1136)] : index
++        %xn0 = vector.load %av[%route_f, %en0] : view<[%routes]x[%c1152]xf16> -> vector<16xf16>
++        %codes0, %scale0 = func.call @inkling_nvfp4_unit_decode(%wa0, %wb0, %wc0, %unit0) : (i32, i32, i32, index) -> (vector<16xf16>, f32)
++        %d0 = func.call @inkling_unit_dot(%codes0, %cx0, %scale0) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
++        %s0 = scalar.addf %pa, %d0 : f32
++        scf.yield %s0, %n_a0, %n_b0, %n_c0, %xn0 : f32, i32, i32, i32, vector<16xf16>
++      }
++      %fa8 = vector.insert %fa into %zero8[0] : f32, vector<8xf32>
++      scf.yield %fa8 : vector<8xf32>
++    } else {
++      %nacc = scf.for %i = [%c0 to %c9 step %c1](%a = %zero8 : vector<8xf32>) -> (vector<8xf32>) {
++        %i8 = index.mul %i, %c8 : index
++        %unit = index.add %i8, %lr : index
++        %codes, %scale = func.call @inkling_experts_unit_load(%wtype, %w, %w_byte, %c72, %unit) : (index, buffer, offset, index, index) -> (vector<16xf16>, f32)
++        %elem_raw = index.mul %unit, %c16 : index
++        %elem0 = index.assume %elem_raw [ge(%elem_raw, 0), le(%elem_raw, 1136)] : index
++        %next = scf.for %t = [%c0 to %c8 step %c1](%v = %a : vector<8xf32>) -> (vector<8xf32>) unroll schedule(linear) {
++          %active = index.cmp ult, %t, %live : index
++          %prior = vector.extract %v[%t] : vector<8xf32> -> f32
++          %updated = scf.if %active -> (f32) {
++            %field = index.add %t, %c2 : index
++            %route32 = view.load %table[%rec, %field] : view<[%capacity]x34xi32> -> i32
++            %route_raw = index.cast %route32 : i32 to index
++            %route = index.assume %route_raw [ge(%route_raw, 0), lt(%route_raw, %routes)] : index
++            %xr = vector.load %av[%route, %elem0] : view<[%routes]x[%c1152]xf16> -> vector<16xf16>
++            %d = func.call @inkling_unit_dot(%codes, %xr, %scale) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
++            %s = scalar.addf %prior, %d : f32
++            scf.yield %s : f32
++          } else {
++            scf.yield %prior : f32
++          }
++          %v2 = vector.insert %updated into %v[%t] : f32, vector<8xf32>
++          scf.yield %v2 : vector<8xf32>
+         }
+-        %v2 = vector.insert %updated into %v[%t] : f32, vector<8xf32>
+-        scf.yield %v2 : vector<8xf32>
++        scf.yield %next : vector<8xf32>
+       }
+-      scf.yield %next : vector<8xf32>
++      scf.yield %nacc : vector<8xf32>
+     }
+     %sum = kernel.subgroup.reduce<addf> %acc {cluster_size = 8} : vector<8xf32>
+     %leader = index.cmp eq, %lr, %c0 : index
+diff -ruN package_T10b/kernel/experts/gate_up.loom package_D6/kernel/experts/gate_up.loom
+--- package_T10b/kernel/experts/gate_up.loom	2026-11-21 21:35:39.452684700 -0800
++++ package_D6/kernel/experts/gate_up.loom	2026-11-22 14:15:23.913915900 -0800
+@@ -3,6 +3,8 @@
+ 
+ func.decl @inkling_experts_records(%n: index) -> (index)
+ func.decl @inkling_experts_row_bytes(%wtype: index, %units: index) -> (offset)
++func.decl @inkling_nvfp4_unit_raw(%w: buffer, %row: offset, %units: index, %unit: index) -> (i32, i32, i32)
++func.decl @inkling_nvfp4_unit_decode(%scales: i32, %v0: i32, %v1: i32, %unit: index) -> (vector<16xf16>, f32)
+ func.decl @inkling_experts_unit_load(%wtype: index, %w: buffer, %row: offset, %units: index, %unit: index) -> (vector<16xf16>, f32)
+ func.decl @inkling_unit_dot(%codes: vector<16xf16>, %x: vector<16xf16>, %scale: f32) -> (f32)
+ func.decl @inkling_x_slot(%e: index) -> (index)
+@@ -60,38 +62,115 @@
+     %up_byte = index.scale %up_row0, %row_bytes : index, offset -> offset
+     %zero8 = vector.splatf 0.0 : vector<8xf32>
+     %xv = buffer.view %x[%origin] : buffer -> view<[%n]x[%c2304]xf16>
+-    %gacc, %uacc = scf.for %i = [%c0 to %c18 step %c1](%ga = %zero8 : vector<8xf32>, %ua = %zero8 : vector<8xf32>) -> (vector<8xf32>, vector<8xf32>) {
+-      %i8 = index.mul %i, %c8 : index
+-      %unit = index.add %i8, %lr : index
+-      %gcodes, %gscale = func.call @inkling_experts_unit_load(%wtype, %w, %gate_byte, %c144, %unit) : (index, buffer, offset, index, index) -> (vector<16xf16>, f32)
+-      %ucodes, %uscale = func.call @inkling_experts_unit_load(%wtype, %w, %up_byte, %c144, %unit) : (index, buffer, offset, index, index) -> (vector<16xf16>, f32)
+-      %elem_raw = index.mul %unit, %c16 : index
+-      %elem0 = index.assume %elem_raw [ge(%elem_raw, 0), le(%elem_raw, 2288)] : index
+-      %ng, %nu = scf.for %t = [%c0 to %c8 step %c1](%g = %ga : vector<8xf32>, %u = %ua : vector<8xf32>) -> (vector<8xf32>, vector<8xf32>) unroll schedule(linear) {
+-        %active = index.cmp ult, %t, %live : index
+-        %pg = vector.extract %g[%t] : vector<8xf32> -> f32
+-        %pu = vector.extract %u[%t] : vector<8xf32> -> f32
+-        %rg, %ru = scf.if %active -> (f32, f32) {
+-          %field = index.add %t, %c2 : index
+-          %route32 = view.load %table[%rec, %field] : view<[%capacity]x34xi32> -> i32
+-          %route_raw = index.cast %route32 : i32 to index
+-          %route = index.assume %route_raw [ge(%route_raw, 0), lt(%route_raw, %routes)] : index
+-          %token_raw = index.div %route, %c8 : index
+-          %token = index.assume %token_raw [ge(%token_raw, 0), lt(%token_raw, %n)] : index
+-          %xr = vector.load %xv[%token, %elem0] : view<[%n]x[%c2304]xf16> -> vector<16xf16>
+-          %dg = func.call @inkling_unit_dot(%gcodes, %xr, %gscale) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
+-          %du = func.call @inkling_unit_dot(%ucodes, %xr, %uscale) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
+-          %sg = scalar.addf %pg, %dg : f32
+-          %su = scalar.addf %pu, %du : f32
+-          scf.yield %sg, %su : f32, f32
+-        } else {
+-          scf.yield %pg, %pu : f32, f32
++    // Fast path: NVFP4 and one live route. The loads of the next two units are issued before the current units are decoded. The sums have the same order as in the generic loop.
++    %cN_last = index.constant 8 : index
++    %tag = index.madd %wtype, %c16, %live : index
++    %fast = index.cmp eq, %tag, %c1 : index
++    %gacc, %uacc = scf.if %fast -> (vector<8xf32>, vector<8xf32>) {
++      %route_f32 = view.load %table[%rec, %c2] : view<[%capacity]x34xi32> -> i32
++      %route_f_raw = index.cast %route_f32 : i32 to index
++      %route_f = index.assume %route_f_raw [ge(%route_f_raw, 0), lt(%route_f_raw, %routes)] : index
++      %token_f_raw = index.div %route_f, %c8 : index
++      %token_f = index.assume %token_f_raw [ge(%token_f_raw, 0), lt(%token_f_raw, %n)] : index
++      %cG = index.constant 2 : index
++      %cN = index.constant 9 : index
++      %k8_0 = index.constant 0 : index
++      %u0_0 = index.add %lr, %k8_0 : index
++      %pre_a0, %pre_b0, %pre_c0 = func.call @inkling_nvfp4_unit_raw(%w, %gate_byte, %c144, %u0_0) : (buffer, offset, index, index) -> (i32, i32, i32)
++      %pre_d0, %pre_e0, %pre_f0 = func.call @inkling_nvfp4_unit_raw(%w, %up_byte, %c144, %u0_0) : (buffer, offset, index, index) -> (i32, i32, i32)
++      %ef0 = index.mul %u0_0, %c16 : index
++      %efa0 = index.assume %ef0 [ge(%ef0, 0), le(%ef0, 2288)] : index
++      %x0_0 = vector.load %xv[%token_f, %efa0] : view<[%n]x[%c2304]xf16> -> vector<16xf16>
++      %k8_1 = index.constant 8 : index
++      %u0_1 = index.add %lr, %k8_1 : index
++      %pre_a1, %pre_b1, %pre_c1 = func.call @inkling_nvfp4_unit_raw(%w, %gate_byte, %c144, %u0_1) : (buffer, offset, index, index) -> (i32, i32, i32)
++      %pre_d1, %pre_e1, %pre_f1 = func.call @inkling_nvfp4_unit_raw(%w, %up_byte, %c144, %u0_1) : (buffer, offset, index, index) -> (i32, i32, i32)
++      %ef1 = index.mul %u0_1, %c16 : index
++      %efa1 = index.assume %ef1 [ge(%ef1, 0), le(%ef1, 2288)] : index
++      %x0_1 = vector.load %xv[%token_f, %efa1] : view<[%n]x[%c2304]xf16> -> vector<16xf16>
++      %zero_f = scalar.constant 0.0 : f32
++      %fg, %fu, %r_ga0, %r_gb0, %r_gc0, %r_ua0, %r_ub0, %r_uc0, %r_cx0, %r_ga1, %r_gb1, %r_gc1, %r_ua1, %r_ub1, %r_uc1, %r_cx1 = scf.for %i = [%c0 to %cN step %c1](%pg = %zero_f : f32, %pu = %zero_f : f32, %ga0 = %pre_a0 : i32, %gb0 = %pre_b0 : i32, %gc0 = %pre_c0 : i32, %ua0 = %pre_d0 : i32, %ub0 = %pre_e0 : i32, %uc0 = %pre_f0 : i32, %cx0 = %x0_0 : vector<16xf16>, %ga1 = %pre_a1 : i32, %gb1 = %pre_b1 : i32, %gc1 = %pre_c1 : i32, %ua1 = %pre_d1 : i32, %ub1 = %pre_e1 : i32, %uc1 = %pre_f1 : i32, %cx1 = %x0_1 : vector<16xf16>) -> (f32, f32, i32, i32, i32, i32, i32, i32, vector<16xf16>, i32, i32, i32, i32, i32, i32, vector<16xf16>) {
++        %i1 = index.add %i, %c1 : index
++        %more = index.cmp ult, %i1, %cN : index
++        %inext = scf.select %more, %i1, %cN_last : index
++        %ig = index.mul %i, %cG : index
++        %ing = index.mul %inext, %cG : index
++        %ck0 = index.constant 0 : index
++        %ia0 = index.add %ig, %ck0 : index
++        %ib0 = index.mul %ia0, %c8 : index
++        %unit0 = index.add %ib0, %lr : index
++        %na0 = index.add %ing, %ck0 : index
++        %nb0 = index.mul %na0, %c8 : index
++        %unit_n0 = index.add %nb0, %lr : index
++        %ck1 = index.constant 1 : index
++        %ia1 = index.add %ig, %ck1 : index
++        %ib1 = index.mul %ia1, %c8 : index
++        %unit1 = index.add %ib1, %lr : index
++        %na1 = index.add %ing, %ck1 : index
++        %nb1 = index.mul %na1, %c8 : index
++        %unit_n1 = index.add %nb1, %lr : index
++        %n_a0, %n_b0, %n_c0 = func.call @inkling_nvfp4_unit_raw(%w, %gate_byte, %c144, %unit_n0) : (buffer, offset, index, index) -> (i32, i32, i32)
++        %n_d0, %n_e0, %n_f0 = func.call @inkling_nvfp4_unit_raw(%w, %up_byte, %c144, %unit_n0) : (buffer, offset, index, index) -> (i32, i32, i32)
++        %en_raw0 = index.mul %unit_n0, %c16 : index
++        %en0 = index.assume %en_raw0 [ge(%en_raw0, 0), le(%en_raw0, 2288)] : index
++        %xn0 = vector.load %xv[%token_f, %en0] : view<[%n]x[%c2304]xf16> -> vector<16xf16>
++        %n_a1, %n_b1, %n_c1 = func.call @inkling_nvfp4_unit_raw(%w, %gate_byte, %c144, %unit_n1) : (buffer, offset, index, index) -> (i32, i32, i32)
++        %n_d1, %n_e1, %n_f1 = func.call @inkling_nvfp4_unit_raw(%w, %up_byte, %c144, %unit_n1) : (buffer, offset, index, index) -> (i32, i32, i32)
++        %en_raw1 = index.mul %unit_n1, %c16 : index
++        %en1 = index.assume %en_raw1 [ge(%en_raw1, 0), le(%en_raw1, 2288)] : index
++        %xn1 = vector.load %xv[%token_f, %en1] : view<[%n]x[%c2304]xf16> -> vector<16xf16>
++        %gcodes0, %gscale0 = func.call @inkling_nvfp4_unit_decode(%ga0, %gb0, %gc0, %unit0) : (i32, i32, i32, index) -> (vector<16xf16>, f32)
++        %ucodes0, %uscale0 = func.call @inkling_nvfp4_unit_decode(%ua0, %ub0, %uc0, %unit0) : (i32, i32, i32, index) -> (vector<16xf16>, f32)
++        %dg0 = func.call @inkling_unit_dot(%gcodes0, %cx0, %gscale0) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
++        %du0 = func.call @inkling_unit_dot(%ucodes0, %cx0, %uscale0) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
++        %sg0 = scalar.addf %pg, %dg0 : f32
++        %su0 = scalar.addf %pu, %du0 : f32
++        %gcodes1, %gscale1 = func.call @inkling_nvfp4_unit_decode(%ga1, %gb1, %gc1, %unit1) : (i32, i32, i32, index) -> (vector<16xf16>, f32)
++        %ucodes1, %uscale1 = func.call @inkling_nvfp4_unit_decode(%ua1, %ub1, %uc1, %unit1) : (i32, i32, i32, index) -> (vector<16xf16>, f32)
++        %dg1 = func.call @inkling_unit_dot(%gcodes1, %cx1, %gscale1) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
++        %du1 = func.call @inkling_unit_dot(%ucodes1, %cx1, %uscale1) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
++        %sg1 = scalar.addf %sg0, %dg1 : f32
++        %su1 = scalar.addf %su0, %du1 : f32
++        scf.yield %sg1, %su1, %n_a0, %n_b0, %n_c0, %n_d0, %n_e0, %n_f0, %xn0, %n_a1, %n_b1, %n_c1, %n_d1, %n_e1, %n_f1, %xn1 : f32, f32, i32, i32, i32, i32, i32, i32, vector<16xf16>, i32, i32, i32, i32, i32, i32, vector<16xf16>
++      }
++      %fg8 = vector.insert %fg into %zero8[0] : f32, vector<8xf32>
++      %fu8 = vector.insert %fu into %zero8[0] : f32, vector<8xf32>
++      scf.yield %fg8, %fu8 : vector<8xf32>, vector<8xf32>
++    } else {
++      %ngv, %nuv = scf.for %i = [%c0 to %c18 step %c1](%ga = %zero8 : vector<8xf32>, %ua = %zero8 : vector<8xf32>) -> (vector<8xf32>, vector<8xf32>) {
++        %i8 = index.mul %i, %c8 : index
++        %unit = index.add %i8, %lr : index
++        %gcodes, %gscale = func.call @inkling_experts_unit_load(%wtype, %w, %gate_byte, %c144, %unit) : (index, buffer, offset, index, index) -> (vector<16xf16>, f32)
++        %ucodes, %uscale = func.call @inkling_experts_unit_load(%wtype, %w, %up_byte, %c144, %unit) : (index, buffer, offset, index, index) -> (vector<16xf16>, f32)
++        %elem_raw = index.mul %unit, %c16 : index
++        %elem0 = index.assume %elem_raw [ge(%elem_raw, 0), le(%elem_raw, 2288)] : index
++        %ng, %nu = scf.for %t = [%c0 to %c8 step %c1](%g = %ga : vector<8xf32>, %u = %ua : vector<8xf32>) -> (vector<8xf32>, vector<8xf32>) unroll schedule(linear) {
++          %active = index.cmp ult, %t, %live : index
++          %pg = vector.extract %g[%t] : vector<8xf32> -> f32
++          %pu = vector.extract %u[%t] : vector<8xf32> -> f32
++          %rg, %ru = scf.if %active -> (f32, f32) {
++            %field = index.add %t, %c2 : index
++            %route32 = view.load %table[%rec, %field] : view<[%capacity]x34xi32> -> i32
++            %route_raw = index.cast %route32 : i32 to index
++            %route = index.assume %route_raw [ge(%route_raw, 0), lt(%route_raw, %routes)] : index
++            %token_raw = index.div %route, %c8 : index
++            %token = index.assume %token_raw [ge(%token_raw, 0), lt(%token_raw, %n)] : index
++            %xr = vector.load %xv[%token, %elem0] : view<[%n]x[%c2304]xf16> -> vector<16xf16>
++            %dg = func.call @inkling_unit_dot(%gcodes, %xr, %gscale) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
++            %du = func.call @inkling_unit_dot(%ucodes, %xr, %uscale) : (vector<16xf16>, vector<16xf16>, f32) -> (f32)
++            %sg = scalar.addf %pg, %dg : f32
++            %su = scalar.addf %pu, %du : f32
++            scf.yield %sg, %su : f32, f32
++          } else {
++            scf.yield %pg, %pu : f32, f32
++          }
++          %g2 = vector.insert %rg into %g[%t] : f32, vector<8xf32>
++          %u2 = vector.insert %ru into %u[%t] : f32, vector<8xf32>
++          scf.yield %g2, %u2 : vector<8xf32>, vector<8xf32>
+         }
+-        %g2 = vector.insert %rg into %g[%t] : f32, vector<8xf32>
+-        %u2 = vector.insert %ru into %u[%t] : f32, vector<8xf32>
+-        scf.yield %g2, %u2 : vector<8xf32>, vector<8xf32>
++        scf.yield %ng, %nu : vector<8xf32>, vector<8xf32>
+       }
+-      scf.yield %ng, %nu : vector<8xf32>, vector<8xf32>
++      scf.yield %ngv, %nuv : vector<8xf32>, vector<8xf32>
+     }
+     %gsum = kernel.subgroup.reduce<addf> %gacc {cluster_size = 8} : vector<8xf32>
+     %usum = kernel.subgroup.reduce<addf> %uacc {cluster_size = 8} : vector<8xf32>
+diff -ruN package_T10b/lib/inkling/experts_common.loom package_D6/lib/inkling/experts_common.loom
+--- package_T10b/lib/inkling/experts_common.loom	2026-11-21 21:35:38.976337500 -0800
++++ package_D6/lib/inkling/experts_common.loom	2026-11-22 14:13:25.996652200 -0800
+@@ -197,3 +197,81 @@
+   %result = vector.mulf %real, %fac_v : vector<16xf16>
+   func.return %result : vector<16xf16>
+ }
++
++// First stage of an NVFP4 unit load for the decode kernels: the scale word and the two code words, not yet decoded.
++func.def public inline @inkling_nvfp4_unit_raw(%w: buffer, %row: offset, %units: index, %unit: index) -> (i32, i32, i32) {
++  %c1 = index.constant 1 : index
++  %c2 = index.constant 2 : index
++  %c4 = index.constant 4 : index
++  %c9 = index.constant 9 : index
++  %block = index.div %unit, %c4 : index
++  %sub = index.rem %unit, %c4 : index
++  %words = index.mul %units, %c9 : index
++  %nwords = index.div %words, %c4 : index
++  %view = buffer.view %w[%row] : buffer -> view<[%nwords]xi32>
++  %w9 = index.mul %block, %c9 : index
++  %sub2 = index.mul %sub, %c2 : index
++  %q0 = index.add %w9, %sub2 : index
++  %i0 = index.add %q0, %c1 : index
++  %i1 = index.add %q0, %c2 : index
++  %scales = view.load %view[%w9] : view<[%nwords]xi32> -> i32
++  %v0 = view.load %view[%i0] : view<[%nwords]xi32> -> i32
++  %v1 = view.load %view[%i1] : view<[%nwords]xi32> -> i32
++  func.return %scales, %v0, %v1 : i32, i32, i32
++}
++
++// Second stage: f16 codes in slot order and the f32 scale of sub-block `sub` (unit mod 4).
++func.def public inline @inkling_nvfp4_unit_decode(%scales: i32, %v0: i32, %v1: i32, %unit: index) -> (vector<16xf16>, f32) {
++  %c4 = index.constant 4 : index
++  %sub = index.rem %unit, %c4 : index
++  %raw = func.call @inkling_nvfp4_scale(%scales, %sub) : (i32, index) -> (f32)
++  %k14 = scalar.constant 16384.0 : f32
++  %scale = scalar.mulf %raw, %k14 : f32
++  %codes = func.call @inkling_nvfp4_codes_fast(%v0, %v1) : (i32, i32) -> (vector<16xf16>)
++  func.return %codes, %scale : vector<16xf16>, f32
++}
++
++// Nibble pair k (0..2) of word w as two f16 codes: the magnitude moves to bits 9..11, the sign to bit 15, of both halves.
++func.def public inline @inkling_nvfp4_pair_shl(%w: i32, %mag_shift: i32, %sgn_shift: i32) -> (i32) {
++  %mag_mask = scalar.constant 234884608 : i32
++  %sgn_mask = scalar.constant -2147450880 : i32
++  %mag_moved = scalar.shli %w, %mag_shift : i32
++  %sgn_moved = scalar.shli %w, %sgn_shift : i32
++  %mag = scalar.andi %mag_moved, %mag_mask : i32
++  %sgn = scalar.andi %sgn_moved, %sgn_mask : i32
++  %pair = scalar.ori %mag, %sgn : i32
++  func.return %pair : i32
++}
++
++// Same for nibble pair 3: the sign is already in place.
++func.def public inline @inkling_nvfp4_pair_top(%w: i32) -> (i32) {
++  %mag_mask = scalar.constant 234884608 : i32
++  %sgn_mask = scalar.constant -2147450880 : i32
++  %c3 = scalar.constant 3 : i32
++  %mag_moved = scalar.shrui %w, %c3 : i32
++  %mag = scalar.andi %mag_moved, %mag_mask : i32
++  %sgn = scalar.andi %w, %sgn_mask : i32
++  %pair = scalar.ori %mag, %sgn : i32
++  func.return %pair : i32
++}
++
++// Result equals inkling_nvfp4_codes with fewer operations (decode path only).
++func.def public inline @inkling_nvfp4_codes_fast(%w0: i32, %w1: i32) -> (vector<16xf16>) {
++  %m0 = scalar.constant 9 : i32
++  %m1 = scalar.constant 5 : i32
++  %m2 = scalar.constant 1 : i32
++  %s0 = scalar.constant 12 : i32
++  %s1 = scalar.constant 8 : i32
++  %s2 = scalar.constant 4 : i32
++  %a0 = func.call @inkling_nvfp4_pair_shl(%w0, %m0, %s0) : (i32, i32, i32) -> (i32)
++  %a1 = func.call @inkling_nvfp4_pair_shl(%w0, %m1, %s1) : (i32, i32, i32) -> (i32)
++  %a2 = func.call @inkling_nvfp4_pair_shl(%w0, %m2, %s2) : (i32, i32, i32) -> (i32)
++  %a3 = func.call @inkling_nvfp4_pair_top(%w0) : (i32) -> (i32)
++  %b0 = func.call @inkling_nvfp4_pair_shl(%w1, %m0, %s0) : (i32, i32, i32) -> (i32)
++  %b1 = func.call @inkling_nvfp4_pair_shl(%w1, %m1, %s1) : (i32, i32, i32) -> (i32)
++  %b2 = func.call @inkling_nvfp4_pair_shl(%w1, %m2, %s2) : (i32, i32, i32) -> (i32)
++  %b3 = func.call @inkling_nvfp4_pair_top(%w1) : (i32) -> (i32)
++  %words = vector.from_elements %a0, %a1, %a2, %a3, %b0, %b1, %b2, %b3 : vector<8xi32>
++  %codes = vector.bitcast %words : vector<8xi32> to vector<16xf16>
++  func.return %codes : vector<16xf16>
++}
+diff -ruN package_T10b/test/experts/bench_experts.py package_D6/test/experts/bench_experts.py
+--- package_T10b/test/experts/bench_experts.py	2026-11-21 23:29:53.702566500 -0800
++++ package_D6/test/experts/bench_experts.py	2026-11-22 14:14:51.871923600 -0800
+@@ -11,7 +11,7 @@
+ SUF = "_wmma" if WMMA else ""
+ TILE = 64 if WMMA else 8
+ ns = [int(a) for a in sys.argv[2:]] or [1, 8, 16, 128, 512]
+-cache = os.path.expanduser("~/inkling/optP1/work/cache")
++cache = os.path.expanduser(os.environ.get("BENCH_CACHE", "~/inkling/optP1/work/cache"))
+ os.makedirs(cache, exist_ok=True)
+ L = int(os.environ.get("LAYER", "0"))
+ KIND = os.environ.get("KIND", "q4")
+@@ -129,7 +129,7 @@
+     for name in specs:
+         res = f"{d}/res_{name}.json"
+         cmd = ["flock", "-x", LOCK, "loom-benchmark", f"{d}/bench_merged.loom", f"--benchmark=@bench_{name}", "--device=" + URI[arch], "--output=" + res,
+-               "--measure=dispatch_complete", "--batch-size=16", "--iterations=20", "--warmup-iterations=3", "--input-ring-count=4", "--profile-final-batch=true"]
++               "--measure=dispatch_complete", "--batch-size=16", "--iterations=" + os.environ.get("ITERS", "20"), "--warmup-iterations=3", "--input-ring-count=" + os.environ.get("RING", "4"), "--profile-final-batch=true"]
+         r = subprocess.run(cmd, capture_output=True, text=True)
+         if r.returncode != 0:
+             print(name, "benchmark failed", r.stderr[-1500:], r.stdout[-500:])

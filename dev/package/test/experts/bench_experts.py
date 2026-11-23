@@ -8,10 +8,12 @@ import refs, gguf_io as G
 
 arch = sys.argv[1]
 WMMA = os.environ.get("WMMA") == "1"
+W64 = os.environ.get("W64") == "1"
 SUF = "_wmma" if WMMA else ""
+SUFD = SUF or ("_w64" if W64 else "")
 TILE = 64 if WMMA else 8
 ns = [int(a) for a in sys.argv[2:]] or [1, 8, 16, 128, 512]
-cache = os.path.expanduser("~/inkling/optP1/work/cache")
+cache = os.path.expanduser(os.environ.get("BENCH_CACHE", "~/inkling/optP1/work/cache"))
 os.makedirs(cache, exist_ok=True)
 L = int(os.environ.get("LAYER", "0"))
 KIND = os.environ.get("KIND", "q4")
@@ -60,11 +62,11 @@ def prelude(n):
     c.launch("inkling_router_select", ["n"], [("n", "index"), ("logits", "logits"), ("bias", "bias"), ("ids", "ids"), ("wts", "wts")], ("%n: index", "%n: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer"))
     c.launch("inkling_experts_routes", [], [("n", "index"), ("tile", "index"), ("ids", "ids"), ("tasks", "tasks")], ("", "%n: index, %tile: index, %ids: buffer, %tasks: buffer"))
     c.launch("inkling_experts_gate_up" + SUF, ["n"], [("n", "index"), ("wtype", "index"), ("x16", "x16"), ("tasks", "tasks"), ("wgu", "wgu"), ("sgu", "sgu"), ("act", "act")], ("%n: index", "%n: index, %wtype: index, %x: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %act: buffer"))
-    c.launch("inkling_experts_down" + SUF, ["n"], [("n", "index"), ("wtype", "index"), ("act", "act"), ("tasks", "tasks"), ("wdn", "wdn"), ("sdn", "sdn"), ("dout", "dout")], ("%n: index", "%n: index, %wtype: index, %act: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %dout: buffer"))
+    c.launch("inkling_experts_down" + SUFD, ["n"], [("n", "index"), ("wtype", "index"), ("act", "act"), ("tasks", "tasks"), ("wdn", "wdn"), ("sdn", "sdn"), ("dout", "dout")], ("%n: index", "%n: index, %wtype: index, %act: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %dout: buffer"))
     c.launch("inkling_experts_combine", ["n"], [("n", "index"), ("dout", "dout"), ("wts", "wts"), ("y", "y")], ("%n: index", "%n: index, %dout: buffer, %wts: buffer, %y: buffer"))
     for o in ("logits", "x16", "ids", "wts", "tasks", "act", "dout", "y"):
         c.out(o)
-    out = c.run(arch, ["router.loom", "routes.loom", "gate_up.loom", "down.loom", "combine.loom"] if not WMMA else ["router.loom", "routes.loom", "gate_up_wmma.loom", "down_wmma.loom", "combine.loom"])
+    out = c.run(arch, ["router.loom", "routes.loom", "gate_up.loom", "down.loom", "combine.loom"] + (["down_w64.loom"] if W64 else []) if not WMMA else ["router.loom", "routes.loom", "gate_up_wmma.loom", "down_wmma.loom", "combine.loom"])
     return x, out
 
 
@@ -83,7 +85,7 @@ def bench_module(n, out, d):
         "router_select": (["n"], ["n", "logits", "bias", "ids", "wts"], "inkling_router_select", ["logits", "bias", "ids", "wts"]),
         "routes": ([], ["n", "tile", "ids", "tasks"], "inkling_experts_routes", ["ids", "tasks"]),
         "gate_up": (["n"], ["n", "wtype", "x16", "tasks", "wgu", "sgu", "act"], "inkling_experts_gate_up" + SUF, ["x16", "tasks", "wgu", "sgu", "act"]),
-        "down": (["n"], ["n", "wtype", "act", "tasks", "wdn", "sdn", "dout"], "inkling_experts_down" + SUF, ["act", "tasks", "wdn", "sdn", "dout"]),
+        "down": (["n"], ["n", "wtype", "act", "tasks", "wdn", "sdn", "dout"], "inkling_experts_down" + SUFD, ["act", "tasks", "wdn", "sdn", "dout"]),
         "combine": (["n"], ["n", "dout", "wts", "y"], "inkling_experts_combine", ["dout", "wts", "y"]),
     }
     return specs
@@ -100,11 +102,11 @@ def run_bench(n, tag):
         "inkling_router_select": ("%n: index", "%n: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer"),
         "inkling_experts_routes": ("", "%n: index, %tile: index, %ids: buffer, %tasks: buffer"),
         "inkling_experts_gate_up" + SUF: ("%n: index", "%n: index, %wtype: index, %x: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %act: buffer"),
-        "inkling_experts_down" + SUF: ("%n: index", "%n: index, %wtype: index, %act: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %dout: buffer"),
+        "inkling_experts_down" + SUFD: ("%n: index", "%n: index, %wtype: index, %act: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %dout: buffer"),
         "inkling_experts_combine": ("%n: index", "%n: index, %dout: buffer, %wts: buffer, %y: buffer"),
     }
     src = []
-    kfiles = ["router.loom", "routes.loom", "gate_up.loom", "down.loom", "combine.loom"] if not WMMA else ["router.loom", "routes.loom", "gate_up_wmma.loom", "down_wmma.loom", "combine.loom"]
+    kfiles = ["router.loom", "routes.loom", "gate_up.loom", "down.loom", "combine.loom"] + (["down_w64.loom"] if W64 else []) if not WMMA else ["router.loom", "routes.loom", "gate_up_wmma.loom", "down_wmma.loom", "combine.loom"]
     decls = []
     for name, (wl, args, kern, ins) in specs.items():
         c = Case("b_" + name, d)
@@ -129,7 +131,7 @@ def run_bench(n, tag):
     for name in specs:
         res = f"{d}/res_{name}.json"
         cmd = ["flock", "-x", LOCK, "loom-benchmark", f"{d}/bench_merged.loom", f"--benchmark=@bench_{name}", "--device=" + URI[arch], "--output=" + res,
-               "--measure=dispatch_complete", "--batch-size=16", "--iterations=20", "--warmup-iterations=3", "--input-ring-count=4", "--profile-final-batch=true"]
+               "--measure=dispatch_complete", "--batch-size=16", "--iterations=" + os.environ.get("ITERS", "20"), "--warmup-iterations=3", "--input-ring-count=" + os.environ.get("RING", "4"), "--profile-final-batch=true"]
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             print(name, "benchmark failed", r.stderr[-1500:], r.stdout[-500:])

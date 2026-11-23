@@ -197,3 +197,81 @@ func.def public inline @inkling_experts_unit_f16(%wtype: index, %w: buffer, %row
   %result = vector.mulf %real, %fac_v : vector<16xf16>
   func.return %result : vector<16xf16>
 }
+
+// First stage of an NVFP4 unit load for the decode kernels: the scale word and the two code words, not yet decoded.
+func.def public inline @inkling_nvfp4_unit_raw(%w: buffer, %row: offset, %units: index, %unit: index) -> (i32, i32, i32) {
+  %c1 = index.constant 1 : index
+  %c2 = index.constant 2 : index
+  %c4 = index.constant 4 : index
+  %c9 = index.constant 9 : index
+  %block = index.div %unit, %c4 : index
+  %sub = index.rem %unit, %c4 : index
+  %words = index.mul %units, %c9 : index
+  %nwords = index.div %words, %c4 : index
+  %view = buffer.view %w[%row] : buffer -> view<[%nwords]xi32>
+  %w9 = index.mul %block, %c9 : index
+  %sub2 = index.mul %sub, %c2 : index
+  %q0 = index.add %w9, %sub2 : index
+  %i0 = index.add %q0, %c1 : index
+  %i1 = index.add %q0, %c2 : index
+  %scales = view.load %view[%w9] : view<[%nwords]xi32> -> i32
+  %v0 = view.load %view[%i0] : view<[%nwords]xi32> -> i32
+  %v1 = view.load %view[%i1] : view<[%nwords]xi32> -> i32
+  func.return %scales, %v0, %v1 : i32, i32, i32
+}
+
+// Second stage: f16 codes in slot order and the f32 scale of sub-block `sub` (unit mod 4).
+func.def public inline @inkling_nvfp4_unit_decode(%scales: i32, %v0: i32, %v1: i32, %unit: index) -> (vector<16xf16>, f32) {
+  %c4 = index.constant 4 : index
+  %sub = index.rem %unit, %c4 : index
+  %raw = func.call @inkling_nvfp4_scale(%scales, %sub) : (i32, index) -> (f32)
+  %k14 = scalar.constant 16384.0 : f32
+  %scale = scalar.mulf %raw, %k14 : f32
+  %codes = func.call @inkling_nvfp4_codes_fast(%v0, %v1) : (i32, i32) -> (vector<16xf16>)
+  func.return %codes, %scale : vector<16xf16>, f32
+}
+
+// Nibble pair k (0..2) of word w as two f16 codes: the magnitude moves to bits 9..11, the sign to bit 15, of both halves.
+func.def public inline @inkling_nvfp4_pair_shl(%w: i32, %mag_shift: i32, %sgn_shift: i32) -> (i32) {
+  %mag_mask = scalar.constant 234884608 : i32
+  %sgn_mask = scalar.constant -2147450880 : i32
+  %mag_moved = scalar.shli %w, %mag_shift : i32
+  %sgn_moved = scalar.shli %w, %sgn_shift : i32
+  %mag = scalar.andi %mag_moved, %mag_mask : i32
+  %sgn = scalar.andi %sgn_moved, %sgn_mask : i32
+  %pair = scalar.ori %mag, %sgn : i32
+  func.return %pair : i32
+}
+
+// Same for nibble pair 3: the sign is already in place.
+func.def public inline @inkling_nvfp4_pair_top(%w: i32) -> (i32) {
+  %mag_mask = scalar.constant 234884608 : i32
+  %sgn_mask = scalar.constant -2147450880 : i32
+  %c3 = scalar.constant 3 : i32
+  %mag_moved = scalar.shrui %w, %c3 : i32
+  %mag = scalar.andi %mag_moved, %mag_mask : i32
+  %sgn = scalar.andi %w, %sgn_mask : i32
+  %pair = scalar.ori %mag, %sgn : i32
+  func.return %pair : i32
+}
+
+// Result equals inkling_nvfp4_codes with fewer operations (decode path only).
+func.def public inline @inkling_nvfp4_codes_fast(%w0: i32, %w1: i32) -> (vector<16xf16>) {
+  %m0 = scalar.constant 9 : i32
+  %m1 = scalar.constant 5 : i32
+  %m2 = scalar.constant 1 : i32
+  %s0 = scalar.constant 12 : i32
+  %s1 = scalar.constant 8 : i32
+  %s2 = scalar.constant 4 : i32
+  %a0 = func.call @inkling_nvfp4_pair_shl(%w0, %m0, %s0) : (i32, i32, i32) -> (i32)
+  %a1 = func.call @inkling_nvfp4_pair_shl(%w0, %m1, %s1) : (i32, i32, i32) -> (i32)
+  %a2 = func.call @inkling_nvfp4_pair_shl(%w0, %m2, %s2) : (i32, i32, i32) -> (i32)
+  %a3 = func.call @inkling_nvfp4_pair_top(%w0) : (i32) -> (i32)
+  %b0 = func.call @inkling_nvfp4_pair_shl(%w1, %m0, %s0) : (i32, i32, i32) -> (i32)
+  %b1 = func.call @inkling_nvfp4_pair_shl(%w1, %m1, %s1) : (i32, i32, i32) -> (i32)
+  %b2 = func.call @inkling_nvfp4_pair_shl(%w1, %m2, %s2) : (i32, i32, i32) -> (i32)
+  %b3 = func.call @inkling_nvfp4_pair_top(%w1) : (i32) -> (i32)
+  %words = vector.from_elements %a0, %a1, %a2, %a3, %b0, %b1, %b2, %b3 : vector<8xi32>
+  %codes = vector.bitcast %words : vector<8xi32> to vector<16xf16>
+  func.return %codes : vector<16xf16>
+}

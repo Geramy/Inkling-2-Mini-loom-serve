@@ -4,6 +4,8 @@ kernel.decl @inkling_experts_combine(%n: index) launch(%n: index, %dout: buffer,
 
 kernel.decl @inkling_experts_down(%n: index) launch(%n: index, %wtype: index, %act: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %dout: buffer)
 
+kernel.decl @inkling_experts_down_w64(%n: index) launch(%n: index, %wtype: index, %act: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %dout: buffer)
+
 kernel.decl @inkling_experts_down_wmma(%n: index) launch(%n: index, %wtype: index, %act: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %dout: buffer)
 
 kernel.decl @inkling_experts_gate_up(%n: index) launch(%n: index, %wtype: index, %x: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %act: buffer)
@@ -11,6 +13,8 @@ kernel.decl @inkling_experts_gate_up(%n: index) launch(%n: index, %wtype: index,
 kernel.decl @inkling_experts_gate_up_wmma(%n: index) launch(%n: index, %wtype: index, %x: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %act: buffer)
 
 kernel.decl @inkling_experts_routes() launch(%n: index, %tile: index, %ids: buffer, %tasks: buffer)
+
+kernel.decl @inkling_router_decode() launch(%n: index, %tile: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer, %tasks: buffer)
 
 kernel.decl @inkling_router_logits(%n: index) launch(%n: index, %x: buffer, %rw: buffer, %logits: buffer, %x16: buffer)
 
@@ -24,6 +28,21 @@ func.decl pure @inkling_expert_wtype(%layer: index) -> (index)
 
 // Expert hooks. Router results live in shared buffers: logits in small ([cap][128]), ids in ab, weights in ob, f16 router input in gate (docs/DISPATCH.md aliasing table).
 
+target.decl @inkling_rdna3
+
+// Subgroup size of the decode down kernel (docs/OPT_W64.md).
+template.decl @inkling.tune.experts.down_wave() -> (index)
+
+template.def<@inkling.tune.experts.down_wave> priority(-1) @inkling_experts_down_wave_default() -> (index) {
+  %value = index.constant 32 : index
+  template.return %value : index
+}
+
+template.def<@inkling.tune.experts.down_wave> target(@inkling_rdna3) @inkling_experts_down_wave_gfx1151() -> (index) {
+  %value = index.constant 64 : index
+  template.return %value : index
+}
+
 command.def public target(@inkling_execution) @inkling_hook_router(%layer: index, %visit: index, %pass: index) launch(%parameters: buffer, %span_table: buffer, %token_map: buffer, %metadata: buffer, %origins: buffer, %arena: buffer, %cur: buffer, %blocks: buffer, %bank: buffer, %x: buffer, %xn: buffer, %small: buffer, %q: buffer, %k: buffer, %v: buffer, %r: buffer, %gate: buffer, %ab: buffer, %ob: buffer, %y: buffer) {
   %cap = config.get @inkling.tokens : index
   %w1 = command.parameter %parameters, "blk.{}.ffn_gate_inp.weight"[%layer] : view<294912xf32>
@@ -31,7 +50,6 @@ command.def public target(@inkling_execution) @inkling_hook_router(%layer: index
   %w3 = command.parameter %parameters, "blk.{}.exp_probs_b.bias"[%layer] : view<128xf32>
   %wb4 = command.parameter.base %w3 : view<128xf32> -> buffer
   kernel.launch @inkling_router_logits[%cap](%cap, %xn, %wb2, %small, %gate) : [index](index, buffer, buffer, buffer, buffer)
-  kernel.launch @inkling_router_select[%cap](%cap, %small, %wb4, %ab, %ob) : [index](index, buffer, buffer, buffer, buffer)
   command.return
 }
 
@@ -57,7 +75,10 @@ command.def public target(@inkling_execution) @inkling_hook_experts(%layer: inde
   %is_q8e = index.cmp eq, %dense, %i0 : index
   %i48 = index.constant 48 : index
   %wide = index.cmp uge, %cap, %i48 : index
+  %decode_rows = index.cmp ule, %cap, %i8 : index
   %i64 = index.constant 64 : index
+  %down_wave = template.apply<@inkling.tune.experts.down_wave>() : () -> (index)
+  %down_w64 = index.cmp eq, %down_wave, %i64 : index
   %tasks = buffer.alloca<global> align(256) %tasks_total : buffer
   %act = buffer.alloca<global> align(256) %act_bytes : buffer
   %dout = buffer.alloca<global> align(256) %dout_bytes : buffer
@@ -89,14 +110,32 @@ command.def public target(@inkling_execution) @inkling_hook_experts(%layer: inde
   }
     scf.yield %q8gu, %q8dn, %wb2, %wb2 : buffer, buffer, buffer, buffer
   }
+  scf.if %decode_rows {
+  kernel.launch @inkling_router_decode(%cap, %i8, %small, %wb2, %ab, %ob, %tasks) : (index, index, buffer, buffer, buffer, buffer, buffer)
+  } else {
+  kernel.launch @inkling_router_select[%cap](%cap, %small, %wb2, %ab, %ob) : [index](index, buffer, buffer, buffer, buffer)
+  }
   scf.if %wide {
   kernel.launch @inkling_experts_routes(%cap, %i64, %ab, %tasks) : (index, index, buffer, buffer)
   kernel.launch @inkling_experts_gate_up_wmma[%cap](%cap, %wtype, %gate, %tasks, %gu3, %gus5, %act) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
   kernel.launch @inkling_experts_down_wmma[%cap](%cap, %wtype, %act, %tasks, %dn4, %dns6, %dout) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
   } else {
+  scf.if %decode_rows {
+  kernel.launch @inkling_experts_gate_up[%cap](%cap, %wtype, %gate, %tasks, %gu3, %gus5, %act) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+  scf.if %down_w64 {
+  kernel.launch @inkling_experts_down_w64[%cap](%cap, %wtype, %act, %tasks, %dn4, %dns6, %dout) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+  } else {
+  kernel.launch @inkling_experts_down[%cap](%cap, %wtype, %act, %tasks, %dn4, %dns6, %dout) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+  }
+  } else {
   kernel.launch @inkling_experts_routes(%cap, %i8, %ab, %tasks) : (index, index, buffer, buffer)
   kernel.launch @inkling_experts_gate_up[%cap](%cap, %wtype, %gate, %tasks, %gu3, %gus5, %act) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+  scf.if %down_w64 {
+  kernel.launch @inkling_experts_down_w64[%cap](%cap, %wtype, %act, %tasks, %dn4, %dns6, %dout) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+  } else {
   kernel.launch @inkling_experts_down[%cap](%cap, %wtype, %act, %tasks, %dn4, %dns6, %dout) : [index](index, index, buffer, buffer, buffer, buffer, buffer)
+  }
+  }
   }
   kernel.launch @inkling_experts_combine[%cap](%cap, %dout, %ob, %y) : [index](index, buffer, buffer, buffer)
   command.return

@@ -61,7 +61,7 @@ Kernels (`kernel/`, plain Loom kernels, all assume wave 32)
 
 Libraries (`lib/`)
 - `lib/inkling/`: our motifs. Matrix operations are template families. Each template (for example `inkling.dense.mma.k64_2x2`) has a portable provider (priority 1) and a provider for each tuned arch (`target(@inkling_dense_gfx11)`, `target(@inkling_dense_gfx12)`, priority 20) that uses the WMMA layout of that arch.
-- `lib/vendor/`: copied from ROCm/hrx-loom-library, tag v0.2.0 (MIT): epoch, storage, packet, feedback, span, q8_0, sampling, random. `NOTICE` lists every copy and edit.
+- `lib/vendor/`: copied from ROCm/hrx-loom-library, tag v0.2.0 (MIT; the copies build and run on hrx-loom 0.3.0 without change): epoch, storage, packet, feedback, span, q8_0, sampling, random. `NOTICE` lists every copy and edit.
 - `lib/media_stub.loom`: our stub for the two media functions that `epoch.loom` declares.
 
 Control (`control/`)
@@ -82,11 +82,11 @@ Arch-dependent choices are data, not code paths. The program never asks for the 
 ## 7. How each part was checked
 
 - Oracle: mainline llama.cpp built for CPU only (master `418fe97` plus the cherry-picked fix of PR 32704, which adds `inkling2_loop`), with F32 KV. A dump tool writes reference tensors for prompts A, B and C.
-- Kernel tests: every kernel has tests against numpy references and against oracle tensors, run on both GPUs (28 of 28 targets pass, evidence in `info.json`). The head chain and the lm_head cases include the oracle's `result_norm` and `result_output`.
-- Capture route: a debug deployment (`kind: sequence`) returns the chosen tensor of any visit. It was used to compare the embedding, norm, mix, attention and expert outputs with the oracle layer by layer, including chunked prefill.
+- Kernel tests: every kernel has tests against numpy references and against oracle tensors, run on both GPUs (33 of 33 targets pass with the wave 2 programs, evidence in `info.json`). The head chain and the lm_head cases include the oracle's `result_norm` and `result_output`.
+- Capture route (checked on hrx-loom 0.2.0; the `sequence` deployment does not register on 0.3.0 and needs a port to the new text epoch contract): a debug deployment (`kind: sequence`) returns the chosen tensor of any visit. It was used to compare the embedding, norm, mix, attention and expert outputs with the oracle layer by layer, including chunked prefill.
 - Golden and compare: `golden.py` records greedy tokens and top-5 log-probs from the CPU llama.cpp server. `compare.py` accepts a divergence only if it is a near-tie. Result on both GPUs: golden, compare and consistency pass (R9700: 14 prompts at dev level, 7 full matches, max gap 0.582 nat; the full set of 23 prompts 12 full matches, 0 bad. 8060S: 14 prompts, 9 full matches, max gap 0.296; 23 prompts 14 full matches, max gap 0.461, 0 bad). The gaps are near-ties at which the greedy text leaves the CPU reference; the numbers differ from the first build because reordered float sums flip a few such ties.
 - Agent gate: a multi-turn tool-calling loop with exact prompt rendering, history reuse and valid calls. It passes when tool messages carry `name` (section 9).
-- Context admission: a request of nearly the whole preset context is admitted and completes (131072 context, one request of 130972 tokens: 120 s on the R9700, 343 s on the 8060S).
+- Context admission: a request of nearly the whole preset context is admitted and completes (131072 context, one request of 130972 tokens: 174 s on the R9700, 591 s on the 8060S after the gate run; a clean single request was 120 s and 343 s with wave 1).
 - Chat glue: 84 template cases, 84 echo cases, 29 output and 37 option checks per GPU, against jinja2 and llama.cpp rendering.
 - Sampling gate: fails on both GPUs. The script expects a request without sampling fields to be greedy, and this package defaults to temperature 1.0 (the model's recommended sampling). Equivalent checks for a sampling default (temperature 0 repeats, `top_k 1` and a tiny `top_p` equal temperature 0, equal seeds repeat) pass 4 of 4 on both GPUs. The 200-draw distribution check cannot run because the first token is a structure token.
 - Performance is measured against a CPU llama.cpp (12 threads, F32 KV) because no GPU llama.cpp build was available. It is a reference, not a competitor.
@@ -106,14 +106,14 @@ Evidence inputs: the gate results, the kernel-test log, the performance logs (`p
 ## 9. How to run
 
 ```bash
-pipx install "hrx-loom[hf]==0.2.0"
+pipx install "hrx-loom[hf]==0.3.0"
 loom-fetch <tree>/model.json --preset chat-r9700 --materialize=copy --output=<dir> --origin checkpoint=<snap>
-loom-serve --model=<dir> '--device=amdgpu://?completion_spin_ns=4294967295' --pool_backing=fixed --parameter_mode=preload
+loom-serve --model=<dir> '--device=amdgpu://?completion_spin_ns=4294967295' --pool_backing=fixed
 ```
 
 - On a two-GPU host the device must be named (`amdgpu://<id>?completion_spin_ns=4294967295`, ids from `loom-run --list_devices=amdgpu`) because the generated quick start in `README.md` uses the unnamed device URI, which can select the wrong GPU.
 - Use the preset of your GPU: `chat` (8060S) or `chat-r9700` (R9700); `chat-q8` and `chat-q8-r9700` for Q8_K_XL. A fetched directory holds only the preset you selected. Without `--origin`, `loom-fetch` downloads the GGUF from Hugging Face.
-- `--parameter_mode=preload` is what the README gives for the R9700. `--pool_backing=fixed` was used for every measurement.
+- The generated `README.md` gives `--parameter_mode=preload` for the R9700 (a rule of the card tool for hrx-loom 0.2.0). hrx-loom 0.3.0 rejects that value (`loom-serve` accepts `file` or `direct`): leave the flag out, as in the command above. `--pool_backing=fixed` was used for every measurement.
 - Model id: `thinkingmachines/Inkling-2-Mini`. Endpoint `/v1/chat/completions` (OpenAI style, streaming or not).
 - The model thinks first (default effort `high`): the reasoning is in `reasoning_content`. Give `max_tokens` enough room. Set the effort with `reasoning_effort` (none, minimal, low, medium, high, xhigh, max, or a number from 0 to 0.99) or `chat_template_kwargs`.
 - Start one server per GPU. A second model on the same GPU fails with `RESOURCE_EXHAUSTED`.
@@ -136,7 +136,7 @@ loom-serve --model=<dir> '--device=amdgpu://?completion_spin_ns=4294967295' --po
 - The weights are not in this tree. They are the unmodified Unsloth GGUF files of Inkling 2 Mini, fetched from the origin in `model.json`. The base model is Apache-2.0. The card front matter says `base_model: unsloth/Inkling-2-Mini-GGUF`.
 - License choice: MIT for the programs (copyright line "Copyright (c) 2026 Geramy Loveless" in `LICENSE`), Apache-2.0 for the weights (not in this tree). The owner has decided this.
 
-## 12. Performance structure and results (wave 1)
+## 12. Performance structure and results (waves 1 and 2)
 
 Four changes in the programs raised the speed after the first working build. All are in the source files named in section 4; none changes the model math beyond float summation order.
 
@@ -153,3 +153,19 @@ Measured on the published route (median of 3 fresh servers per GPU, Q4_K_XL, `pe
 | 8060S | 39.7 (38.6) | 29.7 (27.5) | 1033 (823) | 1051 (786) | 812 (595) | 89.0 (86.6) |
 
 A request of 130972 tokens (the Q4 preset context) completes in 120 s on the R9700 and 343 s on the 8060S (183 s and 443 s before). The speed of the CPU reference is in the card (`README.md`, `REPORT.md`).
+
+Wave 2 (on hrx-loom 0.3.0) adds four decode changes. Each is in the files named in section 4.
+
+- Attention front end: the q, k, v, gate and rel projections run as one grouped GEMV (shared input), and the attention prep, K/V append and conv commit are fused. The merge of split attention is one launch (about 336 launches less per token).
+- Experts, decode: the gate/up and down kernels are software pipelined (NVFP4 fast path). On the 8060S the down kernel is a wave64 kernel (`kernel/experts/down_w64.loom`, `lib/inkling/targets_w64.loom`); the R9700 does not use it.
+- Controllers and router: the message mix is folded into the controller launch, the router selects the top experts with subgroup ballots, and the router and routes run as one decode launch (about 144 launches less per token).
+- The tuned values are per-arch data as before; the results are bit-equal in the kernel tests and give the same greedy text as wave 1 (prompts A, B, C and documents of 8k and 32k tokens, both GPUs).
+
+Measured on the published route with one fresh server per GPU (`ab_session.py`, median of 3 requests, Q4_K_XL, tok/s; wave 1 `perf.py` medians in brackets; the two tools differ for prefill and 4 streams, so those rows are compared with the wave 1 numbers of the same tool in `docs/PERF_BASELINE.md` in the source tree):
+
+| | decode short | decode 8k | decode 32k | prefill 2k | 4 streams |
+|---|---|---|---|---|---|
+| R9700 | 94.86 (90.2) | 84.77 (80.3) | 75.38 (71.3) | 3704 | 213.2 |
+| 8060S | 42.80 (39.7) | 37.81 (34.9) | 32.44 (29.7) | 1221 | 88.06 |
+
+That is 0.61 (R9700) and 0.75 (8060S) of the decode roofline at short context (154.6 and 57.3 tok/s). The card (`README.md`, `info.json`) lists only the rows of this session (decode short, decode 32k, 4 streams). Not verified for wave 2: the layer check of the capture route on hrx-loom 0.3.0, a run of the wave 1 build on 0.3.0 against 0.2.0 in the same session on the R9700 (its decode is 3 percent lower than the wave 1 card on 0.3.0), and the 2k to 32k prefill rows with `perf.py`.

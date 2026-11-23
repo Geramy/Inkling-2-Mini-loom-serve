@@ -259,6 +259,30 @@ def head_hook():
     return hook("head", b, SIG + ", %outputs: buffer, %residual: buffer", "")
 
 
+def attn_group(b, g, ctl):
+    """One launch for the projections of an attention visit (inkling_gemv_attn_group): q, rel, gate, k, v, sink and, on global visits, the two dynamic conv projections."""
+    q8 = lambda name, n: b.weight(name, "%dx%dx34xi8" % (n, E // 32))
+    ws = [q8("blk.{}.attn_q.weight", 3072), q8("blk.{}.attn_rel.weight", 384), q8("blk.{}.attn_gate.weight", 3072)]
+    sink = b.weight("blk.{}.attn_sink_proj.weight")
+    kv_col = b.op("kv_col", "scalar.ori %s, %s : i1" % (g, ctl))
+    xk = b.op("xo_k", "scf.select %s, %s, %s : offset" % (kv_col, b.col(1), b.o(0)))
+    xv = b.op("xo_v", "scf.select %s, %s, %s : offset" % (kv_col, b.col(2), b.o(0)))
+    pu = b.op("per_unit", "template.apply<@inkling.dense.gemv.xs_wg_per_unit>() : () -> (index)")
+
+    def launch(conv_on, wk, wv, kc, vc):
+        args = [conv_on, "%metadata", b.o(0), b.i(E), b.o(0), xk, xv] + ws + [wk, wv, sink, kc, vc, "%xn", "%q", "%r", "%gate", "%k", "%v", "%small", "%ob", "%y"]
+        types = ["index", "buffer", "offset", "index", "offset", "offset", "offset"] + ["buffer"] * 17
+        klaunch(b, "inkling_gemv_attn_group", [conv_on, pu], list(zip(args, types)))
+
+    b.emit("scf.if %s {" % g)
+    wk, wv = q8("blk.{}.attn_k.weight", 1024), q8("blk.{}.attn_v.weight", 1024)
+    launch(b.i(1), wk, wv, b.weight("blk.{}.attn_k_conv_proj.weight"), b.weight("blk.{}.attn_v_conv_proj.weight"))
+    b.emit("} else {")
+    wk, wv = q8("blk.{}.attn_k.weight", 1024), q8("blk.{}.attn_v.weight", 1024)
+    launch(b.i(0), wk, wv, sink, sink)
+    b.emit("}")
+
+
 def dense_file():
     out = []
     out.append("""config.decl @inkling.dense_type : %value: index where [range(%value, 0, 1)]
@@ -290,6 +314,10 @@ template.decl @inkling.dense.gemv.xs_wg_per_unit() -> (index)
     b = Body()
     g = is_global(b)
     xn = "%xn"
+    use_group = b.op("use_group", "scalar.andi %s, %s : i1" % (b.cmp("grp_small", "ule", b.cap(), b.i(8)), b.cmp("grp_q8", "eq", b.dense(), b.i(0))))
+    b.emit("scf.if %s {" % use_group)
+    attn_group(b, g, controlled(b))
+    b.emit("} else {")
     linear(b, "blk.{}.attn_q.weight", E, 3072, xn, b.o(0), "%q", 3072)
     linear(b, "blk.{}.attn_rel.weight", E, 384, xn, b.o(0), "%r", 384)
     linear(b, "blk.{}.attn_gate.weight", E, 3072, xn, b.o(0), "%gate", 3072)
@@ -306,6 +334,7 @@ template.decl @inkling.dense.gemv.xs_wg_per_unit() -> (index)
     b.emit("} else {")
     linear(b, "blk.{}.attn_k.weight", E, 1024, xn, b.o(0), "%k", 1024)
     linear(b, "blk.{}.attn_v.weight", E, 1024, xn, b.o(0), "%v", 1024)
+    b.emit("}")
     b.emit("}")
     b.emit("}")
     out.append(hook("proj", b))
@@ -374,18 +403,26 @@ def ctrl_hook(b, nc, kinds, m_col0, g):
     b.emit("%%part = buffer.alloca<global> align(256) %s : buffer" % part_bytes)
     b.emit("%%z = buffer.alloca<global> align(256) %s : buffer" % z_bytes)
     q = b.weight("blk.{}.loop_msg_query.weight", "4x2304xf32")
-    mix_states(b, b.i(1), b.i(4), 0, q, "%msg", "%bank", "%bank", "%rinv_m", (bank_offs(b, 0), bank_offs(b, 1), b.i(0)))
+    boff, coff = bank_offs(b, 0), bank_offs(b, 1)
     down, forget, gain = ctrl_weights(b, kinds)
     step = b.flag("xstep", g) if g else b.i(0)
     ncv = b.i(nc)
     spans = "%span_table"
     xc0, mc0 = b.i(0), b.i(m_col0)
+    b.emit("scf.if %s {" % b.cmp("decode_rows", "ule", cap, b.i(8)))
+    args = [cap, ncv, xc0, step, mc0, cE, boff, coff, spans, "%xn", "%bank", q] + down + ["%msg", "%rinv_m", "%part"]
+    klaunch(b, "inkling_ctrl_down_msg", [cap, ncv], list(zip(args, ["index"] * 8 + ["buffer"] * 10)))
+    args = [cap, ncv, xc0, step, mc0, cE, spans, "%xn", "%msg"] + forget + gain + ["%small", "%rinv_m", "%part", "%x"]
+    klaunch(b, "inkling_ctrl_apply_z", [cap, ncv], list(zip(args, ["index"] * 6 + ["buffer"] * 13)))
+    b.emit("} else {")
+    mix_states(b, b.i(1), b.i(4), 0, q, "%msg", "%bank", "%bank", "%rinv_m", (boff, coff, b.i(0)))
     args = [cap, ncv, xc0, step, mc0, cE, spans, "%xn", "%msg"] + down + ["%part"]
     klaunch(b, "inkling_ctrl_down", [cap, ncv], list(zip(args, ["index"] * 6 + ["buffer"] * 7)))
     args = [cap, ncv, xc0, step, mc0, spans, "%small", "%rinv_m", "%part", "%z"]
     klaunch(b, "inkling_ctrl_z", [cap, ncv], list(zip(args, ["index"] * 5 + ["buffer"] * 5)))
     args = [cap, ncv, xc0, step, mc0, cE, spans, "%xn", "%msg"] + forget + gain + ["%z", "%x"]
     klaunch(b, "inkling_ctrl_apply", [cap, ncv], list(zip(args, ["index"] * 6 + ["buffer"] * 11)))
+    b.emit("}")
 
 
 def conv_visit(b):
@@ -574,8 +611,6 @@ template.def<@inkling.tune.attn.split_blocks> priority(-1) @inkling_attn_split_b
     args = [cap, sc, gl, cv, "%span_table", "%arena", "%q", "%k", "%v", "%r", "%ob", "%y", qc, rc, kc, vc, "%q", "%r", "%xn", "%x"]
     types = ["index", "index", "index", "offset"] + ["buffer"] * 16
     klaunch(b, "inkling_attn_prep", [cap], list(zip(args, types)))
-    args = [sc, cap, cv, "%span_table", "%arena", "%k", "%v"]
-    klaunch(b, "inkling_attn_conv_commit", [sc], list(zip(args, ["index", "index", "offset"] + ["buffer"] * 4)))
     out.append(hook("attn_prep", b))
 
     # attn
@@ -601,10 +636,9 @@ template.def<@inkling.tune.attn.split_blocks> priority(-1) @inkling_attn_split_b
 
     tile(0, [tile_bound, b.i(24), b.i(1)])
     tile(1, [sc, b.i(8), max_splits])
-    args = [cap, sc, gl, split, max_splits, "%span_table", "%small", "%gate", "%ab", "%partial"]
-    klaunch(b, "inkling_attn_merge", [sc], list(zip(args, ["index"] * 5 + ["buffer"] * 5)))
-    args = [cap, sc, gl, max_blocks, kv, "%span_table", "%origins", "%arena", "%xn", "%x"]
-    klaunch(b, "inkling_attn_kv_append", [cap], list(zip(args, ["index"] * 4 + ["offset"] + ["buffer"] * 5)))
+    total = b.add("post_total", b.mul("post_sc", sc, b.i(40)), cap)
+    args = [cap, sc, gl, split, max_splits, max_blocks, kv, cv, "%span_table", "%origins", "%arena", "%small", "%gate", "%ab", "%partial", "%xn", "%x", "%k", "%v"]
+    klaunch(b, "inkling_attn_post", [total], list(zip(args, ["index"] * 6 + ["offset"] * 2 + ["buffer"] * 11)))
     out.append(hook("attn", b))
     return "".join(out)
 
@@ -613,13 +647,28 @@ template.def<@inkling.tune.attn.split_blocks> priority(-1) @inkling_attn_split_b
 
 def experts_file():
     out = ["// Expert hooks. Router results live in shared buffers: logits in small ([cap][128]), ids in ab, weights in ob, f16 router input in gate (docs/DISPATCH.md aliasing table).\n\n"]
+    out.append("""target.decl @inkling_rdna3
+
+// Subgroup size of the decode down kernel (docs/OPT_W64.md).
+template.decl @inkling.tune.experts.down_wave() -> (index)
+
+template.def<@inkling.tune.experts.down_wave> priority(-1) @inkling_experts_down_wave_default() -> (index) {
+  %value = index.constant 32 : index
+  template.return %value : index
+}
+
+template.def<@inkling.tune.experts.down_wave> target(@inkling_rdna3) @inkling_experts_down_wave_gfx1151() -> (index) {
+  %value = index.constant 64 : index
+  template.return %value : index
+}
+
+""")
     # router
     b = Body()
     cap = b.cap()
     rw = b.weight("blk.{}.ffn_gate_inp.weight")
     bias = b.weight("blk.{}.exp_probs_b.bias")
     klaunch(b, "inkling_router_logits", [cap], list(zip([cap, "%xn", rw, "%small", "%gate"], ["index"] + ["buffer"] * 4)))
-    klaunch(b, "inkling_router_select", [cap], list(zip([cap, "%small", bias, "%ab", "%ob"], ["index"] + ["buffer"] * 4)))
     out.append(hook("router", b))
     # experts
     b = Body()
@@ -659,15 +708,35 @@ def experts_file():
     b.emit("}")
     wide = b.cmp("wide", "uge", cap, b.i(48))
 
-    def chain(tile, gu_k, dn_k):
-        klaunch(b, "inkling_experts_routes", [], list(zip([cap, b.i(tile), "%ab", "%tasks"], ["index", "index", "buffer", "buffer"])))
+    def chain(tile, gu_k, dn_k, routes=True):
+        if routes:
+            klaunch(b, "inkling_experts_routes", [], list(zip([cap, b.i(tile), "%ab", "%tasks"], ["index", "index", "buffer", "buffer"])))
         klaunch(b, gu_k, [cap], list(zip([cap, wtype, "%gate", "%tasks", gu, gus, "%act"], ["index", "index"] + ["buffer"] * 5)))
+        if isinstance(dn_k, tuple):
+            wave = b.op("down_wave", "template.apply<@inkling.tune.experts.down_wave>() : () -> (index)")
+            on = b.cmp("down_w64", "eq", wave, b.i(64))
+            b.emit("scf.if %s {" % on)
+            klaunch(b, dn_k[0], [cap], list(zip([cap, wtype, "%act", "%tasks", dn, dns, "%dout"], ["index", "index"] + ["buffer"] * 5)))
+            b.emit("} else {")
+            klaunch(b, dn_k[1], [cap], list(zip([cap, wtype, "%act", "%tasks", dn, dns, "%dout"], ["index", "index"] + ["buffer"] * 5)))
+            b.emit("}")
+            return
         klaunch(b, dn_k, [cap], list(zip([cap, wtype, "%act", "%tasks", dn, dns, "%dout"], ["index", "index"] + ["buffer"] * 5)))
 
+    decode = b.cmp("decode_rows", "ule", cap, b.i(8))
+    b.emit("scf.if %s {" % decode)
+    klaunch(b, "inkling_router_decode", [], list(zip([cap, b.i(8), "%small", bias, "%ab", "%ob", "%tasks"], ["index", "index"] + ["buffer"] * 5)))
+    b.emit("} else {")
+    klaunch(b, "inkling_router_select", [cap], list(zip([cap, "%small", bias, "%ab", "%ob"], ["index"] + ["buffer"] * 4)))
+    b.emit("}")
     b.emit("scf.if %s {" % wide)
     chain(64, "inkling_experts_gate_up_wmma", "inkling_experts_down_wmma")
     b.emit("} else {")
-    chain(8, "inkling_experts_gate_up", "inkling_experts_down")
+    b.emit("scf.if %s {" % decode)
+    chain(8, "inkling_experts_gate_up", ("inkling_experts_down_w64", "inkling_experts_down"), routes=False)
+    b.emit("} else {")
+    chain(8, "inkling_experts_gate_up", ("inkling_experts_down_w64", "inkling_experts_down"))
+    b.emit("}")
     b.emit("}")
     klaunch(b, "inkling_experts_combine", [cap], list(zip([cap, "%dout", "%ob", "%y"], ["index"] + ["buffer"] * 3)))
     out.append(hook("experts", b))

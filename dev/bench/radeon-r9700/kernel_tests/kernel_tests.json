@@ -1,14 +1,14 @@
 {
  "gpu": "r9700",
  "arch": "gfx1201",
- "passed": 28,
- "total": 28,
+ "passed": 33,
+ "total": 33,
  "skipped": 2,
  "targets": [
   {
    "name": "experts/test_gate_up",
    "status": "pass",
-   "seconds": 16.8,
+   "seconds": 31.7,
    "last": "gate_up gfx1201 wtype=2 n=37: rel_l2=2.07e-04 max_rel=3.40e-04 PASS",
    "log": "experts_test_gate_up.log",
    "rc": 0
@@ -16,7 +16,7 @@
   {
    "name": "experts/test_oracle",
    "status": "pass",
-   "seconds": 66.4,
+   "seconds": 122.4,
    "last": "FAILS 0",
    "log": "experts_test_oracle.log",
    "rc": 0
@@ -24,7 +24,7 @@
   {
    "name": "experts/test_oracle_rows5_portable",
    "status": "pass",
-   "seconds": 41.2,
+   "seconds": 43.5,
    "last": "FAILS 0",
    "log": "experts_test_oracle_rows5_portable.log",
    "rc": 0
@@ -32,7 +32,7 @@
   {
    "name": "experts/test_oracle_rows3_9_portable",
    "status": "pass",
-   "seconds": 20.7,
+   "seconds": 23.3,
    "last": "FAILS 0",
    "log": "experts_test_oracle_rows3_9_portable.log",
    "rc": 0
@@ -40,15 +40,23 @@
   {
    "name": "experts/test_prefill",
    "status": "pass",
-   "seconds": 51.2,
+   "seconds": 130.5,
    "last": "FAILS 0",
    "log": "experts_test_prefill.log",
    "rc": 0
   },
   {
+   "name": "experts/test_router_decode",
+   "status": "pass",
+   "seconds": 34.3,
+   "last": "FAILS 0",
+   "log": "experts_test_router_decode.log",
+   "rc": 0
+  },
+  {
    "name": "dense/test_norm_embed",
    "status": "pass",
-   "seconds": 36.3,
+   "seconds": 36.6,
    "last": "16 cases, 0 failed",
    "log": "dense_test_norm_embed.log",
    "rc": 0
@@ -56,7 +64,7 @@
   {
    "name": "dense/test_gemv:xs",
    "status": "pass",
-   "seconds": 36.8,
+   "seconds": 37.5,
    "last": "17 cases, 0 failed",
    "log": "dense_test_gemv_xs.log",
    "rc": 0
@@ -64,7 +72,7 @@
   {
    "name": "dense/test_gemv:split",
    "status": "pass",
-   "seconds": 43.6,
+   "seconds": 44.0,
    "last": "25 cases, 0 failed",
    "log": "dense_test_gemv_split.log",
    "rc": 0
@@ -72,7 +80,7 @@
   {
    "name": "dense/test_gemv:rows",
    "status": "pass",
-   "seconds": 43.7,
+   "seconds": 44.3,
    "last": "25 cases, 0 failed",
    "log": "dense_test_gemv_rows.log",
    "rc": 0
@@ -80,7 +88,7 @@
   {
    "name": "dense/test_gemm:gemm_q8_0",
    "status": "pass",
-   "seconds": 29.1,
+   "seconds": 29.7,
    "last": "11 cases, 0 failed",
    "log": "dense_test_gemm_gemm_q8_0.log",
    "rc": 0
@@ -88,7 +96,7 @@
   {
    "name": "dense/test_gemm:gemm_wide_q8_0",
    "status": "pass",
-   "seconds": 29.1,
+   "seconds": 30.1,
    "last": "11 cases, 0 failed",
    "log": "dense_test_gemm_gemm_wide_q8_0.log",
    "rc": 0
@@ -96,7 +104,7 @@
   {
    "name": "dense/test_gemm:gemm_wmma_bf16",
    "status": "pass",
-   "seconds": 23.2,
+   "seconds": 23.7,
    "last": "13 cases, 0 failed",
    "log": "dense_test_gemm_gemm_wmma_bf16.log",
    "rc": 0
@@ -104,7 +112,7 @@
   {
    "name": "dense/test_gemm:gemm_bf16",
    "status": "pass",
-   "seconds": 23.1,
+   "seconds": 23.7,
    "last": "13 cases, 0 failed",
    "log": "dense_test_gemm_gemm_bf16.log",
    "rc": 0
@@ -112,7 +120,7 @@
   {
    "name": "dense/test_gemm:gemm_f32",
    "status": "pass",
-   "seconds": 11.6,
+   "seconds": 12.2,
    "last": "3 cases, 0 failed",
    "log": "dense_test_gemm_gemm_f32.log",
    "rc": 0
@@ -120,7 +128,7 @@
   {
    "name": "dense/test_head",
    "status": "pass",
-   "seconds": 47.0,
+   "seconds": 48.6,
    "last": "15 cases, 0 failed",
    "log": "dense_test_head.log",
    "rc": 0
@@ -128,15 +136,23 @@
   {
    "name": "dense/test_oracle_layers",
    "status": "pass",
-   "seconds": 37.7,
+   "seconds": 39.0,
    "last": "17 cases, 0 failed",
    "log": "dense_test_oracle_layers.log",
    "rc": 0
   },
   {
+   "name": "dense/test_gemv_group",
+   "status": "pass",
+   "seconds": 15.4,
+   "last": "6 cases, 0 failed",
+   "log": "dense_test_gemv_group.log",
+   "rc": 0
+  },
+  {
    "name": "mix/test_mix",
    "status": "pass",
-   "seconds": 292.7,
+   "seconds": 293.0,
    "last": "TOTAL 299 FAIL 0",
    "log": "mix_test_mix.log",
    "rc": 0
@@ -144,7 +160,7 @@
   {
    "name": "mix/test_conv",
    "status": "pass",
-   "seconds": 329.9,
+   "seconds": 331.2,
    "last": "TOTAL 342 FAIL 0",
    "log": "mix_test_conv.log",
    "rc": 0
@@ -152,7 +168,7 @@
   {
    "name": "mix/test_ctrl_c128_all_t1",
    "status": "pass",
-   "seconds": 67.1,
+   "seconds": 68.7,
    "last": "TOTAL 240 FAIL 0",
    "log": "mix_test_ctrl_c128_all_t1.log",
    "rc": 0
@@ -160,7 +176,7 @@
   {
    "name": "mix/test_ctrl_c256_all_t16",
    "status": "pass",
-   "seconds": 68.0,
+   "seconds": 69.5,
    "last": "TOTAL 240 FAIL 0",
    "log": "mix_test_ctrl_c256_all_t16.log",
    "rc": 0
@@ -168,7 +184,7 @@
   {
    "name": "mix/test_ctrl_q4_c64",
    "status": "pass",
-   "seconds": 11.4,
+   "seconds": 11.6,
    "last": "TOTAL 12 FAIL 0",
    "log": "mix_test_ctrl_q4_c64.log",
    "rc": 0
@@ -184,9 +200,33 @@
   {
    "name": "mix/test_ctrl_q4_c256",
    "status": "pass",
-   "seconds": 11.4,
+   "seconds": 11.6,
    "last": "TOTAL 12 FAIL 0",
    "log": "mix_test_ctrl_q4_c256.log",
+   "rc": 0
+  },
+  {
+   "name": "mix/test_ctrl_msg",
+   "status": "pass",
+   "seconds": 29.0,
+   "last": "TOTAL 160 FAIL 0",
+   "log": "mix_test_ctrl_msg.log",
+   "rc": 0
+  },
+  {
+   "name": "mix/test_ctrl_fold_c128_all_t1",
+   "status": "pass",
+   "seconds": 67.3,
+   "last": "TOTAL 240 FAIL 0",
+   "log": "mix_test_ctrl_fold_c128_all_t1.log",
+   "rc": 0
+  },
+  {
+   "name": "mix/test_ctrl_fold_c256_all_t16",
+   "status": "pass",
+   "seconds": 67.2,
+   "last": "TOTAL 240 FAIL 0",
+   "log": "mix_test_ctrl_fold_c256_all_t16.log",
    "rc": 0
   },
   {
@@ -200,7 +240,7 @@
   {
    "name": "chat:plain",
    "status": "pass",
-   "seconds": 2.6,
+   "seconds": 2.7,
    "last": "84 PASS lines, 0 FAIL lines",
    "log": "chat_plain.txt",
    "cases": 84
@@ -208,7 +248,7 @@
   {
    "name": "chat:echo",
    "status": "pass",
-   "seconds": 2.6,
+   "seconds": 2.7,
    "last": "84 PASS lines, 0 FAIL lines",
    "log": "chat_echo.txt",
    "cases": 84
@@ -216,7 +256,7 @@
   {
    "name": "chat:script",
    "status": "pass",
-   "seconds": 2.6,
+   "seconds": 2.7,
    "last": "29 PASS lines, 0 FAIL lines",
    "log": "chat_script.txt",
    "cases": 29
@@ -224,7 +264,7 @@
   {
    "name": "chat:policy",
    "status": "pass",
-   "seconds": 2.6,
+   "seconds": 2.7,
    "last": "37 PASS lines, 0 FAIL lines",
    "log": "chat_policy.txt",
    "cases": 37

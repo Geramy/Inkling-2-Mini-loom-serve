@@ -3,11 +3,7 @@ func.decl @inkling_attn_span(%spans: buffer, %span_cap: index, %token: index) ->
 
 func.decl @inkling_attn_live_tokens(%spans: buffer, %span_cap: index) -> (index)
 
-kernel.def export("inkling_attn_kv_append") @inkling_attn_kv_append(%cap: index) {
-  %one = index.constant 1 : index
-  %threads = index.constant 128 : index
-  kernel.launch.config workgroups(%cap, %one, %one) workgroup_size(%threads, %one, %one) : index
-} launch(%cap_in: index, %span_cap: index, %global: index, %max_blocks: index, %kv_origin: offset, %spans: buffer, %rows: buffer, %state: buffer, %k_act: buffer, %v_act: buffer) {
+func.def public inline @inkling_attn_append_wg(%cap_in: index, %span_cap: index, %global: index, %max_blocks: index, %kv_origin: offset, %spans: buffer, %rows: buffer, %state: buffer, %k_act: buffer, %v_act: buffer, %token0: index) {
   %cap = index.assume %cap_in [range(%cap_in, 1, 32768)] : index
   %c0 = index.constant 0 : index
   %c1 = index.constant 1 : index
@@ -24,7 +20,6 @@ kernel.def export("inkling_attn_kv_append") @inkling_attn_kv_append(%cap: index)
   %c16384 = index.constant 16384 : offset
   %c256_o = index.constant 256 : offset
   %zero = index.constant 0 : offset
-  %token0 = kernel.workgroup.id<x> : index
   %token = index.assume %token0 [range(%token0, 0, 16777214), lt(%token0, %cap)] : index
   %tid0 = kernel.workitem.id<x> : index
   %tid = index.assume %tid0 [range(%tid0, 0, 127)] : index
@@ -95,6 +90,54 @@ kernel.def export("inkling_attn_kv_append") @inkling_attn_kv_append(%cap: index)
         %dst = buffer.view %state[%dst_off] : buffer -> view<8xf16>
         vector.store %value, %dst[0] : vector<8xf16>, view<8xf16>
       }
+    }
+  }
+  func.return
+}
+
+kernel.def export("inkling_attn_kv_append") @inkling_attn_kv_append(%cap: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 128 : index
+  kernel.launch.config workgroups(%cap, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%cap_in: index, %span_cap: index, %global: index, %max_blocks: index, %kv_origin: offset, %spans: buffer, %rows: buffer, %state: buffer, %k_act: buffer, %v_act: buffer) {
+  %token0 = kernel.workgroup.id<x> : index
+  func.call @inkling_attn_append_wg(%cap_in, %span_cap, %global, %max_blocks, %kv_origin, %spans, %rows, %state, %k_act, %v_act, %token0) : (index, index, index, index, offset, buffer, buffer, buffer, buffer, buffer, index)
+  kernel.return
+}
+
+// Work after the decode tiles in one launch: merge of the decode splits (24 workgroups per span), KV append (one per token), conv commit (16 per span).
+func.decl @inkling_attn_merge_wg(%cap_in: index, %span_cap_in: index, %global: index, %split_blocks: index, %max_splits: index, %spans: buffer, %sink: buffer, %gate: buffer, %out: buffer, %partial: buffer, %span0: index, %head0: index)
+
+func.decl @inkling_attn_commit_channel(%span_cap_in: index, %cap_in: index, %conv_origin: offset, %spans: buffer, %state: buffer, %k_raw: buffer, %v_raw: buffer, %span: index, %channel: index)
+
+kernel.def export("inkling_attn_post") @inkling_attn_post(%total: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 128 : index
+  kernel.launch.config workgroups(%total, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%cap_in: index, %span_cap: index, %global: index, %split_blocks: index, %max_splits: index, %max_blocks: index, %kv_origin: offset, %conv_origin: offset, %spans: buffer, %rows: buffer, %state: buffer, %sink: buffer, %gate: buffer, %out: buffer, %partial: buffer, %k_act: buffer, %v_act: buffer, %k_raw: buffer, %v_raw: buffer) {
+  %c16 = index.constant 16 : index
+  %c24 = index.constant 24 : index
+  %c128 = index.constant 128 : index
+  %id = kernel.workgroup.id<x> : index
+  %lane = kernel.workitem.id<x> : index
+  %n_merge = index.mul %span_cap, %c24 : index
+  %n_append = index.add %n_merge, %cap_in : index
+  %is_merge = index.cmp ult, %id, %n_merge : index
+  scf.if %is_merge {
+    %span = index.div %id, %c24 : index
+    %head = index.rem %id, %c24 : index
+    func.call @inkling_attn_merge_wg(%cap_in, %span_cap, %global, %split_blocks, %max_splits, %spans, %sink, %gate, %out, %partial, %span, %head) : (index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, index, index)
+  } else {
+    %is_append = index.cmp ult, %id, %n_append : index
+    scf.if %is_append {
+      %token = index.sub %id, %n_merge : index
+      func.call @inkling_attn_append_wg(%cap_in, %span_cap, %global, %max_blocks, %kv_origin, %spans, %rows, %state, %k_act, %v_act, %token) : (index, index, index, index, offset, buffer, buffer, buffer, buffer, buffer, index)
+    } else {
+      %c = index.sub %id, %n_append : index
+      %span = index.div %c, %c16 : index
+      %part = index.rem %c, %c16 : index
+      %channel = index.madd %part, %c128, %lane : index
+      func.call @inkling_attn_commit_channel(%span_cap, %cap_in, %conv_origin, %spans, %state, %k_raw, %v_raw, %span, %channel) : (index, index, offset, buffer, buffer, buffer, buffer, index, index)
     }
   }
   kernel.return

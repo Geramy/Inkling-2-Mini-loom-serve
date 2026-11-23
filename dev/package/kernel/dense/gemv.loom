@@ -30,7 +30,8 @@ config.decl @inkling.dense.gemv.cols : %value: index where [range(%value, 1, 8)]
 config.decl @inkling.dense.gemv.xs_depth : %value: index where [range(%value, 1, 4)]
 
 
-func.def public inline @inkling_dense_gemv_xs(%wtype: index, %n_rows_in: index, %k_size_in: index, %control: buffer, %count_origin: offset, %w_origin: offset, %x_origin: offset, %x_stride: index, %d_origin: offset, %d_stride: index, %act: index, %cap: f32, %weight: buffer, %input: buffer, %dst: buffer) {
+// The workgroup index and the pass count are parameters: a grouped launch runs several weight tensors in one grid.
+func.def public inline @inkling_dense_gemv_xs_at(%wtype: index, %n_rows_in: index, %k_size_in: index, %control: buffer, %count_origin: offset, %w_origin: offset, %x_origin: offset, %x_stride: index, %d_origin: offset, %d_stride: index, %act: index, %cap: f32, %weight: buffer, %input: buffer, %dst: buffer, %wg: index, %n_pass_in: index) {
   %k_size = index.assume %k_size_in [range(%k_size_in, 256, 4096), multiple_of(%k_size_in, 256)] : index
   %n_rows = index.assume %n_rows_in [range(%n_rows_in, 1, 2147483647)] : index
   %n_tile = config.get @inkling.dense.gemv.cols : index
@@ -55,13 +56,13 @@ func.def public inline @inkling_dense_gemv_xs(%wtype: index, %n_rows_in: index, 
   %t = index.assume %t0 [range(%t0, 0, 255)] : index
   %slot = index.div %t, %c16 : index
   %part = index.rem %t, %c16 : index
-  %wg = kernel.workgroup.id<x> : index
   %weight_noalias, %input_noalias, %dst_noalias = buffer.assume.noalias %weight, %input, %dst : buffer, buffer, buffer
   %stage = buffer.alloca<workgroup> align(16) %stage_bytes : buffer
   %stage_view = buffer.view %stage[%b0] : buffer -> view<4096xf32>
   %unit_bytes, %sb_bytes, %sb_units = template.apply<@inkling.dense.weight.superblock>(%wtype) : (index) -> (offset, offset, index)
   %per_unit = template.apply<@inkling.dense.gemv.xs_wg_per_unit>() : () -> (index)
-  %n_sb, %rows_par, %n_pass, %n_wg = func.call pure @inkling_dense_mv_xs_plan(%n_rows, %k_size, %per_unit) : (index, index, index) -> (index, index, index, index)
+  %n_sb, %rows_par, %n_pass_plan, %n_wg = func.call pure @inkling_dense_mv_xs_plan(%n_rows, %k_size, %per_unit) : (index, index, index) -> (index, index, index, index)
+  %n_pass = index.assume %n_pass_in [range(%n_pass_in, 1, 32)] : index
   %row_off = index.div %slot, %n_sb : index
   %sb = index.rem %slot, %n_sb : index
   %slot_on = index.cmp ult, %row_off, %rows_par : index
@@ -184,6 +185,116 @@ func.def public inline @inkling_dense_gemv_xs(%wtype: index, %n_rows_in: index, 
   func.return
 }
 
+
+func.def public inline @inkling_dense_gemv_xs(%wtype: index, %n_rows_in: index, %k_size_in: index, %control: buffer, %count_origin: offset, %w_origin: offset, %x_origin: offset, %x_stride: index, %d_origin: offset, %d_stride: index, %act: index, %cap: f32, %weight: buffer, %input: buffer, %dst: buffer) {
+  %n_rows = index.assume %n_rows_in [range(%n_rows_in, 1, 2147483647)] : index
+  %k_size = index.assume %k_size_in [range(%k_size_in, 256, 4096), multiple_of(%k_size_in, 256)] : index
+  %per_unit = template.apply<@inkling.dense.gemv.xs_wg_per_unit>() : () -> (index)
+  %n_sb, %rows_par, %n_pass, %n_wg = func.call pure @inkling_dense_mv_xs_plan(%n_rows, %k_size, %per_unit) : (index, index, index) -> (index, index, index, index)
+  %wg = kernel.workgroup.id<x> : index
+  func.call @inkling_dense_gemv_xs_at(%wtype, %n_rows, %k_size, %control, %count_origin, %w_origin, %x_origin, %x_stride, %d_origin, %d_stride, %act, %cap, %weight, %input, %dst, %wg, %n_pass) : (index, index, index, buffer, offset, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer, index, index)
+  func.return
+}
+
+// Grouped projections of an attention visit (same input rows): Q8_0 q, rel, gate, k, v, then BF16 sink and, on global visits, the two dynamic conv projections.
+// Every tensor gets whole workgroups with the same pass count, so one grid covers all of them. Rows of the tensors: 3072, 384, 3072, 1024, 1024, 24, 32, 32.
+func.def public pure inline @inkling_dense_group_plan(%conv_on: index, %per_unit: index) -> (index, index, index, index, index, index, index, index, index) {
+  %c1 = index.constant 1 : index
+  %k = index.constant 2304 : index
+  %total = index.constant 8576 : index
+  %n_sb, %rows_par, %n_pass, %n_wg = func.call pure @inkling_dense_mv_xs_plan(%total, %k, %per_unit) : (index, index, index) -> (index, index, index, index)
+  %seg = index.mul %n_pass, %rows_par : index
+  %segm1 = index.sub %seg, %c1 : index
+  %r3072 = index.constant 3072 : index
+  %r384 = index.constant 384 : index
+  %r1024 = index.constant 1024 : index
+  %r24 = index.constant 24 : index
+  %r32 = index.constant 32 : index
+  %t3072 = index.add %r3072, %segm1 : index
+  %t384 = index.add %r384, %segm1 : index
+  %t1024 = index.add %r1024, %segm1 : index
+  %t24 = index.add %r24, %segm1 : index
+  %t32 = index.add %r32, %segm1 : index
+  %w3072 = index.div %t3072, %seg : index
+  %w384 = index.div %t384, %seg : index
+  %w1024 = index.div %t1024, %seg : index
+  %w24 = index.div %t24, %seg : index
+  %w32 = index.div %t32, %seg : index
+  %w32c = index.mul %w32, %conv_on : index
+  %b1 = index.add %w3072, %w384 : index
+  %b2 = index.add %b1, %w3072 : index
+  %b3 = index.add %b2, %w1024 : index
+  %b4 = index.add %b3, %w1024 : index
+  %b5 = index.add %b4, %w24 : index
+  %b6 = index.add %b5, %w32c : index
+  %b7 = index.add %b6, %w32c : index
+  func.return %n_pass, %w3072, %b1, %b2, %b3, %b4, %b5, %b6, %b7 : index, index, index, index, index, index, index, index, index
+}
+
+kernel.def @inkling_gemv_attn_group(%conv_on: index, %per_unit: index) {
+  %c1 = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %n_pass, %b0, %b1, %b2, %b3, %b4, %b5, %b6, %b7 = func.call pure @inkling_dense_group_plan(%conv_on, %per_unit) : (index, index) -> (index, index, index, index, index, index, index, index, index)
+  kernel.launch.config workgroups(%b7, %c1, %c1) workgroup_size(%threads, %c1, %c1) : index
+} launch(%conv_on: index, %control: buffer, %count_origin: offset, %x_stride: index, %xo_a: offset, %xo_k: offset, %xo_v: offset, %w_q: buffer, %w_rel: buffer, %w_gate: buffer, %w_k: buffer, %w_v: buffer, %w_sink: buffer, %w_kc: buffer, %w_vc: buffer, %input: buffer, %o_q: buffer, %o_rel: buffer, %o_gate: buffer, %o_k: buffer, %o_v: buffer, %o_sink: buffer, %o_kc: buffer, %o_vc: buffer) {
+  %c0 = index.constant 0 : index
+  %k = index.constant 2304 : index
+  %r3072 = index.constant 3072 : index
+  %r384 = index.constant 384 : index
+  %r1024 = index.constant 1024 : index
+  %r24 = index.constant 24 : index
+  %r32 = index.constant 32 : index
+  %w0 = index.constant 0 : offset
+  %act = index.constant 0 : index
+  %cap = scalar.constant 30.0 : f32
+  %q8 = index.constant 4 : index
+  %bf = index.constant 3 : index
+  %wg = kernel.workgroup.id<x> : index
+  %per_unit = template.apply<@inkling.dense.gemv.xs_wg_per_unit>() : () -> (index)
+  %n_pass, %n_q, %b1, %b2, %b3, %b4, %b5, %b6, %b7 = func.call pure @inkling_dense_group_plan(%conv_on, %per_unit) : (index, index) -> (index, index, index, index, index, index, index, index, index)
+  %is_q8 = index.cmp ult, %wg, %b4 : index
+  scf.if %is_q8 {
+    %lt1 = index.cmp ult, %wg, %n_q : index
+    %lt2 = index.cmp ult, %wg, %b1 : index
+    %lt3 = index.cmp ult, %wg, %b2 : index
+    %lt4 = index.cmp ult, %wg, %b3 : index
+    %bs4 = scf.select %lt4, %b2, %b3 : index
+    %bs3 = scf.select %lt3, %b1, %bs4 : index
+    %bs2 = scf.select %lt2, %n_q, %bs3 : index
+    %base = scf.select %lt1, %c0, %bs2 : index
+    %wg_local = index.sub %wg, %base : index
+    %wt4 = scf.select %lt4, %w_k, %w_v : buffer
+    %wt3 = scf.select %lt3, %w_gate, %wt4 : buffer
+    %wt2 = scf.select %lt2, %w_rel, %wt3 : buffer
+    %weight = scf.select %lt1, %w_q, %wt2 : buffer
+    %ot4 = scf.select %lt4, %o_k, %o_v : buffer
+    %ot3 = scf.select %lt3, %o_gate, %ot4 : buffer
+    %ot2 = scf.select %lt2, %o_rel, %ot3 : buffer
+    %dst = scf.select %lt1, %o_q, %ot2 : buffer
+    %xt4 = scf.select %lt4, %xo_k, %xo_v : offset
+    %xo = scf.select %lt3, %xo_a, %xt4 : offset
+    %rt4 = scf.select %lt4, %r1024, %r1024 : index
+    %rt3 = scf.select %lt3, %r3072, %rt4 : index
+    %rt2 = scf.select %lt2, %r384, %rt3 : index
+    %n_rows = scf.select %lt1, %r3072, %rt2 : index
+    func.call @inkling_dense_gemv_xs_at(%q8, %n_rows, %k, %control, %count_origin, %w0, %xo, %x_stride, %w0, %n_rows, %act, %cap, %weight, %input, %dst, %wg_local, %n_pass) : (index, index, index, buffer, offset, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer, index, index)
+  } else {
+    %lt5 = index.cmp ult, %wg, %b5 : index
+    %lt6 = index.cmp ult, %wg, %b6 : index
+    %base_b = scf.select %lt6, %b5, %b6 : index
+    %base = scf.select %lt5, %b4, %base_b : index
+    %wg_local = index.sub %wg, %base : index
+    %wt6 = scf.select %lt6, %w_kc, %w_vc : buffer
+    %weight = scf.select %lt5, %w_sink, %wt6 : buffer
+    %ot6 = scf.select %lt6, %o_kc, %o_vc : buffer
+    %dst = scf.select %lt5, %o_sink, %ot6 : buffer
+    %xt6 = scf.select %lt6, %xo_k, %xo_v : offset
+    %xo = scf.select %lt5, %xo_a, %xt6 : offset
+    %n_rows = scf.select %lt5, %r24, %r32 : index
+    func.call @inkling_dense_gemv_xs_at(%bf, %n_rows, %k, %control, %count_origin, %w0, %xo, %x_stride, %w0, %n_rows, %act, %cap, %weight, %input, %dst, %wg_local, %n_pass) : (index, index, index, buffer, offset, offset, offset, index, offset, index, index, f32, buffer, buffer, buffer, index, index)
+  }
+  kernel.return
+}
 
 kernel.def @inkling_gemv_q8_0(%n_rows: index, %k_size: index, %per_unit: index) {
   %c1 = index.constant 1 : index

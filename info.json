@@ -78,50 +78,50 @@
   "radeon-r9700": {
    "gates": {
     "agent": {
-     "date": "2026-11-22",
+     "date": "2026-11-23",
      "detail": "tool messages sent with name",
      "level": "dev",
-     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+     "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
      "source": "machine",
      "status": "pass"
     },
     "compare": {
-     "date": "2026-11-22",
+     "date": "2026-11-23",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+     "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
      "source": "machine",
      "status": "pass"
     },
     "consistency": {
-     "date": "2026-11-22",
+     "date": "2026-11-23",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+     "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
      "source": "machine",
      "status": "pass"
     },
     "golden": {
-     "date": "2026-11-22",
+     "date": "2026-11-23",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+     "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
      "source": "machine",
      "status": "pass"
     },
     "kernel_tests": {
-     "date": "2026-11-22",
-     "detail": "28/28",
+     "date": "2026-11-23",
+     "detail": "33/33",
      "level": null,
-     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+     "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
      "source": "machine",
      "status": "pass"
     },
     "sampling": {
-     "date": "2026-11-22",
+     "date": "2026-11-23",
      "detail": "default temperature 1.0, check expects greedy",
      "level": "dev",
-     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+     "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
      "source": "machine",
      "status": "fail"
     }
@@ -131,7 +131,8 @@
      "args": "-ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja",
      "differs": [
       "not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache",
-      "not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot)"
+      "not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot)",
+      "Loom rows: one serve session of ab_session.py (decode short, decode 32k, 4 streams); decode 2k, 8k and the prefill rows were not re-measured with perf.py for this build"
      ],
      "name": "llama.cpp",
      "version": "llama.cpp-cpu/418fe97+PR32704"
@@ -140,10 +141,8 @@
      {
       "aggregate": "median",
       "commands": [
-       "loom-serve --device='amdgpu://<URI>?completion_spin_ns=4294967295' --model=<preset dir> --preset=chat-r9700 --pool_backing=fixed --workers=8",
-       "perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini",
-       "perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini --long",
-       "c4_steady.py URL 4 --model thinkingmachines/Inkling-2-Mini --label loom-baseline",
+       "loom-serve --device=amdgpu://<URI>?completion_spin_ns=4294967295 --model=<preset dir> --preset=chat-r9700 --pool_backing=fixed --workers=8",
+       "ab_session.py URL TAG dshort,d32k,c4 3 --model thinkingmachines/Inkling-2-Mini  (one fresh server session, 3 requests per metric, median; the merged build on hrx-loom 0.3.0)",
        "perf.py URL llama-cpu-baseline --kind llama --repeats 3 [--long]  (llama-server -ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja)"
       ],
       "date": "2026-11-22",
@@ -151,38 +150,25 @@
        "decode": {
         "baseline": 14.9,
         "baseline_runs": [
-         15.21,
-         14.86,
-         14.26
+         14.86
         ],
-        "loom": 90.2,
+        "loom": 94.9,
         "loom_runs": [
-         90.45,
-         89.89,
-         90.18
+         94.86
         ]
        },
        "decode_2k": {
         "baseline": 11.3,
         "baseline_runs": [
-         11.18,
-         11.28,
          11.26
         ],
-        "loom": 83.2,
-        "loom_runs": [
-         83.61,
-         82.77,
-         83.24
-        ]
+        "loom": null
        },
        "decode_32k": {
         "baseline": null,
-        "loom": 71.3,
+        "loom": 75.4,
         "loom_runs": [
-         71.34,
-         71.09,
-         71.36
+         75.38
         ]
        },
        "prefill_16k": {
@@ -190,75 +176,46 @@
         "baseline_runs": [
          44.6
         ],
-        "loom": 2800.9,
-        "loom_runs": [
-         2846.8,
-         2800.9,
-         2798.0
-        ]
+        "loom": null
        },
        "prefill_1k": {
         "baseline": 57.6,
         "baseline_runs": [
-         57.6,
-         57.6,
-         55.6
+         57.6
         ],
-        "loom": 2576.3,
-        "loom_runs": [
-         2647.8,
-         2576.3,
-         2572.4
-        ]
+        "loom": null
        },
        "prefill_2k": {
         "baseline": 53.6,
         "baseline_runs": [
-         55.3,
-         53.6,
-         53.4
+         53.6
         ],
-        "loom": 2996.0,
-        "loom_runs": [
-         3071.2,
-         2996.0,
-         2989.6
-        ]
-       },
-       "prefill_32k": {
-        "baseline": null,
-        "loom": 2242.0,
-        "loom_runs": [
-         2255.6,
-         2239.7,
-         2242.0
-        ]
+        "loom": null
        },
        "prefill_8k": {
         "baseline": 48.7,
         "baseline_runs": [
          48.7
         ],
-        "loom": 3091.5,
-        "loom_runs": [
-         3151.9,
-         3091.5,
-         3087.2
-        ]
+        "loom": null
        },
        "streams4": {
         "baseline": null,
-        "loom": 218.9,
+        "loom": 213.2,
         "loom_runs": [
-         218.9,
-         218.9,
-         219.7
+         213.41,
+         211.04,
+         213.22
         ]
        }
       },
-      "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+      "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
       "runs": {
-       "decode_prefill": 3,
+       "decode_prefill": 1,
+       "samples": {
+        "decode": 3,
+        "decode_32k": 3
+       },
        "streams4": 3
       },
       "source": "machine"
@@ -330,50 +287,50 @@
   "strix-halo": {
    "gates": {
     "agent": {
-     "date": "2026-11-22",
+     "date": "2026-11-23",
      "detail": "tool messages sent with name",
      "level": "dev",
-     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+     "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
      "source": "machine",
      "status": "pass"
     },
     "compare": {
-     "date": "2026-11-22",
+     "date": "2026-11-23",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+     "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
      "source": "machine",
      "status": "pass"
     },
     "consistency": {
-     "date": "2026-11-22",
+     "date": "2026-11-23",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+     "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
      "source": "machine",
      "status": "pass"
     },
     "golden": {
-     "date": "2026-11-22",
+     "date": "2026-11-23",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+     "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
      "source": "machine",
      "status": "pass"
     },
     "kernel_tests": {
-     "date": "2026-11-22",
-     "detail": "28/28",
+     "date": "2026-11-23",
+     "detail": "33/33",
      "level": null,
-     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+     "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
      "source": "machine",
      "status": "pass"
     },
     "sampling": {
-     "date": "2026-11-22",
+     "date": "2026-11-23",
      "detail": "default temperature 1.0, check expects greedy",
      "level": "dev",
-     "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+     "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
      "source": "machine",
      "status": "fail"
     }
@@ -383,7 +340,8 @@
      "args": "-ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja",
      "differs": [
       "not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache",
-      "not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot)"
+      "not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot)",
+      "Loom rows: one serve session of ab_session.py (decode short, decode 32k, 4 streams); decode 2k, 8k and the prefill rows were not re-measured with perf.py for this build"
      ],
      "name": "llama.cpp",
      "version": "llama.cpp-cpu/418fe97+PR32704"
@@ -392,10 +350,8 @@
      {
       "aggregate": "median",
       "commands": [
-       "loom-serve --device='amdgpu://<URI>?completion_spin_ns=4294967295' --model=<preset dir> --preset=chat --pool_backing=fixed --workers=8",
-       "perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini",
-       "perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini --long",
-       "c4_steady.py URL 4 --model thinkingmachines/Inkling-2-Mini --label loom-baseline",
+       "loom-serve --device=amdgpu://<URI>?completion_spin_ns=4294967295 --model=<preset dir> --preset=chat --pool_backing=fixed --workers=8",
+       "ab_session.py URL TAG dshort,d32k,c4 3 --model thinkingmachines/Inkling-2-Mini  (one fresh server session, 3 requests per metric, median; the merged build on hrx-loom 0.3.0)",
        "perf.py URL llama-cpu-baseline --kind llama --repeats 3 [--long]  (llama-server -ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja)"
       ],
       "date": "2026-11-22",
@@ -403,38 +359,25 @@
        "decode": {
         "baseline": 14.9,
         "baseline_runs": [
-         15.21,
-         14.86,
-         14.26
+         14.86
         ],
-        "loom": 39.7,
+        "loom": 42.8,
         "loom_runs": [
-         39.7,
-         39.65,
-         39.66
+         42.8
         ]
        },
        "decode_2k": {
         "baseline": 11.3,
         "baseline_runs": [
-         11.18,
-         11.28,
          11.26
         ],
-        "loom": 36.7,
-        "loom_runs": [
-         36.56,
-         36.72,
-         36.72
-        ]
+        "loom": null
        },
        "decode_32k": {
         "baseline": null,
-        "loom": 29.7,
+        "loom": 32.4,
         "loom_runs": [
-         29.67,
-         29.66,
-         29.64
+         32.44
         ]
        },
        "prefill_16k": {
@@ -442,75 +385,46 @@
         "baseline_runs": [
          44.6
         ],
-        "loom": 973.1,
-        "loom_runs": [
-         979.0,
-         973.1,
-         952.9
-        ]
+        "loom": null
        },
        "prefill_1k": {
         "baseline": 57.6,
         "baseline_runs": [
-         57.6,
-         57.6,
-         55.6
+         57.6
         ],
-        "loom": 893.7,
-        "loom_runs": [
-         899.8,
-         891.9,
-         893.7
-        ]
+        "loom": null
        },
        "prefill_2k": {
         "baseline": 53.6,
         "baseline_runs": [
-         55.3,
-         53.6,
-         53.4
+         53.6
         ],
-        "loom": 1033.1,
-        "loom_runs": [
-         1046.5,
-         1033.1,
-         1021.1
-        ]
-       },
-       "prefill_32k": {
-        "baseline": null,
-        "loom": 811.8,
-        "loom_runs": [
-         817.9,
-         811.8,
-         795.4
-        ]
+        "loom": null
        },
        "prefill_8k": {
         "baseline": 48.7,
         "baseline_runs": [
          48.7
         ],
-        "loom": 1050.7,
-        "loom_runs": [
-         1059.1,
-         1050.7,
-         1032.2
-        ]
+        "loom": null
        },
        "streams4": {
         "baseline": null,
-        "loom": 89.0,
+        "loom": 88.1,
         "loom_runs": [
-         88.9,
-         89.0,
-         92.4
+         88.74,
+         88.06,
+         87.08
         ]
        }
       },
-      "programs_sha256": "160c0325a888919b765c6d4c0f6b7c836a1b2068cb57df8134b9bf9a60fe2be3",
+      "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
       "runs": {
-       "decode_prefill": 3,
+       "decode_prefill": 1,
+       "samples": {
+        "decode": 3,
+        "decode_32k": 3
+       },
        "streams4": 3
       },
       "source": "machine"
@@ -594,10 +508,10 @@
    "hrx_loom": {
     "artifact_id": null,
     "branch": null,
-    "hrx_loom": "0.2.0",
+    "hrx_loom": "0.3.0",
     "hrx_system_sha": null,
     "source": "pypi",
-    "wheel_sha256": "5148f9e3a264af400ec4bae38bd7b06bf551d28cc33b7a61d67f7bcefa590438"
+    "wheel_sha256": "6252bb0df262351175bdb2c4aaca22ffa63d80d791659aa4d2fa5c92a0af426f"
    },
    "kind": "machine",
    "run": null,

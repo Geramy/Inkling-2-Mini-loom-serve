@@ -2,28 +2,16 @@ func.decl @inkling_attn_span_record(%spans: buffer, %span_cap: index, %s: index)
 
 // Row j of the new state is entry len + j of the old rows followed by the chunk inputs. A thread reads a row only after
 // all rows it writes are below it, so each channel updates in place.
-kernel.def export("inkling_attn_conv_commit") @inkling_attn_conv_commit(%span_cap: index) {
-  %one = index.constant 1 : index
-  %chunks = index.constant 8 : index
-  %threads = index.constant 256 : index
-  kernel.launch.config workgroups(%span_cap, %chunks, %one) workgroup_size(%threads, %one, %one) : index
-} launch(%span_cap_in: index, %cap_in: index, %conv_origin: offset, %spans: buffer, %state: buffer, %k_raw: buffer, %v_raw: buffer) {
+func.def public inline @inkling_attn_commit_channel(%span_cap_in: index, %cap_in: index, %conv_origin: offset, %spans: buffer, %state: buffer, %k_raw: buffer, %v_raw: buffer, %span: index, %channel: index) {
   %cap = index.assume %cap_in [range(%cap_in, 1, 32768)] : index
   %c0 = index.constant 0 : index
   %c1 = index.constant 1 : index
   %c3 = index.constant 3 : index
-  %c256 = index.constant 256 : index
   %c1024 = index.constant 1024 : index
   %c6656 = index.constant 6656 : index
   %zero = index.constant 0 : offset
-  %span = kernel.workgroup.id<x> : index
-  %chunk0 = kernel.workgroup.id<y> : index
-  %chunk = index.assume %chunk0 [range(%chunk0, 0, 7)] : index
-  %lane0 = kernel.workitem.id<x> : index
-  %lane = index.assume %lane0 [range(%lane0, 0, 255)] : index
   %begin, %len, %pos0, %row, %slot, %active = func.call @inkling_attn_span_record(%spans, %span_cap_in, %span) : (buffer, index, index) -> (index, index, index, index, offset, i1)
   scf.if %active {
-    %channel = index.madd %chunk, %c256, %lane : index
     %is_v = index.cmp uge, %channel, %c1024 : index
     %raw_buf = scf.select %is_v, %v_raw, %k_raw : buffer
     %raw_view = buffer.view %raw_buf[%zero] : buffer -> view<[%cap]x1024xf32>
@@ -50,5 +38,22 @@ kernel.def export("inkling_attn_conv_commit") @inkling_attn_conv_commit(%span_ca
       view.store %x, %state_view[%dst] : f32, view<19968xf32>
     }
   }
+  func.return
+}
+
+kernel.def export("inkling_attn_conv_commit") @inkling_attn_conv_commit(%span_cap: index) {
+  %one = index.constant 1 : index
+  %chunks = index.constant 8 : index
+  %threads = index.constant 256 : index
+  kernel.launch.config workgroups(%span_cap, %chunks, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%span_cap_in: index, %cap_in: index, %conv_origin: offset, %spans: buffer, %state: buffer, %k_raw: buffer, %v_raw: buffer) {
+  %c256 = index.constant 256 : index
+  %span = kernel.workgroup.id<x> : index
+  %chunk0 = kernel.workgroup.id<y> : index
+  %chunk = index.assume %chunk0 [range(%chunk0, 0, 7)] : index
+  %lane0 = kernel.workitem.id<x> : index
+  %lane = index.assume %lane0 [range(%lane0, 0, 255)] : index
+  %channel = index.madd %chunk, %c256, %lane : index
+  func.call @inkling_attn_commit_channel(%span_cap_in, %cap_in, %conv_origin, %spans, %state, %k_raw, %v_raw, %span, %channel) : (index, index, offset, buffer, buffer, buffer, buffer, index, index)
   kernel.return
 }

@@ -1,10 +1,6 @@
 target.decl @inkling_execution
 
-kernel.decl @inkling_attn_conv_commit(%span_cap: index) launch(%span_cap_in: index, %cap_in: index, %conv_origin: offset, %spans: buffer, %state: buffer, %k_raw: buffer, %v_raw: buffer)
-
-kernel.decl @inkling_attn_kv_append(%cap: index) launch(%cap_in: index, %span_cap: index, %global: index, %max_blocks: index, %kv_origin: offset, %spans: buffer, %rows: buffer, %state: buffer, %k_act: buffer, %v_act: buffer)
-
-kernel.decl @inkling_attn_merge(%span_cap: index) launch(%cap_in: index, %span_cap_in: index, %global: index, %split_blocks: index, %max_splits: index, %spans: buffer, %sink: buffer, %gate: buffer, %out: buffer, %partial: buffer)
+kernel.decl @inkling_attn_post(%total: index) launch(%cap_in: index, %span_cap: index, %global: index, %split_blocks: index, %max_splits: index, %max_blocks: index, %kv_origin: offset, %conv_origin: offset, %spans: buffer, %rows: buffer, %state: buffer, %sink: buffer, %gate: buffer, %out: buffer, %partial: buffer, %k_act: buffer, %v_act: buffer, %k_raw: buffer, %v_raw: buffer)
 
 kernel.decl @inkling_attn_prep(%cap: index) launch(%cap_in: index, %span_cap: index, %global: index, %conv_origin: offset, %spans: buffer, %state: buffer, %q_raw: buffer, %k_raw: buffer, %v_raw: buffer, %r_raw: buffer, %dyn_k: buffer, %dyn_v: buffer, %w_q_clip: buffer, %w_rel_clip: buffer, %w_k_conv: buffer, %w_v_conv: buffer, %q_out: buffer, %r_out: buffer, %k_act: buffer, %v_act: buffer)
 
@@ -76,7 +72,6 @@ command.def public target(@inkling_execution) @inkling_hook_attn_prep(%layer: in
   %w7 = command.parameter %parameters, "blk.{}.attn_v_conv.weight"[%layer] : view<4096xf32>
   %wb8 = command.parameter.base %w7 : view<4096xf32> -> buffer
   kernel.launch @inkling_attn_prep[%cap](%cap, %span_cap, %gl, %conv_origin, %span_table, %arena, %q, %k, %v, %r, %ob, %y, %wb2, %wb4, %wb6, %wb8, %q, %r, %xn, %x) : [index](index, index, index, offset, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
-  kernel.launch @inkling_attn_conv_commit[%span_cap](%span_cap, %cap, %conv_origin, %span_table, %arena, %k, %v) : [index](index, index, offset, buffer, buffer, buffer, buffer)
   command.return
 }
 
@@ -122,13 +117,15 @@ command.def public target(@inkling_execution) @inkling_hook_attn(%layer: index, 
   %partial_bytes = index.scale %partial_n, %o13056 : index, offset -> offset
   %i24 = index.constant 24 : index
   %i8 = index.constant 8 : index
+  %i40 = index.constant 40 : index
+  %post_sc = index.mul %span_cap, %i40 : index
+  %post_total = index.add %post_sc, %cap : index
   %partial = buffer.alloca<global> align(256) %partial_bytes : buffer
   %w1 = command.parameter %parameters, "blk.{}.attn_rel_bias.weight"[%layer] : view<16384xf32>
   %wb2 = command.parameter.base %w1 : view<16384xf32> -> buffer
   kernel.launch @inkling_attn_tile[%tile_bound, %i24, %i1](%cap, %span_cap, %i0, %gl, %split, %max_splits, %max_blocks, %kv_origin, %span_table, %origins, %arena, %q, %r, %xn, %x, %wb2, %small, %gate, %ab, %partial) : [index, index, index](index, index, index, index, index, index, index, offset, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   kernel.launch @inkling_attn_tile[%span_cap, %i8, %max_splits](%cap, %span_cap, %i1, %gl, %split, %max_splits, %max_blocks, %kv_origin, %span_table, %origins, %arena, %q, %r, %xn, %x, %wb2, %small, %gate, %ab, %partial) : [index, index, index](index, index, index, index, index, index, index, offset, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
-  kernel.launch @inkling_attn_merge[%span_cap](%cap, %span_cap, %gl, %split, %max_splits, %span_table, %small, %gate, %ab, %partial) : [index](index, index, index, index, index, buffer, buffer, buffer, buffer, buffer)
-  kernel.launch @inkling_attn_kv_append[%cap](%cap, %span_cap, %gl, %max_blocks, %kv_origin, %span_table, %origins, %arena, %xn, %x) : [index](index, index, index, index, offset, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_attn_post[%post_total](%cap, %span_cap, %gl, %split, %max_splits, %max_blocks, %kv_origin, %conv_origin, %span_table, %origins, %arena, %small, %gate, %ab, %partial, %xn, %x, %k, %v) : [index](index, index, index, index, index, index, offset, offset, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   command.return
 }
 

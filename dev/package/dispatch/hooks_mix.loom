@@ -6,7 +6,11 @@ kernel.decl @inkling_conv_res(%cap: index) launch(%cap_in: index, %site_in: inde
 
 kernel.decl @inkling_ctrl_apply(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %spans: buffer, %x: buffer, %m: buffer, %forget0: buffer, %forget1: buffer, %forget2: buffer, %gain0: buffer, %gain1: buffer, %gain2: buffer, %z: buffer, %out: buffer)
 
+kernel.decl @inkling_ctrl_apply_z(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %spans: buffer, %x: buffer, %m: buffer, %forget0: buffer, %forget1: buffer, %forget2: buffer, %gain0: buffer, %gain1: buffer, %gain2: buffer, %rinv_x: buffer, %rinv_m: buffer, %part: buffer, %out: buffer)
+
 kernel.decl @inkling_ctrl_down(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %spans: buffer, %x: buffer, %m: buffer, %down0: buffer, %down1: buffer, %down2: buffer, %part: buffer)
+
+kernel.decl @inkling_ctrl_down_msg(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %col_stride_in: index, %blocks_off: index, %cur_off: index, %spans: buffer, %x: buffer, %bank: buffer, %query: buffer, %down0: buffer, %down1: buffer, %down2: buffer, %msg: buffer, %rinv_m: buffer, %part: buffer)
 
 kernel.decl @inkling_ctrl_z(%cap: index, %nc: index) launch(%cap_in: index, %nc_in: index, %x_col0_in: index, %x_col_step_in: index, %m_col0_in: index, %spans: buffer, %rinv_x: buffer, %rinv_m: buffer, %part: buffer, %z: buffer)
 
@@ -224,23 +228,24 @@ command.def public target(@inkling_execution) @inkling_hook_ctrl_qkv(%layer: ind
   %capnc2 = index.mul %cap, %i3 : index
   %z_bytes = index.scale %capnc2, %o256 : index, offset -> offset
   %i1 = index.constant 1 : index
-  %i4 = index.constant 4 : index
   %prev_pass = index.sub %pass, %i1 : index
   %i2 = index.constant 2 : index
   %bank_set0 = index.mul %prev_pass, %i2 : index
   %bank_set = index.mul %bank_set0, %cE : index
   %bank_cur = index.add %bank_set, %cE : index
-  %i0 = index.constant 0 : index
   %dense = config.get @inkling.dense_type : index
+  %i0 = index.constant 0 : index
   %ctrl_f32 = index.cmp eq, %dense, %i0 : index
   %xstep = scf.select %g, %i1, %i0 : index
+  %i8 = index.constant 8 : index
+  %decode_rows = index.cmp ule, %cap, %i8 : index
+  %i4 = index.constant 4 : index
   %msg = buffer.alloca<global> align(256) %msg_bytes : buffer
   %rinv_m = buffer.alloca<global> align(256) %rinv_bytes : buffer
   %part = buffer.alloca<global> align(256) %part_bytes : buffer
   %z = buffer.alloca<global> align(256) %z_bytes : buffer
   %w1 = command.parameter %parameters, "blk.{}.loop_msg_query.weight"[%layer] : view<4x2304xf32>
   %wb2 = command.parameter.base %w1 : view<4x2304xf32> -> buffer
-  kernel.launch @inkling_mix_states[%cap, %i0, %i4](%cap, %i0, %i4, %i1, %cE, %cE, %i0, %i0, %i0, %bank_set, %bank_cur, %i0, %i0, %i0, %span_table, %xn, %bank, %bank, %wb2, %xn, %msg, %rinv_m, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   %pick3 = scf.if %ctrl_f32 -> (buffer) {
   %w4 = command.parameter %parameters, "blk.{}.loop_q_ctrl_down.weight"[%layer] : view<64x4608xf32>
   %wb5 = command.parameter.base %w4 : view<64x4608xf32> -> buffer
@@ -322,9 +327,15 @@ command.def public target(@inkling_execution) @inkling_hook_ctrl_qkv(%layer: ind
   %wb47 = command.parameter.base %w46 : view<2304x64xbf16> -> buffer
     scf.yield %wb47 : buffer
   }
+  scf.if %decode_rows {
+  kernel.launch @inkling_ctrl_down_msg[%cap, %i3](%cap, %i3, %i0, %xstep, %i0, %cE, %bank_set, %bank_cur, %span_table, %xn, %bank, %wb2, %pick3, %pick18, %pick33, %msg, %rinv_m, %part) : [index, index](index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_ctrl_apply_z[%cap, %i3](%cap, %i3, %i0, %xstep, %i0, %cE, %span_table, %xn, %msg, %pick8, %pick23, %pick38, %pick13, %pick28, %pick43, %small, %rinv_m, %part, %x) : [index, index](index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  } else {
+  kernel.launch @inkling_mix_states[%cap, %i0, %i4](%cap, %i0, %i4, %i1, %cE, %cE, %i0, %i0, %i0, %bank_set, %bank_cur, %i0, %i0, %i0, %span_table, %xn, %bank, %bank, %wb2, %xn, %msg, %rinv_m, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   kernel.launch @inkling_ctrl_down[%cap, %i3](%cap, %i3, %i0, %xstep, %i0, %cE, %span_table, %xn, %msg, %pick3, %pick18, %pick33, %part) : [index, index](index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   kernel.launch @inkling_ctrl_z[%cap, %i3](%cap, %i3, %i0, %xstep, %i0, %span_table, %small, %rinv_m, %part, %z) : [index, index](index, index, index, index, index, buffer, buffer, buffer, buffer, buffer)
   kernel.launch @inkling_ctrl_apply[%cap, %i3](%cap, %i3, %i0, %xstep, %i0, %cE, %span_table, %xn, %msg, %pick8, %pick23, %pick38, %pick13, %pick28, %pick43, %z, %x) : [index, index](index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  }
   command.return
 }
 
@@ -346,23 +357,24 @@ command.def public target(@inkling_execution) @inkling_hook_ctrl_ffn(%layer: ind
   %part_bytes = index.scale %parts, %o256 : index, offset -> offset
   %capnc2 = index.mul %cap, %i1 : index
   %z_bytes = index.scale %capnc2, %o256 : index, offset -> offset
-  %i4 = index.constant 4 : index
   %prev_pass = index.sub %pass, %i1 : index
   %i2 = index.constant 2 : index
   %bank_set0 = index.mul %prev_pass, %i2 : index
   %bank_set = index.mul %bank_set0, %cE : index
   %bank_cur = index.add %bank_set, %cE : index
-  %i0 = index.constant 0 : index
   %dense = config.get @inkling.dense_type : index
+  %i0 = index.constant 0 : index
   %ctrl_f32 = index.cmp eq, %dense, %i0 : index
   %i3 = index.constant 3 : index
+  %i8 = index.constant 8 : index
+  %decode_rows = index.cmp ule, %cap, %i8 : index
+  %i4 = index.constant 4 : index
   %msg = buffer.alloca<global> align(256) %msg_bytes : buffer
   %rinv_m = buffer.alloca<global> align(256) %rinv_bytes : buffer
   %part = buffer.alloca<global> align(256) %part_bytes : buffer
   %z = buffer.alloca<global> align(256) %z_bytes : buffer
   %w1 = command.parameter %parameters, "blk.{}.loop_msg_query.weight"[%layer] : view<4x2304xf32>
   %wb2 = command.parameter.base %w1 : view<4x2304xf32> -> buffer
-  kernel.launch @inkling_mix_states[%cap, %i0, %i4](%cap, %i0, %i4, %i1, %cE, %cE, %i0, %i0, %i0, %bank_set, %bank_cur, %i0, %i0, %i0, %span_table, %xn, %bank, %bank, %wb2, %xn, %msg, %rinv_m, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   %pick3 = scf.if %ctrl_f32 -> (buffer) {
   %w4 = command.parameter %parameters, "blk.{}.loop_ffn_ctrl_down.weight"[%layer] : view<64x4608xf32>
   %wb5 = command.parameter.base %w4 : view<64x4608xf32> -> buffer
@@ -390,9 +402,15 @@ command.def public target(@inkling_execution) @inkling_hook_ctrl_ffn(%layer: ind
   %wb17 = command.parameter.base %w16 : view<2304x64xbf16> -> buffer
     scf.yield %wb17 : buffer
   }
+  scf.if %decode_rows {
+  kernel.launch @inkling_ctrl_down_msg[%cap, %i1](%cap, %i1, %i0, %i0, %i3, %cE, %bank_set, %bank_cur, %span_table, %xn, %bank, %wb2, %pick3, %pick3, %pick3, %msg, %rinv_m, %part) : [index, index](index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_ctrl_apply_z[%cap, %i1](%cap, %i1, %i0, %i0, %i3, %cE, %span_table, %xn, %msg, %pick8, %pick8, %pick8, %pick13, %pick13, %pick13, %small, %rinv_m, %part, %x) : [index, index](index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  } else {
+  kernel.launch @inkling_mix_states[%cap, %i0, %i4](%cap, %i0, %i4, %i1, %cE, %cE, %i0, %i0, %i0, %bank_set, %bank_cur, %i0, %i0, %i0, %span_table, %xn, %bank, %bank, %wb2, %xn, %msg, %rinv_m, %arena, %ob) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   kernel.launch @inkling_ctrl_down[%cap, %i1](%cap, %i1, %i0, %i0, %i3, %cE, %span_table, %xn, %msg, %pick3, %pick3, %pick3, %part) : [index, index](index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   kernel.launch @inkling_ctrl_z[%cap, %i1](%cap, %i1, %i0, %i0, %i3, %span_table, %small, %rinv_m, %part, %z) : [index, index](index, index, index, index, index, buffer, buffer, buffer, buffer, buffer)
   kernel.launch @inkling_ctrl_apply[%cap, %i1](%cap, %i1, %i0, %i0, %i3, %cE, %span_table, %xn, %msg, %pick8, %pick8, %pick8, %pick13, %pick13, %pick13, %z, %x) : [index, index](index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  }
   command.return
 }
 

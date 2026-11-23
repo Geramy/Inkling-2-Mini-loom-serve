@@ -21,7 +21,7 @@ Open your GPU and copy its commands.
 <summary>AMD Ryzen AI Max+ 395 "Strix Halo" (gfx1151)</summary>
 
 ```bash
-pipx install "hrx-loom[hf]==0.2.0"
+pipx install "hrx-loom[hf]==0.3.0"
 loom-fetch huggingface:local/unsloth-Inkling-2-Mini-loom:chat --materialize=copy --output=unsloth-Inkling-2-Mini-loom
 loom-serve --model=unsloth-Inkling-2-Mini-loom '--device=amdgpu://?completion_spin_ns=4294967295' --pool_backing=fixed
 ```
@@ -38,7 +38,7 @@ On a stock host (8 MiB memlock) start loom-serve as `systemd-run --user --pty --
 <summary>AMD Radeon AI PRO R9700 (gfx1201, 32 GB)</summary>
 
 ```bash
-pipx install "hrx-loom[hf]==0.2.0"
+pipx install "hrx-loom[hf]==0.3.0"
 loom-fetch huggingface:local/unsloth-Inkling-2-Mini-loom:chat-r9700 --materialize=copy --output=unsloth-Inkling-2-Mini-loom
 loom-serve --model=unsloth-Inkling-2-Mini-loom '--device=amdgpu://?completion_spin_ns=4294967295' --pool_backing=fixed --parameter_mode=preload
 ```
@@ -66,29 +66,29 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 | metric | llama.cpp | Loom | margin vs best llama.cpp | roofline | Loom % of roofline |
 |---|---|---|---|---|---|
-| decode tok/s, short prompt | 14.9 | 39.7 | +166 % | 57.2 | 69 % |
-| decode tok/s, 2k context | 11.3 | 36.7 | +225 % | 54.1 | 68 % |
-| decode tok/s, 32k context | — | 29.7 | — | 43.9 | 68 % |
-| prefill tok/s, 1k document | 57.6 | 893.7 | +1452 % | 4792.4 | 19 % |
-| prefill tok/s, 2k document | 53.6 | 1033.1 | +1827 % | 4701.2 | 22 % |
-| prefill tok/s, 8k document | 48.7 | 1050.7 | +2057 % | 4511.8 | 23 % |
-| prefill tok/s, 16k document | 44.6 | 973.1 | +2082 % | 4329.3 | 22 % |
-| prefill tok/s, 32k document | — | 811.8 | — | 4014.1 | 20 % |
-| 4 streams, aggregate decode tok/s | — | 89.0 | — | 217.8 | 41 % |
+| decode tok/s, short prompt | 14.9 | 42.8 | +187 % | 57.2 | 75 % |
+| decode tok/s, 2k context | 11.3 | — | — | 54.1 | — |
+| decode tok/s, 32k context | — | 32.4 | — | 43.9 | 74 % |
+| prefill tok/s, 1k document | 57.6 | — | — | 4792.4 | — |
+| prefill tok/s, 2k document | 53.6 | — | — | 4701.2 | — |
+| prefill tok/s, 8k document | 48.7 | — | — | 4511.8 | — |
+| prefill tok/s, 16k document | 44.6 | — | — | 4329.3 | — |
+| prefill tok/s, 32k document | — | — | — | 4014.1 | — |
+| 4 streams, aggregate decode tok/s | — | 88.1 | — | 217.8 | 40 % |
 | speculative decoding, drafted tokens accepted | n/a | n/a | n/a | n/a | n/a |
 
 **Methodology**
 
-- Compared: Loom against llama.cpp ROCm `llama.cpp-cpu/418fe97+PR32704`; the same GGUF, the same machine and session, the same prompts; Loom served with the active wait. Values are the median of 3 sessions (4 streams: median of 3); Loom is timed by the client, llama.cpp by its server.
+- Compared: Loom against llama.cpp ROCm `llama.cpp-cpu/418fe97+PR32704`; the same GGUF, the same machine and session, the same prompts; Loom served with the active wait. Values are the median of 1 sessions (a session's value is the median of its samples: 3 samples for decode, decode_32k; one sample for the others) (4 streams: median of 3); Loom is timed by the client, llama.cpp by its server.
 - Out of the box on both engines: Loom serves the preset shipped in this package; llama.cpp runs its build defaults plus only the server arguments listed below (offload, context and slots). No tuning sweep on either engine.
 - Drafting, 1-stream rows (decode, decode_2k, decode_32k, prefill): no drafting on either engine (no MTP head in the GGUF and no drafter published for this exact model). Each engine is loaded once for all these rows.
 - 4 streams: both engines loaded with drafting off, 4 parallel requests, aggregate tokens per second.
 - Rows: decode = short-context decode; decode_2k / decode_32k = decode after a ~2k / ~32k-token context; prefill_Nk = prompt processing of an N k-token prompt; streams4 = 4-stream aggregate decode. A margin within +-3 % (the measured same-runner noise) is a tie.
 - llama.cpp ROCm server arguments: `-ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja`.
-- Not supported / not measured: llama.cpp ROCm: not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache; llama.cpp ROCm: not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot).
+- Not supported / not measured: llama.cpp ROCm: not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache; llama.cpp ROCm: not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot); llama.cpp ROCm: Loom rows: one serve session of ab_session.py (decode short, decode 32k, 4 streams); decode 2k, 8k and the prefill rows were not re-measured with perf.py for this build.
 - Measured on AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04, a named machine (this GPU has no DevLab runner); both engines ran on it.
 - Margin vs best llama.cpp: (Loom / max(ROCm, Vulkan) - 1) × 100 %, using the available measured tokens/s for each row on this GPU. With only one valid backend, that backend is used; with neither, the margin is not measured. Raw backend values and their measurement sources are retained below and in the table.
-- Measured 2026-11-22; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.2.0` (hrx-system commit unknown); source: named-machine run.
+- Measured 2026-11-22; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown); source: named-machine run.
 - Roofline: the hardware ceiling for this GGUF on AMD Ryzen AI Max+ 395 "Strix Halo" 8060S (gfx1151), measured read bandwidth at 230 GB/s and 44 TFLOP/s sustained at 85 W (spec 59), from loom-roofline `roofline.py` (loom-skills `618f89e`); the 4-stream ceiling of this mixture-of-experts model assumes the four streams route to the same experts (the bound a run may not exceed).
 - — not measured; n/a not applicable.
 
@@ -96,29 +96,29 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 | metric | llama.cpp | Loom | margin vs best llama.cpp | roofline | Loom % of roofline |
 |---|---|---|---|---|---|
-| decode tok/s, short prompt | 14.9 | 90.2 | +505 % | 154.3 | 58 % |
-| decode tok/s, 2k context | 11.3 | 83.2 | +636 % | 145.8 | 57 % |
-| decode tok/s, 32k context | — | 71.3 | — | 118.4 | 60 % |
-| prefill tok/s, 1k document | 57.6 | 2576.3 | +4373 % | 19306.3 | 13 % |
-| prefill tok/s, 2k document | 53.6 | 2996.0 | +5490 % | 20543.5 | 15 % |
-| prefill tok/s, 8k document | 48.7 | 3091.5 | +6248 % | 19715.8 | 16 % |
-| prefill tok/s, 16k document | 44.6 | 2800.9 | +6180 % | 18918.3 | 15 % |
-| prefill tok/s, 32k document | — | 2242.0 | — | 17540.9 | 13 % |
-| 4 streams, aggregate decode tok/s | — | 218.9 | — | 587.2 | 37 % |
+| decode tok/s, short prompt | 14.9 | 94.9 | +537 % | 154.3 | 62 % |
+| decode tok/s, 2k context | 11.3 | — | — | 145.8 | — |
+| decode tok/s, 32k context | — | 75.4 | — | 118.4 | 64 % |
+| prefill tok/s, 1k document | 57.6 | — | — | 19306.3 | — |
+| prefill tok/s, 2k document | 53.6 | — | — | 20543.5 | — |
+| prefill tok/s, 8k document | 48.7 | — | — | 19715.8 | — |
+| prefill tok/s, 16k document | 44.6 | — | — | 18918.3 | — |
+| prefill tok/s, 32k document | — | — | — | 17540.9 | — |
+| 4 streams, aggregate decode tok/s | — | 213.2 | — | 587.2 | 36 % |
 | speculative decoding, drafted tokens accepted | n/a | n/a | n/a | n/a | n/a |
 
 **Methodology**
 
-- Compared: Loom against llama.cpp ROCm `llama.cpp-cpu/418fe97+PR32704`; the same GGUF, the same machine and session, the same prompts; Loom served with the active wait. Values are the median of 3 sessions (4 streams: median of 3); Loom is timed by the client, llama.cpp by its server.
+- Compared: Loom against llama.cpp ROCm `llama.cpp-cpu/418fe97+PR32704`; the same GGUF, the same machine and session, the same prompts; Loom served with the active wait. Values are the median of 1 sessions (a session's value is the median of its samples: 3 samples for decode, decode_32k; one sample for the others) (4 streams: median of 3); Loom is timed by the client, llama.cpp by its server.
 - Out of the box on both engines: Loom serves the preset shipped in this package; llama.cpp runs its build defaults plus only the server arguments listed below (offload, context and slots). No tuning sweep on either engine.
 - Drafting, 1-stream rows (decode, decode_2k, decode_32k, prefill): no drafting on either engine (no MTP head in the GGUF and no drafter published for this exact model). Each engine is loaded once for all these rows.
 - 4 streams: both engines loaded with drafting off, 4 parallel requests, aggregate tokens per second.
 - Rows: decode = short-context decode; decode_2k / decode_32k = decode after a ~2k / ~32k-token context; prefill_Nk = prompt processing of an N k-token prompt; streams4 = 4-stream aggregate decode. A margin within +-3 % (the measured same-runner noise) is a tie.
 - llama.cpp ROCm server arguments: `-ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja`.
-- Not supported / not measured: llama.cpp ROCm: not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache; llama.cpp ROCm: not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot).
+- Not supported / not measured: llama.cpp ROCm: not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache; llama.cpp ROCm: not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot); llama.cpp ROCm: Loom rows: one serve session of ab_session.py (decode short, decode 32k, 4 streams); decode 2k, 8k and the prefill rows were not re-measured with perf.py for this build.
 - Measured on AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04, a named machine (this GPU has no DevLab runner); both engines ran on it.
 - Margin vs best llama.cpp: (Loom / max(ROCm, Vulkan) - 1) × 100 %, using the available measured tokens/s for each row on this GPU. With only one valid backend, that backend is used; with neither, the margin is not measured. Raw backend values and their measurement sources are retained below and in the table.
-- Measured 2026-11-22; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.2.0` (hrx-system commit unknown); source: named-machine run.
+- Measured 2026-11-22; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown); source: named-machine run.
 - Roofline: the hardware ceiling for this GGUF on AMD Radeon AI PRO R9700 (gfx1201, 32 GB), measured read bandwidth at 620 GB/s and 191 TFLOP/s, from loom-roofline `roofline.py` (loom-skills `618f89e`); the 4-stream ceiling of this mixture-of-experts model assumes the four streams route to the same experts (the bound a run may not exceed).
 - — not measured; n/a not applicable.
 
@@ -142,7 +142,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 | gate | description | Strix Halo | Radeon AI PRO R9700 |
 |---|---|---|---|
-| `kernel_tests` | Unit tests of the generated kernels against reference implementations | ✅ pass (28/28) ¹ | ✅ pass (28/28) ¹ |
+| `kernel_tests` | Unit tests of the generated kernels against reference implementations | ✅ pass (33/33) ¹ | ✅ pass (33/33) ¹ |
 | `golden` | llama.cpp reference recorded on the same GGUF: greedy tokens and top-5 log-probs, short prompts and 1k-32k documents | ✅ pass ² | ✅ pass ² |
 | `compare` | Greedy output vs the llama.cpp reference, token by token; every divergence is a near-tie | ✅ pass ² | ✅ pass ² |
 | `vision` | Image input vs llama.cpp with the same projector: identical prompt tokens, replies equal up to near-ties | — not applicable | — not applicable |
@@ -154,8 +154,8 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | `logits` | Host logits readback (llm.logits on): at T=0 every returned row's argmax is the device's token, the top-k matches llama.cpp, greedy text is unchanged | — not applicable | — not applicable |
 | `decision` | Decision answers (choice, score, noul probabilities) vs llama.cpp on the same prompts | — not applicable | — not applicable |
 
-- ¹ named-machine run, 2026-11-22; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.2.0` (hrx-system commit unknown).
-- ² named-machine run, LEVEL=dev, 2026-11-22; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.2.0` (hrx-system commit unknown).
+- ¹ named-machine run, 2026-11-23; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown).
+- ² named-machine run, LEVEL=dev, 2026-11-23; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown).
 - Gates are the loom-benchmark correctness gates (`gates.sh`); a gate without a recorded run shows no evidence.
 
 ## Files
@@ -167,7 +167,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 - `info.json`: the measurements, gate evidence and versions this card shows; everything else comes from the files above.
 - `REPORT.md`: how the values above were measured: setup, commands and the value of every run.
 
-Versions: card schema `loom-card/3`; loom-skills `618f89e`; hrx-loom `0.2.0` (hrx-system commit unknown); card generator `618f89e`.
+Versions: card schema `loom-card/3`; loom-skills `618f89e`; hrx-loom `0.3.0` (hrx-system commit unknown); card generator `618f89e`.
 
 Source files, fetched by `loom-fetch` from their own repositories:
 

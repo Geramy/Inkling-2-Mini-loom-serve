@@ -1,9 +1,9 @@
 {
  "verdict": "FAIL",
  "level": "dev",
- "pkg_hash": "780f833bad85",
- "seconds": 76,
- "ts": "2026-11-22T09:51:47",
+ "pkg_hash": "eeb0dee202a7",
+ "seconds": 96,
+ "ts": "2026-11-22T18:36:49",
  "gates": {
   "consistency": {
    "pass": true,
@@ -13,7 +13,7 @@
   "agent": {
    "pass": true,
    "log": "gates_agent.log",
-   "seconds": 71
+   "seconds": 91
   },
   "golden": {
    "pass": true,

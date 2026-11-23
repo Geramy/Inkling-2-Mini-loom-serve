@@ -1,4 +1,5 @@
 """Tests of the loop message mix and controller kernels against the oracle (prompt A, slots 24..47). Usage: test_ctrl.py [gfx1201|gfx1151] [chunk]"""
+import os
 import sys
 
 import numpy as np
@@ -9,6 +10,7 @@ from test_mix import SENT, check, spans_buf
 
 rows = []
 TOKENS = 1
+FOLD = os.environ.get("CTRL_FOLD") == "1"
 SRC = ["mix_states.loom", "conv_res.loom", "ctrl.loom"]
 
 
@@ -40,6 +42,8 @@ def run_ctrl(device, kind, chunk, tokens, x, m, rx, rm, wsets, nw, nc, x_col0, x
         ("inkling_ctrl_apply", (cap, nc), [x_col0, x_col_step, m_col0, cs], ["spans", "x", "m", "f0", "f1", "f2", "g0", "g1", "g2", "z", "out"]),
         ("inkling_mix_norm", (cap, nc), [cs, E if kind == "global" else 0], ["spans", "out", "w", "nout"]),
     ]
+    if FOLD:
+        steps[1:3] = [("inkling_ctrl_apply_z", (cap, nc), [x_col0, x_col_step, m_col0, cs], ["spans", "x", "m", "f0", "f1", "f2", "g0", "g1", "g2", "rx", "rm", "part", "out"])]
     r = run_steps(SRC, bufs, steps, device, {"inkling.mix.ctrl_chunk": chunk, "inkling.mix.ctrl_tokens": tokens, "inkling.mix.ctrl_bf16": int(bf16)})
     return r["out"], r["nout"]
 

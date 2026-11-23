@@ -2,12 +2,7 @@
 func.decl @inkling_attn_decode_split(%split_blocks: index, %blocks: index) -> (index)
 func.decl @inkling_attn_span_record(%spans: buffer, %span_cap: index, %s: index) -> (index, index, index, index, offset, i1)
 
-kernel.def export("inkling_attn_merge") @inkling_attn_merge(%span_cap: index) {
-  %one = index.constant 1 : index
-  %heads = index.constant 24 : index
-  %threads = index.constant 128 : index
-  kernel.launch.config workgroups(%span_cap, %heads, %one) workgroup_size(%threads, %one, %one) : index
-} launch(%cap_in: index, %span_cap_in: index, %global: index, %split_blocks: index, %max_splits: index, %spans: buffer, %sink: buffer, %gate: buffer, %out: buffer, %partial: buffer) {
+func.def public inline @inkling_attn_merge_wg(%cap_in: index, %span_cap_in: index, %global: index, %split_blocks: index, %max_splits: index, %spans: buffer, %sink: buffer, %gate: buffer, %out: buffer, %partial: buffer, %span0: index, %head0: index) {
   %cap = index.assume %cap_in [range(%cap_in, 1, 32768)] : index
   %c0 = index.constant 0 : index
   %c1 = index.constant 1 : index
@@ -22,8 +17,6 @@ kernel.def export("inkling_attn_merge") @inkling_attn_merge(%span_cap: index) {
   %zero = index.constant 0 : offset
   %zero_f = scalar.constant 0.0 : f32
   %one_f = scalar.constant 1.0 : f32
-  %span0 = kernel.workgroup.id<x> : index
-  %head0 = kernel.workgroup.id<y> : index
   %head = index.min %head0, %c23 : index
   %d0 = kernel.workitem.id<x> : index
   %d = index.min %d0, %c127 : index
@@ -97,5 +90,17 @@ kernel.def export("inkling_attn_merge") @inkling_attn_merge(%span_cap: index) {
     %result = scalar.mulf %normalized, %sg : f32
     view.store %result, %out_view[%token, %col] : f32, view<[%cap]x3072xf32>
   }
+  func.return
+}
+
+kernel.def export("inkling_attn_merge") @inkling_attn_merge(%span_cap: index) {
+  %one = index.constant 1 : index
+  %heads = index.constant 24 : index
+  %threads = index.constant 128 : index
+  kernel.launch.config workgroups(%span_cap, %heads, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%cap_in: index, %span_cap_in: index, %global: index, %split_blocks: index, %max_splits: index, %spans: buffer, %sink: buffer, %gate: buffer, %out: buffer, %partial: buffer) {
+  %span0 = kernel.workgroup.id<x> : index
+  %head0 = kernel.workgroup.id<y> : index
+  func.call @inkling_attn_merge_wg(%cap_in, %span_cap_in, %global, %split_blocks, %max_splits, %spans, %sink, %gate, %out, %partial, %span0, %head0) : (index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, index, index)
   kernel.return
 }

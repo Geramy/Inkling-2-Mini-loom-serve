@@ -58,7 +58,7 @@ def prepare(src, kt):
             if f.endswith((".py", ".sh")):
                 p = os.path.join(root, f)
                 t = open(p, encoding="utf-8").read()
-                n = re.sub(r"inkling/(?:ink[DEFG]|optP1)\b", "inkling/" + os.path.basename(BASE) + "/kt", t)
+                n = re.sub(r"inkling/(?:ink[DEFG]|opt[A-Z]+[0-9]*)\b", "inkling/" + os.path.basename(BASE) + "/kt", t)
                 n = re.sub(r"/tmp/ink([DEFG])_", lambda m: f"{kt}/work/ink{m.group(1)}_", n)
                 if n != t:
                     open(p, "w", encoding="utf-8").write(n)
@@ -89,7 +89,7 @@ def run_target(name, cwd, argv, env, log, timeout):
 
 
 def run_chat(src, arch, out):
-    env = dict(os.environ, INKLING_CHAT_ROOT=src, INKLING_CHAT_PY=f"{HOME}/loom/.venv/bin/python")
+    env = dict(os.environ, INKLING_CHAT_ROOT=src, INKLING_CHAT_PY=f"{VENV}/bin/python")
     if os.environ.get("KT_LOCKED"):
         env["PATH"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ktest_shim") + ":" + env["PATH"]
     log = os.path.join(out, "chat_run_all.log")
@@ -124,6 +124,12 @@ def main():
     env = dict(os.environ, PATH=f"{os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ktest_shim')}:{VENV}/bin:{os.environ['PATH']}", VIRTUAL_ENV=VENV, PYTHONDONTWRITEBYTECODE="1")
     rows = []
     table = suites(arch)
+    for suite, name, argv, extra in [("dense", "test_gemv_group", ["test_gemv_group.py", arch], {}), ("experts", "test_router_decode", ["test_router_decode.py", arch], {}), ("mix", "test_ctrl_msg", ["test_ctrl_msg.py", arch], {})]:
+        if os.path.exists(os.path.join(kt, "test", suite, argv[0])):
+            table[suite].append((name, argv, extra))
+    if os.path.exists(os.path.join(kt, "test", "mix", "test_ctrl_msg.py")):
+        for c, t in (("128", "1"), ("256", "16")):
+            table["mix"].append((f"test_ctrl_fold_c{c}_all_t{t}", ["test_ctrl.py", arch, c, "all", t], {"CTRL_FOLD": "1"}))
     for suite in a.suites.split(","):
         if suite == "chat":
             rows += run_chat(a.src, arch, out)

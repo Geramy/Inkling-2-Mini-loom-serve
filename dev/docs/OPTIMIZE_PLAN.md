@@ -2,6 +2,25 @@
 
 No optimization is implemented here. Everything below is measured (profiles, A/B sessions) or marked as an estimate. Tree: the refreshed publish tree (inkS), presets `chat-r9700` (gfx1201) and `chat` (gfx1151), context 131072, rows 4, prefill 512, Q4_K_XL, same programs as `docs/PERF_BASELINE.md` (`programs_sha256` 51c67d50...). Raw profiles: `bench/<gpu>/profile/raw/`. Full per-family tables: `bench/<gpu>/profile/summary.md` and `.json`. Condensed tables: `bench/<gpu>/profile/condensed.md` (same content for both GPUs, section 2).
 
+## Lane status (2026-11-22, integ3)
+
+| Lane | Status | Where |
+|---|---|---|
+| 1 P1 larger-n experts pass | kept, in wave 1 (published) | `OPT_P1.md` |
+| 3 D1 residual-chain fusion | kept, in wave 1 | `OPT_D1.md` |
+| 6 D4 long-context decode attention | kept, in wave 1 | `OPT_D4.md` |
+| 8 D5 head and sampler | kept, in wave 1 | `OPT_D5.md` |
+| 7 P3 prefill attention K/V tile | rejected, not wired | `OPT_P3.md` |
+| QV quantized variants | separate lane, not part of the published package | `OPT_QV.md`, `OPT_QV_new.md` |
+| 4 D2 attention front end and projection group | kept, in wave 2 (published) | `OPT_D2.md` |
+| 9 D6 experts decode pipelining | kept, in wave 2 | `OPT_D6.md` |
+| W64 wave64 down kernel (8060S only) | kept, in wave 2 | `OPT_W64.md` |
+| 5 D3 controllers and router | kept, in wave 2 | `OPT_D3.md` |
+| M30 hrx-loom 0.3.0 and merge of wave 2 | done, `package/` = `package_M30` | `OPT_M30.md` |
+| 2, 10, 11, 12 (P2, P4, P5, prefill variance) | not run in waves 1 and 2 | this plan |
+
+Wave 2 result (merged, one session per GPU): decode short 94.86 (R9700) and 42.80 (8060S) tok/s, 0.61 and 0.75 of the ceiling (`PERF_BASELINE.md`).
+
 ## 0. Summary
 
 1. Decode (R9700, short context, 11.64 ms per token): the weight streams (experts, proj, oproj, lm_head) are 7.3 ms of device time against a 6.0 ms floor and are already at 67 to 97 percent of the measured bandwidth. The small kernels (mix, ctrl, norm, conv, router, attention front, sampler) are 4.4 ms in about 1,020 launches (average 4.3 us, 37 percent of the step) against a floor of about 0.5 ms. The largest single family is the mix kernel: 147 launches per token, 1.57 ms, 10.7 us per launch (the isolated benchmark in `KERNELS_mix.md` gives 4.7 to 6.1 us). The attention projection GEMVs are NOT a lever any more: 2.42 ms for 2.22 ms of bytes (92 percent of the bandwidth). The "3.0 vs 2.2 ms" of INTEGRATION_LOG included the launch gaps and the small kernels around them.

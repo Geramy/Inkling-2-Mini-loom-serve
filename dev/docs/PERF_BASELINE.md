@@ -1,4 +1,30 @@
-# Performance baseline, Q4_K_XL, skills method: wave 1 build (re-baseline, agent integ2, 2026-11-22, bead llama-cpp-tg3.30)
+# Performance, Q4_K_XL, wave 2 build on hrx-loom 0.3.0 (agent integ3, 2026-11-22, bead llama-cpp-tg3.28)
+
+Build: `package/` = wave 1 (`package_T10b`) + D2 (attention front end, grouped projection GEMV) + D6 (experts decode pipelining) + W64 (wave64 down kernel, 8060S only) + D3 (controllers, router), merged and measured by M30 (`docs/OPT_M30.md`, evidence `bench/M30/`, `bench/M30/ab_log_M30.jsonl`). Runtime: hrx-loom 0.3.0. Presets `chat-r9700` (gfx1201) and `chat` (gfx1151), context 131072, rows 4, prefill capacity 2048.
+
+Method: one fresh server per GPU under the exclusive lock, `scripts/ab_session.py` (decode short, 8k, 32k, prefill 2k, 4 streams; 3 requests per metric, median). This is ONE session per GPU. The wave 1 numbers below it are medians of 3 sessions of `perf_session.sh` (`perf.py`). Decode rows agree between the tools; prefill and 4-stream rows do not (different request shapes), so the wave 1 reference for those rows is the same tool (`ab_session.py`, build T10b on 0.2.0, lane docs).
+
+## Wave 2 results, tok/s
+
+| Row | R9700 wave 2 | R9700 wave 1 (published) | Change | 8060S wave 2 | 8060S wave 1 (published) | Change |
+|---|---|---|---|---|---|---|
+| decode, short prompt | 94.86 | 90.2 | +5.2 % | 42.80 | 39.7 | +7.8 % |
+| decode, 8k context | 84.77 | 80.3 | +5.6 % | 37.81 | 34.9 | +8.3 % |
+| decode, 32k context | 75.38 | 71.3 | +5.7 % | 32.44 | 29.7 | +9.2 % |
+| prefill 2k (`ab_session.py` row) | 3704 | 3556 to 3561 (same tool) | +4.0 % | 1221 | 1116 to 1191 (same tool) | about +3 % |
+| 4 streams, aggregate decode | 213.2 | 205.2 to 206.3 (same tool) | +3.7 % | 88.06 | 82.2 to 83.9 (same tool) | +5.4 % |
+
+Distance to the roofline ceiling (Q4_K_XL file, floors 154.6 and 57.3 tok/s at short context): R9700 94.86 / 154.6 = 0.61, 8060S 42.80 / 57.3 = 0.75 (wave 1: 0.58 and 0.69). The remaining gap is 4.4 ms (R9700) and 6.0 ms (8060S) per token.
+
+Measured at kernel level per lane (0.2.0, `docs/OPT_D2.md`, `OPT_D6.md`, `OPT_W64.md`, `OPT_D3.md`) and as one merged session per GPU here. Not measured: per-lane end-to-end gains on 0.3.0, an ABBA of the merged build, the wave 1 build on 0.2.0 in the same session (owner order). On the R9700 the wave 1 build on 0.3.0 reads 87.45 (decode short), 3 percent under the published 0.2.0 number; the cause (0.3.0 or session) is not separated. The 8060S shows no such change.
+
+Not re-measured for wave 2 (wave 1 values below stay valid only for the wave 1 build): decode 2k, prefill 1k, 8k, 16k and 32k with `perf.py`, time to first token, cold start. The card (`bench/<gpu>/ev_perf.json`) therefore holds decode short, decode 32k and 4 streams from this session (`scripts/perf_log_from_ab.py` turns the `ab_session.py` row into the `perf.py` log format, then `scripts/perf_evidence.sh`); the other rows are empty and the previous card evidence is kept as `ev_perf_wave1.json`.
+
+Greedy text of the merged build equals the wave 1 build (prompts A, B, C and documents of 8k and 32k tokens, both GPUs). Kernel tests 33 of 33 on both GPUs. Gates at dev level (M30): consistency, agent, golden and compare pass (R9700 compare dev 7 full, max gap 0.582; 8060S 9 full, max gap 0.296), sampling fails by design as in wave 1. Context admission of 130,991 tokens completes in 174 s (R9700) and 591 s (8060S) after the gate run.
+
+---
+
+# Wave 1 baseline (kept): Performance baseline, Q4_K_XL, skills method: wave 1 build (re-baseline, agent integ2, 2026-11-22, bead llama-cpp-tg3.30)
 
 Build: `package/` = wave 1 (`package_T10b` = base + D1 decode residual-chain fusion + D4 long-context decode attention + D5 lm_head and sampler path + P1 larger-n experts pass), published tree rebuilt with `prefill_capacity` 2048 for the Q4 presets (`programs_sha256` 160c0325...). Presets `chat-r9700` (gfx1201) and `chat` (gfx1151), context 131072, rows 4. The method is the one of the baseline below, unchanged: `scripts/perf_session.sh <gpu> <n> spin full` under `flock -x ~/hrx-pr1/gpu.lock`, 3 fresh serve sessions per GPU (`loom-serve --device='amdgpu://<URI>?completion_spin_ns=4294967295' --preset=<P> --pool_backing=fixed --workers=8`), one server at a time, idle box (nothing else ran: the CPU llama.cpp server was stopped before, kernel tests and the context table ran before the sessions), weights hard-linked, kernel cache warm, label `loom-baseline`, `--thinking off`, medians of 3 session values. The CPU llama.cpp rows are the ones of the baseline below (the build and the oracle did not change: they were not run again). The roofline ceilings were recomputed for the Q4 prefill chunk of 2048 tokens (`docs/ROOFLINE.md`), so the prefill efficiencies below use new ceilings; decode ceilings are unchanged.
 

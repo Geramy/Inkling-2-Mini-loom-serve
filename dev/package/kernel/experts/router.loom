@@ -35,7 +35,8 @@ kernel.def export("inkling_router_logits") @inkling_router_logits(%n: index) {
   %lane = kernel.subgroup.lane.id : index
   %xv = buffer.view %x[%origin] : buffer -> view<[%n]x[%c2304]xf32>
   %t0 = index.mul %gy, %c4 : index
-  %first = index.cmp eq, %gx, %c0 : index
+  %c5 = index.constant 5 : index
+  %first = index.cmp ult, %tid, %c5 : index
   scf.if %first {
     %x16v = buffer.view %x16[%origin] : buffer -> view<[%n]x[%c2304]xf16>
     scf.for %j = [%c0 to %c4 step %c1] unroll schedule(linear) {
@@ -43,7 +44,9 @@ kernel.def export("inkling_router_logits") @inkling_router_logits(%n: index) {
       %live = index.cmp ult, %token_raw, %n : index
       scf.if %live {
         %token = index.assume %token_raw [ge(%token_raw, 0), lt(%token_raw, %n)] : index
-        scf.for %u = [%tid to %c144 step %c128] {
+        %u = index.madd %tid, %c32, %gx : index
+        %pack = index.cmp ult, %u, %c144 : index
+        scf.if %pack {
           %e_raw = index.mul %u, %c16 : index
           %e = index.assume %e_raw [ge(%e_raw, 0), le(%e_raw, 2288)] : index
           %e1 = index.add %e, %c4 : index
@@ -86,7 +89,7 @@ kernel.def export("inkling_router_logits") @inkling_router_logits(%n: index) {
   %lv = buffer.view %logits[%origin] : buffer -> view<[%n]x128xf32>
   %zero4 = vector.splatf 0.0 : vector<4xf32>
   %zero = scalar.constant 0.0 : f32
-  %a0, %a1, %a2, %a3 = scf.for %i = [%c0 to %c18 step %c1](%p0 = %zero4 : vector<4xf32>, %p1 = %zero4 : vector<4xf32>, %p2 = %zero4 : vector<4xf32>, %p3 = %zero4 : vector<4xf32>) -> (vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>) {
+  %a0, %a1, %a2, %a3 = scf.for %i = [%c0 to %c18 step %c1](%p0 = %zero4 : vector<4xf32>, %p1 = %zero4 : vector<4xf32>, %p2 = %zero4 : vector<4xf32>, %p3 = %zero4 : vector<4xf32>) -> (vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>) unroll {
     %k = index.madd %i, %c32, %lane : index
     %k4_raw = index.mul %k, %c4 : index
     %k4 = index.assume %k4_raw [ge(%k4_raw, 0), le(%k4_raw, 2300)] : index
@@ -157,7 +160,103 @@ kernel.def export("inkling_router_logits") @inkling_router_logits(%n: index) {
   kernel.return
 }
 
-// One wave per token, four tokens per workgroup. A lane owns 4 consecutive experts. Ties go to the lower expert index.
+func.decl @inkling_experts_route_groups(%n: index, %tile: index, %ids: buffer, %tasks: buffer)
+
+// Top 8 of one token: a wave, a lane owns 4 consecutive experts. Ties go to the lower expert index.
+func.def public inline @inkling_router_select_one(%n: index, %token_raw: index, %lane: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c2 = index.constant 2 : index
+  %c3 = index.constant 3 : index
+  %c4 = index.constant 4 : index
+  %c8 = index.constant 8 : index
+  %origin = index.constant 0 : offset
+  %token = index.assume %token_raw [ge(%token_raw, 0), lt(%token_raw, %n)] : index
+  %lv = buffer.view %logits[%origin] : buffer -> view<[%n]x128xf32>
+  %bv = buffer.view %bias[%origin] : buffer -> view<128xf32>
+  %idv = buffer.view %ids[%origin] : buffer -> view<[%n]x8xi32>
+  %wv = buffer.view %wts[%origin] : buffer -> view<[%n]x8xf32>
+  %e0_raw = index.mul %lane, %c4 : index
+  %e0 = index.assume %e0_raw [ge(%e0_raw, 0), le(%e0_raw, 124)] : index
+  %l4 = vector.load %lv[%token, %e0] : view<[%n]x128xf32> -> vector<4xf32>
+  %b4 = vector.load %bv[%e0] : view<128xf32> -> vector<4xf32>
+  %p4 = vector.logisticf<afn> %l4 : vector<4xf32>
+  %sel4 = vector.addf %p4, %b4 : vector<4xf32>
+  %ninf = scalar.constant -3.4028234663852886e+38 : f32
+  %big = scalar.constant 1000 : i32
+  %zero = scalar.constant 0.0 : f32
+  %zero8 = vector.splatf 0.0 : vector<8xf32>
+  %izero8 = vector.splati 0 : vector<8xi32>
+  %base32 = index.cast %e0 : index to i32
+  %sel_final, %pw, %pid = scf.for %r = [%c0 to %c8 step %c1](%sel = %sel4 : vector<4xf32>, %pv = %zero8 : vector<8xf32>, %iv = %izero8 : vector<8xi32>) -> (vector<4xf32>, vector<8xf32>, vector<8xi32>) unroll schedule(linear) {
+    %s0 = vector.extract %sel[0] : vector<4xf32> -> f32
+    %s1 = vector.extract %sel[1] : vector<4xf32> -> f32
+    %s2 = vector.extract %sel[2] : vector<4xf32> -> f32
+    %s3 = vector.extract %sel[3] : vector<4xf32> -> f32
+    %g01 = scalar.cmpf ogt, %s1, %s0 : f32
+    %v01 = scf.select %g01, %s1, %s0 : f32
+    %k0 = scalar.constant 0 : i32
+    %k1 = scalar.constant 1 : i32
+    %k2 = scalar.constant 2 : i32
+    %k3 = scalar.constant 3 : i32
+    %i01 = scf.select %g01, %k1, %k0 : i32
+    %g23 = scalar.cmpf ogt, %s3, %s2 : f32
+    %v23 = scf.select %g23, %s3, %s2 : f32
+    %i23 = scf.select %g23, %k3, %k2 : i32
+    %g = scalar.cmpf ogt, %v23, %v01 : f32
+    %bv_local = scf.select %g, %v23, %v01 : f32
+    %bi_local = scf.select %g, %i23, %i01 : i32
+    %m = kernel.subgroup.reduce<maxnumf> %bv_local : f32
+    %hit = scalar.cmpf oeq, %bv_local, %m : f32
+    %mask = kernel.subgroup.vote.ballot %hit : i1 -> i32
+    %win_lane_raw = scalar.cttzi %mask : i32
+    %win_lane = scalar.assume %win_lane_raw [range(%win_lane_raw, 0, 31)] : i32
+    %gi = scalar.addi %base32, %bi_local : i32
+    %win = kernel.subgroup.broadcast %gi from %win_lane : i32, i32
+    %rel = scalar.subi %win, %base32 : i32
+    %p0 = vector.extract %p4[0] : vector<4xf32> -> f32
+    %p1 = vector.extract %p4[1] : vector<4xf32> -> f32
+    %p2 = vector.extract %p4[2] : vector<4xf32> -> f32
+    %p3 = vector.extract %p4[3] : vector<4xf32> -> f32
+    %is0 = scalar.cmpi eq, %rel, %k0 : i32
+    %is1 = scalar.cmpi eq, %rel, %k1 : i32
+    %is2 = scalar.cmpi eq, %rel, %k2 : i32
+    %is3 = scalar.cmpi eq, %rel, %k3 : i32
+    %pb0 = scalar.cmpi eq, %bi_local, %k0 : i32
+    %pb1 = scalar.cmpi eq, %bi_local, %k1 : i32
+    %pb2 = scalar.cmpi eq, %bi_local, %k2 : i32
+    %q0 = scf.select %pb0, %p0, %p3 : f32
+    %q1 = scf.select %pb1, %p1, %q0 : f32
+    %q2 = scf.select %pb2, %p2, %q1 : f32
+    %pwin = kernel.subgroup.broadcast %q2 from %win_lane : f32, i32
+    %n0 = scf.select %is0, %ninf, %s0 : f32
+    %n1 = scf.select %is1, %ninf, %s1 : f32
+    %n2 = scf.select %is2, %ninf, %s2 : f32
+    %n3 = scf.select %is3, %ninf, %s3 : f32
+    %ns = vector.from_elements %n0, %n1, %n2, %n3 : vector<4xf32>
+    %pv2 = vector.insert %pwin into %pv[%r] : f32, vector<8xf32>
+    %iv2 = vector.insert %win into %iv[%r] : i32, vector<8xi32>
+    scf.yield %ns, %pv2, %iv2 : vector<4xf32>, vector<8xf32>, vector<8xi32>
+  }
+  %total = vector.reduce<addf> %pw, %zero : vector<8xf32>, f32
+  %eps = scalar.constant 1.0e-20 : f32
+  %den = scalar.addf %total, %eps : f32
+  %scale = scalar.constant 8.0 : f32
+  %leader = index.cmp eq, %lane, %c0 : index
+  scf.if %leader {
+    scf.for %r = [%c0 to %c8 step %c1] unroll schedule(linear) {
+      %p = vector.extract %pw[%r] : vector<8xf32> -> f32
+      %id = vector.extract %pid[%r] : vector<8xi32> -> i32
+      %q = scalar.divf %p, %den : f32
+      %w = scalar.mulf %q, %scale : f32
+      view.store %id, %idv[%token, %r] : i32, view<[%n]x8xi32>
+      view.store %w, %wv[%token, %r] : f32, view<[%n]x8xf32>
+    }
+  }
+  func.return
+}
+
+// One wave per token, four tokens per workgroup.
 kernel.def export("inkling_router_select") @inkling_router_select(%n: index) {
   %c1 = index.constant 1 : index
   %c3 = index.constant 3 : index
@@ -167,97 +266,31 @@ kernel.def export("inkling_router_select") @inkling_router_select(%n: index) {
   %groups = index.div %rounded, %c4 : index
   kernel.launch.config workgroups(%groups, %c1, %c1) workgroup_size(%c128, %c1, %c1) : index
 } launch(%n: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer) {
-  %c0 = index.constant 0 : index
-  %c1 = index.constant 1 : index
-  %c2 = index.constant 2 : index
-  %c3 = index.constant 3 : index
   %c4 = index.constant 4 : index
-  %c8 = index.constant 8 : index
-  %origin = index.constant 0 : offset
   %gx = kernel.workgroup.id<x> : index
   %wave = kernel.subgroup.id : index
   %lane = kernel.subgroup.lane.id : index
   %token_raw = index.madd %gx, %c4, %wave : index
   %live = index.cmp ult, %token_raw, %n : index
   scf.if %live {
-    %token = index.assume %token_raw [ge(%token_raw, 0), lt(%token_raw, %n)] : index
-    %lv = buffer.view %logits[%origin] : buffer -> view<[%n]x128xf32>
-    %bv = buffer.view %bias[%origin] : buffer -> view<128xf32>
-    %idv = buffer.view %ids[%origin] : buffer -> view<[%n]x8xi32>
-    %wv = buffer.view %wts[%origin] : buffer -> view<[%n]x8xf32>
-    %e0_raw = index.mul %lane, %c4 : index
-    %e0 = index.assume %e0_raw [ge(%e0_raw, 0), le(%e0_raw, 124)] : index
-    %l4 = vector.load %lv[%token, %e0] : view<[%n]x128xf32> -> vector<4xf32>
-    %b4 = vector.load %bv[%e0] : view<128xf32> -> vector<4xf32>
-    %p4 = vector.logisticf<afn> %l4 : vector<4xf32>
-    %sel4 = vector.addf %p4, %b4 : vector<4xf32>
-    %ninf = scalar.constant -3.4028234663852886e+38 : f32
-    %big = scalar.constant 1000 : i32
-    %zero = scalar.constant 0.0 : f32
-    %zero8 = vector.splatf 0.0 : vector<8xf32>
-    %izero8 = vector.splati 0 : vector<8xi32>
-    %base32 = index.cast %e0 : index to i32
-    %sel_final, %pw, %pid = scf.for %r = [%c0 to %c8 step %c1](%sel = %sel4 : vector<4xf32>, %pv = %zero8 : vector<8xf32>, %iv = %izero8 : vector<8xi32>) -> (vector<4xf32>, vector<8xf32>, vector<8xi32>) unroll schedule(linear) {
-      %s0 = vector.extract %sel[0] : vector<4xf32> -> f32
-      %s1 = vector.extract %sel[1] : vector<4xf32> -> f32
-      %s2 = vector.extract %sel[2] : vector<4xf32> -> f32
-      %s3 = vector.extract %sel[3] : vector<4xf32> -> f32
-      %g01 = scalar.cmpf ogt, %s1, %s0 : f32
-      %v01 = scf.select %g01, %s1, %s0 : f32
-      %k0 = scalar.constant 0 : i32
-      %k1 = scalar.constant 1 : i32
-      %k2 = scalar.constant 2 : i32
-      %k3 = scalar.constant 3 : i32
-      %i01 = scf.select %g01, %k1, %k0 : i32
-      %g23 = scalar.cmpf ogt, %s3, %s2 : f32
-      %v23 = scf.select %g23, %s3, %s2 : f32
-      %i23 = scf.select %g23, %k3, %k2 : i32
-      %g = scalar.cmpf ogt, %v23, %v01 : f32
-      %bv_local = scf.select %g, %v23, %v01 : f32
-      %bi_local = scf.select %g, %i23, %i01 : i32
-      %m = kernel.subgroup.reduce<maxnumf> %bv_local : f32
-      %hit = scalar.cmpf oeq, %bv_local, %m : f32
-      %gi = scalar.addi %base32, %bi_local : i32
-      %cand = scf.select %hit, %gi, %big : i32
-      %win = kernel.subgroup.reduce<minui> %cand : i32
-      %rel = scalar.subi %win, %base32 : i32
-      %p0 = vector.extract %p4[0] : vector<4xf32> -> f32
-      %p1 = vector.extract %p4[1] : vector<4xf32> -> f32
-      %p2 = vector.extract %p4[2] : vector<4xf32> -> f32
-      %p3 = vector.extract %p4[3] : vector<4xf32> -> f32
-      %is0 = scalar.cmpi eq, %rel, %k0 : i32
-      %is1 = scalar.cmpi eq, %rel, %k1 : i32
-      %is2 = scalar.cmpi eq, %rel, %k2 : i32
-      %is3 = scalar.cmpi eq, %rel, %k3 : i32
-      %q0 = scf.select %is0, %p0, %zero : f32
-      %q1 = scf.select %is1, %p1, %q0 : f32
-      %q2 = scf.select %is2, %p2, %q1 : f32
-      %q3 = scf.select %is3, %p3, %q2 : f32
-      %pwin = kernel.subgroup.reduce<addf> %q3 : f32
-      %n0 = scf.select %is0, %ninf, %s0 : f32
-      %n1 = scf.select %is1, %ninf, %s1 : f32
-      %n2 = scf.select %is2, %ninf, %s2 : f32
-      %n3 = scf.select %is3, %ninf, %s3 : f32
-      %ns = vector.from_elements %n0, %n1, %n2, %n3 : vector<4xf32>
-      %pv2 = vector.insert %pwin into %pv[%r] : f32, vector<8xf32>
-      %iv2 = vector.insert %win into %iv[%r] : i32, vector<8xi32>
-      scf.yield %ns, %pv2, %iv2 : vector<4xf32>, vector<8xf32>, vector<8xi32>
-    }
-    %total = vector.reduce<addf> %pw, %zero : vector<8xf32>, f32
-    %eps = scalar.constant 1.0e-20 : f32
-    %den = scalar.addf %total, %eps : f32
-    %scale = scalar.constant 8.0 : f32
-    %leader = index.cmp eq, %lane, %c0 : index
-    scf.if %leader {
-      scf.for %r = [%c0 to %c8 step %c1] unroll schedule(linear) {
-        %p = vector.extract %pw[%r] : vector<8xf32> -> f32
-        %id = vector.extract %pid[%r] : vector<8xi32> -> i32
-        %q = scalar.divf %p, %den : f32
-        %w = scalar.mulf %q, %scale : f32
-        view.store %id, %idv[%token, %r] : i32, view<[%n]x8xi32>
-        view.store %w, %wv[%token, %r] : f32, view<[%n]x8xf32>
-      }
-    }
+    func.call @inkling_router_select_one(%n, %token_raw, %lane, %logits, %bias, %ids, %wts) : (index, index, index, buffer, buffer, buffer, buffer)
   }
+  kernel.return
+}
+
+// Decode (n <= 16): top 8 and the expert routes in one workgroup. The waves select the tokens, a barrier, then the route table.
+kernel.def export("inkling_router_decode") @inkling_router_decode() {
+  %c1 = index.constant 1 : index
+  %c128 = index.constant 128 : index
+  kernel.launch.config workgroups(%c1, %c1, %c1) workgroup_size(%c128, %c1, %c1) : index
+} launch(%n: index, %tile: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer, %tasks: buffer) {
+  %c4 = index.constant 4 : index
+  %wave = kernel.subgroup.id : index
+  %lane = kernel.subgroup.lane.id : index
+  scf.for %token = [%wave to %n step %c4] {
+    func.call @inkling_router_select_one(%n, %token, %lane, %logits, %bias, %ids, %wts) : (index, index, index, buffer, buffer, buffer, buffer)
+  }
+  kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+  func.call @inkling_experts_route_groups(%n, %tile, %ids, %tasks) : (index, index, buffer, buffer)
   kernel.return
 }
