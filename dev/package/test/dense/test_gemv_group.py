@@ -14,7 +14,7 @@ if os.environ.get("PKG"):
 
 LIBS = ["lib/inkling/dense_common.loom", "lib/inkling/dense_float.loom", "lib/inkling/dense_q8_0.loom", "lib/inkling/dense_abi.loom",
         "lib/inkling/dense_vec.loom", "kernel/dense/gemv.loom"]
-PER_UNIT = {"gfx1151": 4}.get(sys.argv[1], 2)
+PER_UNIT = {"gfx1151": 4, "gfx1201": 7}.get(sys.argv[1], 2)
 NAMES = [("attn_q", 3072), ("attn_rel", 384), ("attn_gate", 3072), ("attn_k", 1024), ("attn_v", 1024),
          ("attn_sink_proj", 24), ("attn_k_conv_proj", 32), ("attn_v_conv_proj", 32)]
 DECL = ("kernel.decl @inkling_gemv_attn_group(%conv_on: index, %per_unit: index) launch(%conv_on: index, %control: buffer, %count_origin: offset, %x_stride: index, "

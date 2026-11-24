@@ -1,4 +1,35 @@
-# Performance, Q4_K_XL, wave 2 build on hrx-loom 0.3.0, full skills table (agent integ3, 2026-11-24, bead llama-cpp-tg3.28)
+# Performance, Q4_K_XL, final build: wave 2 + chat fixes + grouped projection grid (agent integ3/integ4, 2026-11-24, bead llama-cpp-tg3.28)
+
+Build: `package/` = wave 2 (M30) + CHATFIX + CMDPROG (the grouped attention projection GEMV has its own workgroup-per-unit value: 7 on gfx1201, 4 on gfx1151; `docs/OPT_CMDPROG.md`). hrx-loom 0.3.0. Presets `chat-r9700` and `chat`, context 131072, rows 4, prefill 2048, prefix cache 16.
+
+R9700: 3 fresh sessions of `perf_session.sh r9700 <n> spin full` on the final published build (one GPU at a time, nothing else running on the GPUs; the CPU oracle was stopped before). 8060S: the evidence of the previous table below is kept, because the 8060S code path is identical (tune value stays 4); one sanity session of the final build gave decode 42.73 / 39.3 / 32.27 tok/s (short, 2k, 32k), prefill 942 / 1103 / 1124 / 1044 / 878, 4 streams 93.9, decode 8k 37.62: all within the spread of the kept table (4 streams -1.9 percent, noise).
+
+## R9700 (gfx1201, chat-r9700), median of 3 sessions, tok/s
+
+| Row | Final build | Raw (sessions 1, 2, 3) | Previous commit (CHATFIX build) | Change |
+|---|---|---|---|---|
+| decode, short | 97.8 | 98.08, 97.76, 97.44 | 95.1 | +2.8 % |
+| decode, 2k | 90.0 | 90.08, 89.95, 89.36 | 87.7 | +2.6 % |
+| decode, 8k (extra) | 86.7 | 86.73, 86.75, 86.02 | 84.5 | +2.7 % |
+| decode, 32k | 76.3 | 76.28, 76.47, 76.02 | 74.8 | +2.0 % |
+| prefill 1k | 2670.0 | 2735.0, 2670.0, 2666.4 | 2725.0 | -2.0 % |
+| prefill 2k | 3132.1 | 3200.9, 3132.1, 3126.0 | 3196.5 | -2.0 % |
+| prefill 8k | 3239.3 | 3303.6, 3239.3, 3234.6 | 3297.2 | -1.8 % |
+| prefill 16k | 2932.0 | 2981.9, 2932.0, 2928.0 | 2972.2 | -1.4 % |
+| prefill 32k | 2342.0 | 2361.9, 2342.0, 2339.3 | 2338.6 | +0.1 % |
+| 4 streams, aggregate | 226.8 | 229.7, 226.8, 224.7 | 225.3 | +0.7 % |
+
+Decode gains 2.0 to 2.8 percent (the lane measured +2.3 to +2.6). Prefill reads about 2 percent lower in the median. Session 1 equals the previous table (2735 / 3201 / 3304 / 2982 / 2362) and sessions 2 and 3 are 2 to 3 percent lower: the session-to-session drift of prefill that earlier tables already show (spread up to 3.7 percent). The change touches the decode projection grid only; the prefill difference was not isolated (no ABBA).
+
+Decode short is now 0.63 of the roofline ceiling (154.3). Cold start (3 sessions): ready 2.05 s, first request 3.22 s, second 0.12 s; TTFT at 9k tokens 2.82 s.
+
+Checks of this build: kernel tests 33 of 33 on both GPUs (`bench/integ4/kres`); greedy text (prompts A, B, C, 8k and 32k documents) IDENTICAL to the previous published build on both GPUs; dev gates on both GPUs: consistency, agent, golden, compare pass (R9700 compare 7 full, max gap 0.582; 8060S 9 full, max gap 0.296), sampling fails by design as before; context admission 130,991 tokens completes (175 s R9700, 619 s 8060S).
+
+## 8060S (gfx1151, chat): kept table of the previous build
+
+---
+
+# Previous table (CHATFIX build and M30 build measurements): Performance, Q4_K_XL, wave 2 build on hrx-loom 0.3.0, full skills table (agent integ3, 2026-11-24, bead llama-cpp-tg3.28)
 
 Build: `package/` = wave 1 (`package_T10b`) + D2 (attention front end, grouped projection GEMV) + D6 (experts decode pipelining) + W64 (wave64 down kernel, 8060S only) + D3 (controllers, router), merged by M30 (`docs/OPT_M30.md`, `bench/M30/`). Runtime hrx-loom 0.3.0. Presets `chat-r9700` (gfx1201) and `chat` (gfx1151), context 131072, rows 4, prefill capacity 2048.
 

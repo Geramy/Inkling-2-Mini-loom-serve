@@ -267,7 +267,7 @@ def attn_group(b, g, ctl):
     kv_col = b.op("kv_col", "scalar.ori %s, %s : i1" % (g, ctl))
     xk = b.op("xo_k", "scf.select %s, %s, %s : offset" % (kv_col, b.col(1), b.o(0)))
     xv = b.op("xo_v", "scf.select %s, %s, %s : offset" % (kv_col, b.col(2), b.o(0)))
-    pu = b.op("per_unit", "template.apply<@inkling.dense.gemv.xs_wg_per_unit>() : () -> (index)")
+    pu = b.op("per_unit", "template.apply<@inkling.dense.group.wg_per_unit>() : () -> (index)")
 
     def launch(conv_on, wk, wv, kc, vc):
         args = [conv_on, "%metadata", b.o(0), b.i(E), b.o(0), xk, xv] + ws + [wk, wv, sink, kc, vc, "%xn", "%q", "%r", "%gate", "%k", "%v", "%small", "%ob", "%y"]
@@ -288,6 +288,8 @@ def dense_file():
     out.append("""config.decl @inkling.dense_type : %value: index where [range(%value, 0, 1)]
 
 template.decl @inkling.dense.gemv.xs_wg_per_unit() -> (index)
+
+template.decl @inkling.dense.group.wg_per_unit() -> (index)
 
 // Dense area hooks (embedding, head, projections and norms).
 """.replace("@SIG@", SIG))

@@ -14,7 +14,7 @@ PASS  present llm_config.json
 PASS  present weights.loom
 PASS  present tokenizer.json
 PASS  every .loom file is named by model.json
-tree: 80 files, 13162785 bytes (no weights)
+tree: 80 files, 13163410 bytes (no weights)
 == b) r9700: fetch preset chat-r9700 into an empty directory
 PASS  loom-fetch chat-r9700
 fetched: 75 files; loom files: 69; has lib/pr1: no
@@ -25,8 +25,8 @@ models [('thinkingmachines/Inkling-2-Mini', 131072)]
 usage 25 64 text 'The user asks for an explanation in two sentences why the sky is blue. Need answ'
 PASS  prompt C greedy 64 tokens equals the reference
 == d) r9700: quick start of README.md as printed
-  qs: loom-fetch /home/user/inkling/integ3/publish/unsloth-Inkling-2-Mini-loom/model.json --preset chat-r9700 --materialize=share --output=/home/user/inkling/integ3/work/qs-r9700/unsloth-Inkling-2-Mini-loom --origin checkpoi
-  qs: loom-serve --model=/home/user/inkling/integ3/work/qs-r9700/unsloth-Inkling-2-Mini-loom '--device=amdgpu://?completion_spin_ns=4294967295' --pool_backing=fixed
+  qs: loom-fetch /home/user/inkling/integ4/publish/unsloth-Inkling-2-Mini-loom/model.json --preset chat-r9700 --materialize=share --output=/home/user/inkling/integ4/work/qs-r9700/unsloth-Inkling-2-Mini-loom --origin checkpoi
+  qs: loom-serve --model=/home/user/inkling/integ4/work/qs-r9700/unsloth-Inkling-2-Mini-loom '--device=amdgpu://?completion_spin_ns=4294967295' --pool_backing=fixed
 PASS  quick start fetch
 PASS  quick start serve registered
 device ['AMD Radeon 8060S Graphics']
@@ -42,8 +42,8 @@ models [('thinkingmachines/Inkling-2-Mini', 131072)]
 usage 25 64 text 'The user asks for an explanation in two sentences why the sky is blue. Need answ'
 PASS  prompt C greedy 64 tokens equals the reference
 == d) strix: quick start of README.md as printed
-  qs: loom-fetch /home/user/inkling/integ3/publish/unsloth-Inkling-2-Mini-loom/model.json --preset chat --materialize=share --output=/home/user/inkling/integ3/work/qs-strix/unsloth-Inkling-2-Mini-loom --origin checkpoint=/ho
-  qs: loom-serve --model=/home/user/inkling/integ3/work/qs-strix/unsloth-Inkling-2-Mini-loom '--device=amdgpu://?completion_spin_ns=4294967295' --pool_backing=fixed
+  qs: loom-fetch /home/user/inkling/integ4/publish/unsloth-Inkling-2-Mini-loom/model.json --preset chat --materialize=share --output=/home/user/inkling/integ4/work/qs-strix/unsloth-Inkling-2-Mini-loom --origin checkpoint=/ho
+  qs: loom-serve --model=/home/user/inkling/integ4/work/qs-strix/unsloth-Inkling-2-Mini-loom '--device=amdgpu://?completion_spin_ns=4294967295' --pool_backing=fixed
 PASS  quick start fetch
 PASS  quick start serve registered
 device ['AMD Radeon 8060S Graphics']

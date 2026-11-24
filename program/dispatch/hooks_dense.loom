@@ -50,6 +50,8 @@ config.decl @inkling.dense_type : %value: index where [range(%value, 0, 1)]
 
 template.decl @inkling.dense.gemv.xs_wg_per_unit() -> (index)
 
+template.decl @inkling.dense.group.wg_per_unit() -> (index)
+
 // Dense area hooks (embedding, head, projections and norms).
 command.def public target(@inkling_execution) @inkling_hook_embed() launch(%parameters: buffer, %metadata: buffer, %tokens: buffer, %embd: buffer, %cur: buffer) {
   %cap = config.get @inkling.tokens : index
@@ -219,7 +221,7 @@ command.def public target(@inkling_execution) @inkling_hook_proj(%layer: index, 
   %i2 = index.constant 2 : index
   %col2 = index.scale %i2, %colbytes : index, offset -> offset
   %xo_v = scf.select %kv_col, %col2, %o0 : offset
-  %per_unit = template.apply<@inkling.dense.gemv.xs_wg_per_unit>() : () -> (index)
+  %per_unit = template.apply<@inkling.dense.group.wg_per_unit>() : () -> (index)
   %i2304 = index.constant 2304 : index
   %i3072 = index.constant 3072 : index
   %c30 = scalar.constant 30.0 : f32

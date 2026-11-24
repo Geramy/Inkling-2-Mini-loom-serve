@@ -21,6 +21,8 @@ func.decl @inkling_dense_mv_dot16(%use: i1, %w0: vector<4xf32>, %w1: vector<4xf3
 
 template.decl @inkling.dense.gemv.xs_wg_per_unit() -> (index)
 
+template.decl @inkling.dense.group.wg_per_unit() -> (index)
+
 func.decl pure @inkling_dense_mv_xs_plan(%n_rows: index, %k_size: index, %per_unit: index) -> (index, index, index, index)
 
 func.decl @inkling_dense_mv_xs_stage_index(%p: index, %col: index, %slot: index) -> (index)
@@ -250,7 +252,7 @@ kernel.def @inkling_gemv_attn_group(%conv_on: index, %per_unit: index) {
   %q8 = index.constant 4 : index
   %bf = index.constant 3 : index
   %wg = kernel.workgroup.id<x> : index
-  %per_unit = template.apply<@inkling.dense.gemv.xs_wg_per_unit>() : () -> (index)
+  %per_unit = template.apply<@inkling.dense.group.wg_per_unit>() : () -> (index)
   %n_pass, %n_q, %b1, %b2, %b3, %b4, %b5, %b6, %b7 = func.call pure @inkling_dense_group_plan(%conv_on, %per_unit) : (index, index) -> (index, index, index, index, index, index, index, index, index)
   %is_q8 = index.cmp ult, %wg, %b4 : index
   scf.if %is_q8 {

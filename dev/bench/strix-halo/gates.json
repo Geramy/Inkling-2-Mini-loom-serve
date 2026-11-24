@@ -1,9 +1,9 @@
 {
  "verdict": "FAIL",
  "level": "dev",
- "pkg_hash": "eeb0dee202a7",
+ "pkg_hash": "9beea3a1ea3f",
  "seconds": 126,
- "ts": "2026-11-22T18:22:24",
+ "ts": "2026-11-24T15:04:34",
  "gates": {
   "consistency": {
    "pass": true,

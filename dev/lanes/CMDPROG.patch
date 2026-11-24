@@ -1,0 +1,657 @@
+diff -ruN package/dispatch/hooks_dense.loom package_CMD/dispatch/hooks_dense.loom
+--- package/dispatch/hooks_dense.loom	2026-11-22 18:44:36.681941600 -0800
++++ package_CMD/dispatch/hooks_dense.loom	2026-11-24 13:47:26.000000000 -0800
+@@ -50,6 +50,8 @@
+ 
+ template.decl @inkling.dense.gemv.xs_wg_per_unit() -> (index)
+ 
++template.decl @inkling.dense.group.wg_per_unit() -> (index)
++
+ // Dense area hooks (embedding, head, projections and norms).
+ command.def public target(@inkling_execution) @inkling_hook_embed() launch(%parameters: buffer, %metadata: buffer, %tokens: buffer, %embd: buffer, %cur: buffer) {
+   %cap = config.get @inkling.tokens : index
+@@ -219,7 +221,7 @@
+   %i2 = index.constant 2 : index
+   %col2 = index.scale %i2, %colbytes : index, offset -> offset
+   %xo_v = scf.select %kv_col, %col2, %o0 : offset
+-  %per_unit = template.apply<@inkling.dense.gemv.xs_wg_per_unit>() : () -> (index)
++  %per_unit = template.apply<@inkling.dense.group.wg_per_unit>() : () -> (index)
+   %i2304 = index.constant 2304 : index
+   %i3072 = index.constant 3072 : index
+   %c30 = scalar.constant 30.0 : f32
+diff -ruN package/kernel/dense/gemv.loom package_CMD/kernel/dense/gemv.loom
+--- package/kernel/dense/gemv.loom	2026-11-22 18:44:36.833058000 -0800
++++ package_CMD/kernel/dense/gemv.loom	2026-11-24 13:13:51.752247800 -0800
+@@ -21,6 +21,8 @@
+ 
+ template.decl @inkling.dense.gemv.xs_wg_per_unit() -> (index)
+ 
++template.decl @inkling.dense.group.wg_per_unit() -> (index)
++
+ func.decl pure @inkling_dense_mv_xs_plan(%n_rows: index, %k_size: index, %per_unit: index) -> (index, index, index, index)
+ 
+ func.decl @inkling_dense_mv_xs_stage_index(%p: index, %col: index, %slot: index) -> (index)
+@@ -250,7 +252,7 @@
+   %q8 = index.constant 4 : index
+   %bf = index.constant 3 : index
+   %wg = kernel.workgroup.id<x> : index
+-  %per_unit = template.apply<@inkling.dense.gemv.xs_wg_per_unit>() : () -> (index)
++  %per_unit = template.apply<@inkling.dense.group.wg_per_unit>() : () -> (index)
+   %n_pass, %n_q, %b1, %b2, %b3, %b4, %b5, %b6, %b7 = func.call pure @inkling_dense_group_plan(%conv_on, %per_unit) : (index, index) -> (index, index, index, index, index, index, index, index, index)
+   %is_q8 = index.cmp ult, %wg, %b4 : index
+   scf.if %is_q8 {
+diff -ruN package/lib/inkling/dense_vec.loom package_CMD/lib/inkling/dense_vec.loom
+--- package/lib/inkling/dense_vec.loom	2026-11-22 18:44:36.739979100 -0800
++++ package_CMD/lib/inkling/dense_vec.loom	2026-11-24 13:24:38.984683400 -0800
+@@ -54,6 +54,26 @@
+   template.return %value : index
+ }
+ 
++target.decl @inkling_dense_gfx12
++
++// Grouped attention projections: workgroup target per execution unit (see inkling_dense_group_plan).
++template.decl @inkling.dense.group.wg_per_unit() -> (index)
++
++template.def<@inkling.dense.group.wg_per_unit> priority(-1) @inkling_dense_group_wg_per_unit_default() -> (index) {
++  %value = index.constant 2 : index
++  template.return %value : index
++}
++
++template.def<@inkling.dense.group.wg_per_unit> device target(@inkling_dense_gfx11) priority(20) @inkling_dense_group_wg_per_unit_gfx11() -> (index) {
++  %value = index.constant 4 : index
++  template.return %value : index
++}
++
++template.def<@inkling.dense.group.wg_per_unit> device target(@inkling_dense_gfx12) priority(20) @inkling_dense_group_wg_per_unit_gfx12() -> (index) {
++  %value = index.constant 7 : index
++  template.return %value : index
++}
++
+ config.decl @inkling.dense.gemv.xs_depth : %value: index where [range(%value, 1, 4)]
+ 
+ // The workgroup target is a multiple of the execution unit (CU) count. Fewer workgroups give a long tail.
+diff -ruN package/test/dense/test_gemv_group.py package_CMD/test/dense/test_gemv_group.py
+--- package/test/dense/test_gemv_group.py	2026-11-22 18:44:36.932120400 -0800
++++ package_CMD/test/dense/test_gemv_group.py	2026-11-24 13:27:58.850967500 -0800
+@@ -14,7 +14,7 @@
+ 
+ LIBS = ["lib/inkling/dense_common.loom", "lib/inkling/dense_float.loom", "lib/inkling/dense_q8_0.loom", "lib/inkling/dense_abi.loom",
+         "lib/inkling/dense_vec.loom", "kernel/dense/gemv.loom"]
+-PER_UNIT = {"gfx1151": 4}.get(sys.argv[1], 2)
++PER_UNIT = {"gfx1151": 4, "gfx1201": 7}.get(sys.argv[1], 2)
+ NAMES = [("attn_q", 3072), ("attn_rel", 384), ("attn_gate", 3072), ("attn_k", 1024), ("attn_v", 1024),
+          ("attn_sink_proj", 24), ("attn_k_conv_proj", 32), ("attn_v_conv_proj", 32)]
+ DECL = ("kernel.decl @inkling_gemv_attn_group(%conv_on: index, %per_unit: index) launch(%conv_on: index, %control: buffer, %count_origin: offset, %x_stride: index, "
+diff -ruN scripts/ab_run.sh scripts_CMD/ab_run.sh
+--- scripts/ab_run.sh	2026-11-21 17:01:40.044350700 -0800
++++ scripts_CMD/ab_run.sh	2026-11-24 13:16:22.855649300 -0800
+@@ -9,16 +9,17 @@
+   strix) PRESET=chat; PORT=18191; DEV='amdgpu://id/000000e2000000808e270f2b0bbb4e00?completion_spin_ns=4294967295' ;;
+ esac
+ URL=http://127.0.0.1:$PORT; T=$HOME/loom/.tools/bin/python
+-export LOOM_ROOT=$HOME/loom PYTHONDONTWRITEBYTECODE=1
+-if pgrep -af 'loom-serve|llama-server|llama-bench' | grep -v pgrep | grep -q .; then echo "another server runs"; exit 3; fi
+-. "$HOME/loom/.venv/bin/activate"; mkdir -p "$V/ablogs"
++export LOOM_ROOT=${ABROOT:-$HOME/loom030} PYTHONDONTWRITEBYTECODE=1
++if pgrep -x 'loom-serve|llama-server|llama-bench' | grep -q .; then echo "another server runs"; exit 3; fi
++. "${ABVENV:-$HOME/inkling/tools/M30-venv}/bin/activate"; mkdir -p "$V/ablogs"
+ ( exec nohup loom-serve --device="$DEV" --model="$M" --preset="$PRESET" --pool_backing=fixed --listen=127.0.0.1:$PORT --workers=8 > "$V/ablogs/$TAG.serve.log" 2>&1 < /dev/null ) &
+ PID=$!
+ stopit() { if tr '\0' ' ' < /proc/$PID/cmdline 2>/dev/null | grep -q loom-serve; then kill -TERM $PID; for _ in $(seq 120); do kill -0 $PID 2>/dev/null || break; sleep 1; done; fi; }
+ trap stopit EXIT
+ for _ in $(seq 1800); do
+   kill -0 $PID 2>/dev/null || { echo "loom-serve died"; tail -5 "$V/ablogs/$TAG.serve.log"; exit 1; }
+-  curl -s -m 2 $URL/v1/status 2>/dev/null | grep -q '"registration": *"ready"' && break; sleep 0.5
++  S=$(curl -s -m 2 $URL/v1/status 2>/dev/null); echo "$S" | grep -q '"registration": *"ready"' && break; echo "$S" | grep -q '"registration": *"failed"' && break; sleep 0.5
+ done
++if curl -s -m 2 $URL/v1/status | grep -q '"registration": *"failed"'; then echo "registration failed"; curl -s $URL/v1/status | head -c 1500; exit 4; fi
+ $T -I "$HERE/ab_session.py" $URL thinkingmachines/Inkling-2-Mini "$TAG" "$MET" --reps $REPS --out "$V/ab_log.jsonl" 2>"$V/ablogs/$TAG.err" | tail -1
+ stopit; trap - EXIT
+diff -ruN scripts/abba_cmd.sh scripts_CMD/abba_cmd.sh
+--- scripts/abba_cmd.sh	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CMD/abba_cmd.sh	2026-11-24 13:16:35.923928200 -0800
+@@ -0,0 +1,11 @@
++#!/usr/bin/env bash
++# usage: abba_cmd.sh <r9700|strix> <tag> <metrics> <reps> <order> <label=matdir>...   (box) One fresh server per arm in the given order (ABBA), each arm under the exclusive lock. Results: ~/inkling/optCMD/ab_log.jsonl
++G=${1:?gpu}; X=${2:?tag}; MET=${3:?}; REPS=${4:?}; ORDER=${5:?}; shift 5
++V=$HOME/inkling/optCMD; H=$V/scripts; export INKV=$V
++declare -A DIR
++for a in "$@"; do DIR[${a%%=*}]=${a#*=}; done
++for ((i=0;i<${#ORDER};i++)); do
++  s=${ORDER:$i:1}
++  bash $H/locked.sh bash $H/ab_run.sh $G "${DIR[$s]}" "$X.$G.$s.$i" "$MET" "$REPS"
++done
++echo "abba $X $G done"
+diff -ruN scripts/bytes_table.py scripts_CMD/bytes_table.py
+--- scripts/bytes_table.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CMD/bytes_table.py	2026-11-24 13:12:25.627662000 -0800
+@@ -0,0 +1,47 @@
++"""Per-kernel bandwidth table from step_report.py JSON. usage: bytes_table.py <step.json> <ceiling GB/s> [label]
++Expected bytes per decode step (Q4_K_XL, short context) come from docs/ROOFLINE.md and docs/cost_model_output.txt; HAL counters are not available (profile.c:633)."""
++import json
++import sys
++from collections import defaultdict
++
++d = json.load(open(sys.argv[1]))
++ceil = float(sys.argv[2])
++S = d["sites"]
++# (kernel name, wgc x filter) -> (family label, expected MB per step)
++EXP = {
++    "inkling_experts_gate_up": ("experts gate_up", 1231.1),
++    "inkling_experts_down": ("experts down", 616.2),
++    "inkling_experts_down_w64": ("experts down", 616.2),
++    "inkling_gemv_attn_group": ("attn q/rel/gate/k/v/sink group", 1015.4),
++    "inkling_router_logits": ("router logits F32", 56.6),
++}
++CTRL = ("inkling_ctrl_down_msg", "inkling_ctrl_apply_z")
++rows = defaultdict(lambda: [0, 0.0, 0.0])
++for k, v in S.items():
++    n = v["name"]
++    if n == "inkling_gemv_q8_0":
++        lab, mb = ("lm_head Q8_0", 492.1) if v["wgc"][0] > 1000 else ("attn o_proj Q8_0", 361.0)
++    elif n in EXP:
++        lab, mb = EXP[n]
++    elif n in CTRL:
++        lab, mb = "loop controllers (down_msg + apply_z)", 227.4
++    else:
++        lab, mb = n.replace("inkling_", ""), None
++    r = rows[lab]
++    r[0] += 1
++    r[1] += v["dur"]
++    r[2] = mb if mb is not None else 0.0
++tot_us = sum(r[1] for r in rows.values())
++print(f"| kernel family | launches/step | device us/step | expected MB/step | achieved GB/s | % of {ceil:.0f} GB/s |")
++print("|---|---|---|---|---|---|")
++order = sorted(rows.items(), key=lambda kv: -kv[1][1])
++other_n = other_us = 0
++for lab, (n, us, mb) in order:
++    if mb:
++        gbs = mb * 1e6 / (us * 1e-6) / 1e9
++        print(f"| {lab} | {n} | {us:.0f} | {mb:.1f} | {gbs:.0f} | {100*gbs/ceil:.0f} % |")
++    else:
++        other_n += n
++        other_us += us
++        print(f"| {lab} (latency bound) | {n} | {us:.0f} | < 15 total | n/a | n/a |")
++print(f"| TOTAL | {sum(r[0] for r in rows.values())} | {tot_us:.0f} | 3994 | {3994e6/(tot_us*1e-6)/1e9:.0f} | {100*3994e6/(tot_us*1e-6)/1e9/ceil:.0f} % |")
+diff -ruN scripts/gen_hooks.py scripts_CMD/gen_hooks.py
+--- scripts/gen_hooks.py	2026-11-22 18:44:37.853853400 -0800
++++ scripts_CMD/gen_hooks.py	2026-11-24 13:47:19.912408000 -0800
+@@ -267,7 +267,7 @@
+     kv_col = b.op("kv_col", "scalar.ori %s, %s : i1" % (g, ctl))
+     xk = b.op("xo_k", "scf.select %s, %s, %s : offset" % (kv_col, b.col(1), b.o(0)))
+     xv = b.op("xo_v", "scf.select %s, %s, %s : offset" % (kv_col, b.col(2), b.o(0)))
+-    pu = b.op("per_unit", "template.apply<@inkling.dense.gemv.xs_wg_per_unit>() : () -> (index)")
++    pu = b.op("per_unit", "template.apply<@inkling.dense.group.wg_per_unit>() : () -> (index)")
+ 
+     def launch(conv_on, wk, wv, kc, vc):
+         args = [conv_on, "%metadata", b.o(0), b.i(E), b.o(0), xk, xv] + ws + [wk, wv, sink, kc, vc, "%xn", "%q", "%r", "%gate", "%k", "%v", "%small", "%ob", "%y"]
+@@ -289,6 +289,8 @@
+ 
+ template.decl @inkling.dense.gemv.xs_wg_per_unit() -> (index)
+ 
++template.decl @inkling.dense.group.wg_per_unit() -> (index)
++
+ // Dense area hooks (embedding, head, projections and norms).
+ """.replace("@SIG@", SIG))
+     out.append(embed_hook())
+diff -ruN scripts/greedy_check.py scripts_CMD/greedy_check.py
+--- scripts/greedy_check.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CMD/greedy_check.py	2026-11-24 13:16:22.507579500 -0800
+@@ -0,0 +1,22 @@
++"""usage: greedy_check.py URL MODEL OUT.json   Greedy 64 token outputs for the oracle prompts A, B, C and for 8k and 32k character documents."""
++import json
++import os
++import sys
++
++sys.path.insert(0, os.environ.get("SKILLS_BENCH", os.path.expanduser("~/inkling/loom-skills/skills/loom-benchmark/scripts")))
++from bench_common import doc, stream, thinking_extra
++
++url, model, out = sys.argv[1:4]
++P = os.path.expanduser("~/inkling/M30/oracle/prompts")
++ESSAY = "Write a long, detailed essay discussing this documentation.\n\n"
++LONG = os.environ.get("GREEDY_LONG", "1") == "1"
++cases = {"A": open(f"{P}/A.txt").read(), "B": open(f"{P}/B.txt").read(), "C": open(f"{P}/C_user.txt").read(),
++         "L8k": ESSAY + doc(8000), "L32k": ESSAY + doc(32000)}
++res = {}
++for k, text in cases.items():
++    if k.startswith("L") and not LONG:
++        continue
++    s = stream(url, model, [{"role": "user", "content": text}], 64, extra=thinking_extra("off"), timeout=900)
++    res[k] = dict(text=s["text"], tokens=s["tokens"], prompt_tokens=s["prompt_tokens"])
++    print(k, s["prompt_tokens"], s["tokens"], flush=True)
++json.dump(res, open(out, "w"), indent=1)
+diff -ruN scripts/irpf.py scripts_CMD/irpf.py
+--- scripts/irpf.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CMD/irpf.py	2026-11-24 13:04:17.312750900 -0800
+@@ -0,0 +1,90 @@
++"""Reader for HAL profile bundles (.irpf, file format 2.0). usage: irpf.py <bundle> [summary]
++Struct layouts follow runtime/src/iree/hal/profile_schema.h (hrx-system v0.2.0); every record carries its own length, a size mismatch is reported."""
++import struct
++import sys
++from collections import Counter, defaultdict
++
++REC_HDR = struct.Struct("<7Q5I4xQQIHH")
++assert REC_HDR.size == 104, REC_HDR.size
++CT = "application/vnd.iree.hal.profile."
++DISPATCH = struct.Struct("<IIQQQQIIIIIIIIQQ")
++QUEUE_EV = struct.Struct("<IIIIQqQQQQIIIIIIQq")
++DEVICE = struct.Struct("<IIII16sQ")
++FUNC = struct.Struct("<IIQIIIIIIIIQQ")
++CLOCK = struct.Struct("<IIIIQQQQQqq")
++EXEC = struct.Struct("<IIQ")
++
++
++def records(path):
++    data = open(path, "rb").read()
++    magic, vmaj, vmin, hlen, flags, flen = struct.unpack_from("<IHHIIQ", data, 0)
++    assert magic == 0x46505249, hex(magic)
++    end = flen or len(data)
++    off = hlen
++    while off < end:
++        f = REC_HDR.unpack_from(data, off)
++        rl, pl = f[0], f[1]
++        hl, ctl, nl = f[7], f[8], f[9]
++        rtype = f[15]
++        p = off + hl
++        ctype = data[p:p + ctl].decode()
++        name = data[p + ctl:p + ctl + nl].decode(errors="replace")
++        payload = data[p + ctl + nl:p + ctl + nl + pl]
++        yield {"type": rtype, "ctype": ctype.replace(CT, ""), "name": name, "payload": payload, "stream": f[3], "dropped": f[13],
++               "queue": f[11], "dev": f[10], "version": (vmaj, vmin)}
++        off += rl
++
++
++def arrays(payload, st, label):
++    off = 0
++    out = []
++    n = len(payload)
++    while off + 4 <= n:
++        rl = struct.unpack_from("<I", payload, off)[0]
++        if rl < 4 or off + rl > n:
++            break
++        if rl < st.size:
++            raise SystemExit(f"{label}: record length {rl} < struct {st.size}")
++        out.append((st.unpack_from(payload, off), payload[off + st.size:off + rl]))
++        off += rl
++    return out
++
++
++def load(path):
++    b = {"freq": {}, "funcs": {}, "disp": [], "queue": [], "cb": set(), "dropped": 0, "ctypes": Counter(), "clock": [], "version": None}
++    for r in records(path):
++        b["version"] = r["version"]
++        ct = r["ctype"]
++        b["ctypes"][ct] += 1
++        b["dropped"] += r["dropped"]
++        p = r["payload"]
++        if ct == "devices":
++            for f, _ in arrays(p, DEVICE, ct):
++                if f[1] & 2:
++                    b["freq"][f[2]] = f[5]
++        elif ct == "executable-functions":
++            for f, nm in arrays(p, FUNC, ct):
++                b["funcs"][(f[2], f[3])] = nm[:f[10]].decode(errors="replace")
++        elif ct == "dispatch-events":
++            for f, _ in arrays(p, DISPATCH, ct):
++                b["disp"].append((f[2], f[3], f[4], f[5], f[6], f[7], f[8:11], f[11:14], f[14], f[15], f[1], r["dev"]))
++        elif ct == "queue-events":
++            for f, _ in arrays(p, QUEUE_EV, ct):
++                b["queue"].append(f)
++        elif ct == "clock-correlations":
++            for f, _ in arrays(p, CLOCK, ct):
++                b["clock"].append(f)
++    return b
++
++
++if __name__ == "__main__":
++    b = load(sys.argv[1])
++    print("version", b["version"], "dropped", b["dropped"], "freq", b["freq"])
++    print("record types", dict(b["ctypes"]))
++    print("functions", len(b["funcs"]), "dispatch events", len(b["disp"]), "queue events", len(b["queue"]))
++    d = b["disp"]
++    print("flags", Counter(x[10] for x in d))
++    print("command buffers", len({x[2] for x in d}), "submissions", len({x[1] for x in d}))
++    per = Counter(x[1] for x in d)
++    print("dispatches per submission (top)", Counter(per.values()).most_common(8))
++    print("queue types", Counter(q[1] for q in b["queue"]))
+diff -ruN scripts/locked.sh scripts_CMD/locked.sh
+--- scripts/locked.sh	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CMD/locked.sh	2026-11-24 13:16:22.497579000 -0800
+@@ -0,0 +1,9 @@
++#!/usr/bin/env bash
++# usage: locked.sh <command...>   (box) exclusive GPU lock; retries when the command ends with status 3 (a foreign server runs)
++for i in $(seq 40); do
++  flock -x ~/hrx-pr1/gpu.lock "$@"
++  rc=$?
++  [ $rc -ne 3 ] && exit $rc
++  sleep 20
++done
++exit 3
+diff -ruN scripts/lsync.sh scripts_CMD/lsync.sh
+--- scripts/lsync.sh	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CMD/lsync.sh	2026-11-24 12:48:58.769442600 -0800
+@@ -0,0 +1,11 @@
++#!/usr/bin/env bash
++# usage: lsync.sh [gen]   (laptop) copies package_CMD and scripts_CMD over the box work dir; with gen runs the generators there and copies dispatch back
++cd "$(dirname "$0")/.."
++BOX=user@gpu-box
++ssh $BOX 'mkdir -p ~/inkling/optCMD/package ~/inkling/optCMD/scripts'
++tar cf - package_CMD | ssh $BOX 'cd ~/inkling/optCMD && tar xmf - --strip-components=1 -C package'
++tar cf - scripts_CMD | ssh $BOX 'cd ~/inkling/optCMD && tar xmf - --strip-components=1 -C scripts && chmod +x scripts/*.sh'
++if [ "${1:-}" = gen ]; then
++  ssh $BOX 'cd ~/inkling/optCMD && python3 scripts/gen_kernel_decls.py && python3 scripts/gen_hooks.py'
++  ssh $BOX 'cd ~/inkling/optCMD/package && tar cf - dispatch' | tar xf - -C package_CMD
++fi
+diff -ruN scripts/m30_cmp.py scripts_CMD/m30_cmp.py
+--- scripts/m30_cmp.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CMD/m30_cmp.py	2026-11-24 13:16:22.504583300 -0800
+@@ -0,0 +1,12 @@
++"""usage: m30_cmp.py A.json B.json   Compare greedy outputs case by case."""
++import json, sys
++a, b = (json.load(open(p)) for p in sys.argv[1:3])
++for k in a:
++    if k not in b:
++        continue
++    x, y = a[k]["text"], b[k]["text"]
++    if x == y:
++        print(k, "IDENTICAL", a[k]["tokens"])
++    else:
++        i = next((i for i in range(min(len(x), len(y))) if x[i] != y[i]), min(len(x), len(y)))
++        print(k, "DIFF at char", i, "of", len(x), len(y), repr(x[max(0, i-20):i+30]), "|", repr(y[max(0, i-20):i+30]))
+diff -ruN scripts/m30_greedy.sh scripts_CMD/m30_greedy.sh
+--- scripts/m30_greedy.sh	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CMD/m30_greedy.sh	2026-11-24 13:16:35.288992300 -0800
+@@ -0,0 +1,25 @@
++#!/usr/bin/env bash
++# usage: m30_greedy.sh <r9700|strix> <model dir> <out.json> [venv dir]   (box; run under flock -s) One serve session, oracle prompts A, B, C (and long documents when GREEDY_LONG=1) greedy 64 tokens, stop by PID.
++set -u
++G=${1:?gpu}; M=${2:?dir}; OUT=${3:?out}; VD=${4:-$HOME/inkling/tools/M30-venv}
++V=$HOME/inkling/optCMD; HERE=$(cd "$(dirname "$0")" && pwd)
++case $G in
++  r9700) PRESET=chat-r9700; PORT=18190; DEV='amdgpu://GPU-e0880c05003c324d?completion_spin_ns=4294967295' ;;
++  strix) PRESET=chat; PORT=18191; DEV='amdgpu://id/000000e2000000808e270f2b0bbb4e00?completion_spin_ns=4294967295' ;;
++esac
++URL=http://127.0.0.1:$PORT; T=$HOME/loom/.tools/bin/python
++export LOOM_ROOT=${ABROOT:-$HOME/loom030} PYTHONDONTWRITEBYTECODE=1 GREEDY_LONG=${GREEDY_LONG:-0}
++if pgrep -x 'loom-serve|llama-server|llama-bench' | grep -q .; then echo "another server runs"; exit 3; fi
++. "$VD/bin/activate"; mkdir -p "$V/ablogs"
++TAG=$(basename "$OUT" .json)
++( exec nohup loom-serve --device="$DEV" --model="$M" --preset="$PRESET" --pool_backing=fixed --listen=127.0.0.1:$PORT --workers=8 > "$V/ablogs/$TAG.serve.log" 2>&1 < /dev/null ) &
++PID=$!
++stopit() { if tr '\0' ' ' < /proc/$PID/cmdline 2>/dev/null | grep -q loom-serve; then kill -TERM $PID; for _ in $(seq 120); do kill -0 $PID 2>/dev/null || break; sleep 1; done; fi; }
++trap stopit EXIT
++for _ in $(seq 1800); do
++  kill -0 $PID 2>/dev/null || { echo "loom-serve died"; tail -8 "$V/ablogs/$TAG.serve.log"; exit 1; }
++  S=$(curl -s -m 2 $URL/v1/status 2>/dev/null); echo "$S" | grep -q '"registration": *"ready"' && break; echo "$S" | grep -q '"registration": *"failed"' && break; sleep 0.5
++done
++if curl -s -m 2 $URL/v1/status | grep -q '"registration": *"failed"'; then echo "registration failed"; curl -s $URL/v1/status | head -c 1500; exit 4; fi
++$T -I "$HERE/greedy_check.py" $URL thinkingmachines/Inkling-2-Mini "$OUT"
++stopit; trap - EXIT
+diff -ruN scripts/mk_mat.py scripts_CMD/mk_mat.py
+--- scripts/mk_mat.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CMD/mk_mat.py	2026-11-24 12:50:38.977851300 -0800
+@@ -0,0 +1,51 @@
++"""usage: mk_mat.py <name> <package dir> <preset> [base mat dir]   (box)
++Hard-link copy of the base materialized model dir (no weight copy). Program files of the package replace the ones of the copy.
++The preset gets the published values (prefix cache 16, transient bytes). The result is ~/inkling/optCMD/mat-<name>."""
++import json
++import os
++import shutil
++import subprocess
++import sys
++
++name, pkg, preset = sys.argv[1:4]
++home = os.path.expanduser("~")
++base = sys.argv[4] if len(sys.argv) > 4 else f"{home}/inkling/optCHAT/mat-r9700"
++dest = f"{home}/inkling/optCMD/mat-{name}"
++if os.path.exists(dest):
++    raise SystemExit(f"exists: {dest}")
++subprocess.check_call(["cp", "-al", base, dest])
++SKIP = ("card.json", "model.json")
++libs_new = []
++for root, _, files in os.walk(pkg):
++    for f in files:
++        rel = os.path.relpath(os.path.join(root, f), pkg)
++        if rel.startswith("test") or f in SKIP or not (f.endswith(".loom") or f.endswith(".json")):
++            continue
++        d = f"{dest}/program/{rel}"
++        src = os.path.join(root, f)
++        if not os.path.exists(d):
++            if not (rel.startswith("kernel/") or rel.startswith("lib/inkling/")) or not rel.endswith(".loom"):
++                continue
++            os.makedirs(os.path.dirname(d), exist_ok=True)
++            libs_new.append(rel)
++        elif open(d, "rb").read() == open(src, "rb").read():
++            continue
++        if os.path.exists(d):
++            os.remove(d)
++        shutil.copyfile(src, d)
++        print("replaced", rel)
++m = json.load(open(f"{dest}/model.json"))
++(old,) = m["presets"].keys()
++p = m["presets"].pop(old)
++p["execution"]["prefix_cache_capacity"] = 16
++p["memory"]["transient_bytes"] = 10800000000
++m["presets"][preset] = p
++libs = m["programs"]["source"]["libraries"]
++have = {e["path"] for e in libs}
++for rel in sorted(libs_new):
++    if f"program/{rel}" not in have:
++        libs.append({"path": f"program/{rel}", "origin": f"@document/program/{rel}"})
++        print("added to model.json:", rel)
++os.remove(f"{dest}/model.json")
++json.dump(m, open(f"{dest}/model.json", "w"), indent=1)
++print(dest)
+diff -ruN scripts/prof_run.sh scripts_CMD/prof_run.sh
+--- scripts/prof_run.sh	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CMD/prof_run.sh	2026-11-24 13:44:58.234257900 -0800
+@@ -0,0 +1,30 @@
++#!/usr/bin/env bash
++# usage: prof_run.sh <r9700|strix> <session> <mat dir> <out dir> [modes]   (GPU box; run under: flock -x ~/hrx-pr1/gpu.lock)
++# One profiled serve session with a raw HAL profile bundle (.irpf), the requests of profile_driver.py, a graceful stop by PID.
++set -u
++G=${1:?r9700|strix}; S=${2:?session}; M=${3:?mat}; O=${4:?out}; MODES=${5:-dispatch-events,queue-events,executable-metadata}
++HERE=$(cd "$(dirname "$0")" && pwd)
++case $G in
++  r9700) PRESET=chat-r9700; PORT=18190; DEV=amdgpu://GPU-e0880c05003c324d ;;
++  strix) PRESET=chat; PORT=18191; DEV=amdgpu://id/000000e2000000808e270f2b0bbb4e00 ;;
++  *) echo gpu; exit 2 ;;
++esac
++DEV="$DEV?completion_spin_ns=4294967295"
++URL=http://127.0.0.1:$PORT; T=$HOME/loom/.tools/bin/python
++export LOOM_ROOT=$HOME/loom030 PYTHONDONTWRITEBYTECODE=1
++mkdir -p "$O"
++if pgrep -x 'loom-serve|llama-server|llama-bench' | grep -q .; then echo "another server runs"; exit 3; fi
++. "$HOME/inkling/tools/M30-venv/bin/activate"
++( cd "$O"; exec nohup loom-serve --device="$DEV" --model="$M" --preset="$PRESET" --pool_backing=fixed --listen=127.0.0.1:$PORT --workers=8 \
++    --device_profiling_mode=$MODES --device_profiling_output="$O/$S.irpf" --device_profiling_flush_interval_ms=5 \
++    > "$O/$S.serve.log" 2>&1 < /dev/null ) &
++PID=$!
++stopit() { if tr '\0' ' ' < /proc/$PID/cmdline 2>/dev/null | grep -q loom-serve; then kill -TERM $PID; for _ in $(seq 120); do kill -0 $PID 2>/dev/null || break; sleep 1; done; fi; }
++trap stopit EXIT
++for _ in $(seq 1200); do
++  kill -0 $PID 2>/dev/null || { echo "serve died"; tail -5 "$O/$S.serve.log"; exit 1; }
++  ST=$(curl -s -m 2 $URL/v1/status 2>/dev/null); echo "$ST" | grep -q '"registration": *"ready"' && break; echo "$ST" | grep -q '"registration": *"failed"' && { echo registration failed; echo "$ST" | head -c 900; exit 4; }; sleep 0.5
++done
++$T -I "$HERE/profile_driver.py" $URL thinkingmachines/Inkling-2-Mini "$S" > "$O/$S.req.json" 2> "$O/$S.driver.err"; rc=$?
++stopit; trap - EXIT
++echo "$G $S driver rc=$rc stopped alive=$(kill -0 $PID 2>/dev/null && echo yes || echo no) dropped=$(grep -c 'dropped_records=[1-9]' "$O/$S.serve.log") bundle=$(ls -l "$O/$S.irpf" 2>/dev/null | awk '{print $5}')"
+diff -ruN scripts/queue_seq.py scripts_CMD/queue_seq.py
+--- scripts/queue_seq.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CMD/queue_seq.py	2026-11-24 13:05:19.913183300 -0800
+@@ -0,0 +1,24 @@
++"""Host queue events around steady steps. usage: queue_seq.py <bundle> [first_step_index] [count]"""
++import os
++import sys
++from collections import Counter
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++import irpf
++
++b = irpf.load(sys.argv[1])
++first = int(sys.argv[2]) if len(sys.argv) > 2 else 100
++count = int(sys.argv[3]) if len(sys.argv) > 3 else 3
++NAMES = {1: "barrier", 2: "dispatch", 3: "execute", 4: "copy", 5: "fill", 6: "update", 7: "read", 8: "write", 9: "alloca", 10: "dealloca", 11: "host_call", 16: "transfer", 17: "timestamp"}
++q = sorted(b["queue"], key=lambda f: (f[5], f[4]))
++ex = [i for i, f in enumerate(q) if f[1] == 3]
++print("execute events", len(ex))
++lo = ex[first]
++hi = ex[min(first + count, len(ex) - 1)]
++t0 = q[lo][5]
++last = t0
++for f in q[lo - 12:hi + 6]:
++    ty = NAMES.get(f[1], f[1])
++    rdy = (f[17] - t0) / 1000 if f[17] else 0
++    print(f"{(f[5]-t0)/1000:10.1f} us  d={(f[5]-last)/1000:8.1f} {ty:9s} sub={f[6]} cb={f[7]} wait={f[10]} sig={f[11]} bar={f[12]} ops={f[13]} payload={f[16]} ready={rdy:.1f} dep={f[3]} flags={f[2]}")
++    last = f[5]
+diff -ruN scripts/step_report.py scripts_CMD/step_report.py
+--- scripts/step_report.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CMD/step_report.py	2026-11-24 13:04:53.364820900 -0800
+@@ -0,0 +1,119 @@
++"""Per-step device timeline report from a HAL profile bundle. usage: step_report.py <bundle> [out.json] [--skip N]
++Steps are submissions of the command buffer with the most dispatches per execute that repeats the most (the decode bucket).
++Gaps are start(next) - end(previous) inside one submission (device idle between dependent dispatches, 100 MHz ticks)."""
++import json
++import os
++import re
++import statistics
++import sys
++from collections import Counter, defaultdict
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++import irpf
++
++path = sys.argv[1]
++out = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else None
++skip = int(sys.argv[sys.argv.index("--skip") + 1]) if "--skip" in sys.argv else 3
++fam_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profile_families.json")
++FAM = [(n, re.compile(r)) for n, r in json.load(open(fam_file))]
++
++
++def fam(name):
++    for n, r in FAM:
++        if r.search(name):
++            return n
++    return "other"
++
++
++b = irpf.load(path)
++freq = next(iter(b["freq"].values()))
++tick_us = 1e6 / freq
++d = b["disp"]
++by_sub = defaultdict(list)
++for e in d:
++    by_sub[e[1]].append(e)
++cb_of = {s: v[0][2] for s, v in by_sub.items()}
++cb_cnt = Counter(cb_of.values())
++cb_len = {c: Counter(len(by_sub[s]) for s in by_sub if cb_of[s] == c).most_common(1)[0][0] for c in cb_cnt}
++print("command buffers: id -> (submissions, dispatches per step):", {c: (cb_cnt[c], cb_len[c]) for c in cb_cnt})
++sel = max(cb_cnt, key=lambda c: cb_cnt[c])
++subs = sorted(s for s in by_sub if cb_of[s] == sel and len(by_sub[s]) == cb_len[sel])
++subs = subs[skip:]
++print("steady steps:", len(subs), "dispatches/step:", cb_len[sel])
++name = lambda e: b["funcs"].get((e[3], e[5]), f"?{e[3]}:{e[5]}")
++steps = []
++site = defaultdict(lambda: {"dur": [], "gap": []})
++pair = defaultdict(lambda: [0, 0.0])
++hist_edges = [0, 0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0, 1e9]
++hist = Counter()
++prev_end = None
++inter = []
++for s in subs:
++    ev = sorted(by_sub[s], key=lambda e: (e[8], e[4]))
++    t0, t1 = ev[0][8], max(e[9] for e in ev)
++    busy = sum(e[9] - e[8] for e in ev) * tick_us
++    gaps = []
++    pe = ev[0][9]
++    for i in range(1, len(ev)):
++        g = (ev[i][8] - pe) * tick_us
++        gaps.append(g)
++        pe = max(pe, ev[i][9])
++        site[ev[i][4]]["gap"].append(g)
++        pair[(fam(name(ev[i - 1])), fam(name(ev[i])))][0] += 1
++        pair[(fam(name(ev[i - 1])), fam(name(ev[i])))][1] += g
++        for k in range(len(hist_edges) - 1):
++            if hist_edges[k] <= g < hist_edges[k + 1]:
++                hist[k] += 1
++                break
++    for e in ev:
++        site[e[4]]["dur"].append((e[9] - e[8]) * tick_us)
++        site[e[4]]["name"] = name(e)
++        site[e[4]]["wgc"] = tuple(e[6])
++    if prev_end is not None:
++        inter.append((t0 - prev_end) * tick_us)
++    prev_end = t1
++    steps.append({"wall": (t1 - t0) * tick_us, "busy": busy, "gap": sum(gaps)})
++med = lambda k: statistics.median(s[k] for s in steps)
++print(f"per step (median us): device wall {med('wall'):.0f}  kernel busy {med('busy'):.0f}  gaps {med('gap'):.0f} ({100*med('gap')/med('wall'):.1f}% of wall)")
++print(f"between steps (end of last dispatch to start of the first of the next), median us: {statistics.median(inter):.0f}  mean {statistics.mean(inter):.0f}")
++print("gap histogram (us bin: count/step):")
++n = len(steps)
++for k in range(len(hist_edges) - 1):
++    print(f"  {hist_edges[k]:>5}-{hist_edges[k+1]:<6} {hist[k]/n:8.1f}")
++# queue-level host events: period of EXECUTE submissions
++ex = sorted(q for q in b["queue"] if q[1] == 3)
++if len(ex) > skip + 2:
++    ht = [q[5] for q in ex][skip:]
++    per = [(ht[i + 1] - ht[i]) / 1000 for i in range(len(ht) - 1)]
++    print(f"host EXECUTE submit period (us) median {statistics.median(per):.0f}")
++# table per launch site grouped by kernel name
++rows = defaultdict(lambda: {"n": 0, "dur": 0.0, "gap": 0.0})
++for ci, v in site.items():
++    r = rows[v["name"]]
++    r["n"] += 1
++    r["dur"] += statistics.median(v["dur"])
++    r["gap"] += statistics.median(v["gap"]) if v["gap"] else 0
++    r["fam"] = fam(v["name"])
++print(f"{'kernel':34s} {'fam':12s} {'n/step':>6s} {'dev us':>8s} {'gap-before us':>13s}")
++tot = {"n": 0, "dur": 0.0, "gap": 0.0}
++for k, r in sorted(rows.items(), key=lambda kv: -kv[1]["dur"]):
++    print(f"{k:34s} {r['fam']:12s} {r['n']:6d} {r['dur']:8.1f} {r['gap']:13.1f}")
++    for x in tot:
++        tot[x] += r[x]
++print(f"{'TOTAL':34s} {'':12s} {tot['n']:6d} {tot['dur']:8.1f} {tot['gap']:13.1f}")
++print("family gaps (prev family -> next family): count/step, sum us/step, mean us")
++for (a, c), (cnt, sg) in sorted(pair.items(), key=lambda kv: -kv[1][1])[:20]:
++    print(f"  {a:12s} -> {c:12s} {cnt/n:7.1f} {sg/n:8.1f} {sg/cnt:6.2f}")
++famrows = defaultdict(lambda: [0, 0.0, 0.0])
++for k, r in rows.items():
++    f = r["fam"]
++    famrows[f][0] += r["n"]
++    famrows[f][1] += r["dur"]
++    famrows[f][2] += r["gap"]
++print("by family: launches/step, device us, gap-before us")
++for f, v in sorted(famrows.items(), key=lambda kv: -kv[1][1]):
++    print(f"  {f:12s} {v[0]:5d} {v[1]:8.1f} {v[2]:8.1f}")
++if out:
++    json.dump({"steps": steps, "inter": inter, "rows": {k: v for k, v in rows.items()}, "hist": dict(hist), "pairs": {f"{a}>{c}": v for (a, c), v in pair.items()},
++               "sites": {str(ci): {"name": v["name"], "wgc": v["wgc"], "dur": statistics.median(v["dur"]), "gap": statistics.median(v["gap"]) if v["gap"] else 0}
++                         for ci, v in site.items()}}, open(out, "w"))
+diff -ruN scripts/step_timeline.py scripts_CMD/step_timeline.py
+--- scripts/step_timeline.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CMD/step_timeline.py	2026-11-24 13:45:47.866167800 -0800
+@@ -0,0 +1,24 @@
++"""Dispatch timeline of one steady decode step. usage: step_timeline.py <bundle> [step index] [first dispatch] [count]"""
++import os
++import sys
++from collections import Counter, defaultdict
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++import irpf
++
++b = irpf.load(sys.argv[1])
++step = int(sys.argv[2]) if len(sys.argv) > 2 else 50
++first = int(sys.argv[3]) if len(sys.argv) > 3 else 0
++count = int(sys.argv[4]) if len(sys.argv) > 4 else 40
++tick_us = 1e6 / next(iter(b["freq"].values()))
++by = defaultdict(list)
++for e in b["disp"]:
++    by[e[1]].append(e)
++cbs = Counter(v[0][2] for v in by.values())
++sel = cbs.most_common(1)[0][0]
++subs = sorted(s for s, v in by.items() if v[0][2] == sel and len(v) > 500)
++ev = sorted(by[subs[step]], key=lambda e: (e[8], e[4]))
++t0 = ev[0][8]
++for e in ev[first:first + count]:
++    nm = b["funcs"].get((e[3], e[5]), "?")
++    print(f"{(e[8]-t0)*tick_us:9.2f} +{(e[9]-e[8])*tick_us:7.2f}  ci={e[4]:4d} {nm:28s} wg={tuple(e[6])}")

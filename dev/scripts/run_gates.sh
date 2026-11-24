@@ -7,7 +7,7 @@ set -euo pipefail
 G=${1:?r9700|strix}; shift
 R=${INKR:-$HOME/inkling/inkR}; W=$R/W
 SK=${SKILLS:-$HOME/inkling/loom-skills/skills}
-VENV=${LOOM_VENV:-$HOME/loom/.venv}
+VENV=${LOOM_VENV:-$HOME/inkling/tools/M30-venv}
 case $G in
   r9700) ARCH=gfx1201; PRESET=chat-r9700; PORT=18190; URI=amdgpu://GPU-e0880c05003c324d ;;
   strix) ARCH=gfx1151; PRESET=chat;       PORT=18191; URI=amdgpu://id/000000e2000000808e270f2b0bbb4e00 ;;
@@ -15,7 +15,7 @@ case $G in
 esac
 M=$W/mat-$G; PKG=$W/pkg-$G; B=$W/bench-$G; URL=http://127.0.0.1:$PORT
 GGUF=$W/gguf/Inkling-2-Mini-UD-Q4_K_XL.gguf
-export LOOM_ROOT=$HOME/loom K=$W/skills/loom-benchmark/scripts T=$HOME/loom/.tools/bin/python LOOM_KIT=$R/kit
+export LOOM_ROOT=${LOOM_ROOT:-$HOME/loom030} K=$W/skills/loom-benchmark/scripts T=$HOME/loom/.tools/bin/python LOOM_KIT=$R/kit
 export LLAMACPP_DIR=$HOME/inkling/inkB/build/bin LLAMA_URL=${LLAMA_URL:-http://127.0.0.1:18400} LEVEL=dev LOOM_PRESET=$PRESET PYTHONDONTWRITEBYTECODE=1
 
 prep() {

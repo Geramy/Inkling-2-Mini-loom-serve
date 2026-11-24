@@ -54,6 +54,26 @@ template.def<@inkling.dense.gemv.xs_wg_per_unit> device target(@inkling_dense_gf
   template.return %value : index
 }
 
+target.decl @inkling_dense_gfx12
+
+// Grouped attention projections: workgroup target per execution unit (see inkling_dense_group_plan).
+template.decl @inkling.dense.group.wg_per_unit() -> (index)
+
+template.def<@inkling.dense.group.wg_per_unit> priority(-1) @inkling_dense_group_wg_per_unit_default() -> (index) {
+  %value = index.constant 2 : index
+  template.return %value : index
+}
+
+template.def<@inkling.dense.group.wg_per_unit> device target(@inkling_dense_gfx11) priority(20) @inkling_dense_group_wg_per_unit_gfx11() -> (index) {
+  %value = index.constant 4 : index
+  template.return %value : index
+}
+
+template.def<@inkling.dense.group.wg_per_unit> device target(@inkling_dense_gfx12) priority(20) @inkling_dense_group_wg_per_unit_gfx12() -> (index) {
+  %value = index.constant 7 : index
+  template.return %value : index
+}
+
 config.decl @inkling.dense.gemv.xs_depth : %value: index where [range(%value, 1, 4)]
 
 // The workgroup target is a multiple of the execution unit (CU) count. Fewer workgroups give a long tail.

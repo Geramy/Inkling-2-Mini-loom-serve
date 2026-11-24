@@ -154,21 +154,22 @@ Measured on the published route (median of 3 fresh servers per GPU, Q4_K_XL, `pe
 
 A request of 130972 tokens (the Q4 preset context) completes in 120 s on the R9700 and 343 s on the 8060S (183 s and 443 s before). The speed of the CPU reference is in the card (`README.md`, `REPORT.md`).
 
-Wave 2 (on hrx-loom 0.3.0) adds four decode changes. Each is in the files named in section 4.
+Wave 2 (on hrx-loom 0.3.0) adds five decode changes. Each is in the files named in section 4.
 
 - Attention front end: the q, k, v, gate and rel projections run as one grouped GEMV (shared input), and the attention prep, K/V append and conv commit are fused. The merge of split attention is one launch (about 336 launches less per token).
 - Experts, decode: the gate/up and down kernels are software pipelined (NVFP4 fast path). On the 8060S the down kernel is a wave64 kernel (`kernel/experts/down_w64.loom`, `lib/inkling/targets_w64.loom`); the R9700 does not use it.
 - Controllers and router: the message mix is folded into the controller launch, the router selects the top experts with subgroup ballots, and the router and routes run as one decode launch (about 144 launches less per token).
 - The tuned values are per-arch data as before; the results are bit-equal in the kernel tests and give the same greedy text as wave 1 (prompts A, B, C and documents of 8k and 32k tokens, both GPUs).
+- Grouped projection grid: the grouped attention projection GEMV has its own workgroup-per-unit tune value (7 on gfx1201, 4 on gfx1151), which cuts the tail of the launch on the R9700 (decode +2.3 to +2.8 percent; same arithmetic, bitwise equal outputs).
 
-Measured on the published route (median of 3 fresh servers per GPU, Q4_K_XL, `perf.py` rows, tok/s; wave 1 in brackets). The measured programs are the wave 2 build before the chat fixes of section 13, whose perf guard showed decode unchanged and prefill within the session drift:
+Measured on the published route (median of 3 fresh servers per GPU, Q4_K_XL, `perf.py` rows, tok/s; wave 1 in brackets). The R9700 row is the final build. The 8060S row was measured before the chat fixes and the grouped-projection grid change below (its tune value stays 4, the code path is the same; one later session of the final build gave decode 42.73, 39.3, 32.27 tok/s):
 
 | | decode short | decode 2k | decode 8k | decode 32k | prefill 1k | prefill 2k | prefill 8k | prefill 16k | prefill 32k | 4 streams |
 |---|---|---|---|---|---|---|---|---|---|---|
-| R9700 | 95.1 (90.2) | 87.7 (83.2) | 84.5 (80.3) | 74.8 (71.3) | 2725 (2576) | 3197 (2996) | 3297 (3092) | 2972 (2801) | 2339 (2242) | 225.3 (218.9) |
+| R9700 | 97.8 (90.2) | 90.0 (83.2) | 86.7 (80.3) | 76.3 (71.3) | 2670 (2576) | 3132 (2996) | 3239 (3092) | 2932 (2801) | 2342 (2242) | 226.8 (218.9) |
 | 8060S | 42.6 (39.7) | 39.4 (36.7) | 37.6 (34.9) | 32.3 (29.7) | 937 (894) | 1095 (1033) | 1123 (1051) | 1040 (973) | 867 (812) | 95.7 (89.0) |
 
-That is 0.62 (R9700) and 0.74 (8060S) of the decode roofline at short context. Not verified for wave 2: the layer check of the capture route on hrx-loom 0.3.0, and a run of the wave 1 build on 0.3.0 against 0.2.0 in the same session on the R9700 (an earlier single-session run of the wave 1 build on 0.3.0 read 3 percent lower on decode).
+That is 0.63 (R9700) and 0.74 (8060S) of the decode roofline at short context. Not verified for wave 2: the layer check of the capture route on hrx-loom 0.3.0, and a run of the wave 1 build on 0.3.0 against 0.2.0 in the same session on the R9700.
 
 ## 13. Chat behaviour: prefix cache and tool calls
 

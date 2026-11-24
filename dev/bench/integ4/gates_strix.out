@@ -1,0 +1,41 @@
+model ready after 1 s
+== consistency
+prompt tokens [180, 218, 342, 407] identical when concurrent: [True, True, True, True] identical when repeated alone (same path): [True, True, True, True] cached tokens (alone, concurrent, again...): [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]
+PASS
+== agent
+OK   {"task": "Now check Tokyo and London too, then tel", "step": 1, "prompt_tokens": 558, "rendered_tokens": 558, "cached": 507, "completion": 94, "finish": "stop", "calls": [], "render_ok": true, "history_verbatim": true, "reuse_ok": true, "calls_ok": true, "golden_match": true}
+OK   {"task": "What is (24 - 12) * 3.5? Use the calcula", "step": 0, "prompt_tokens": 673, "rendered_tokens": 673, "cached": 651, "completion": 78, "finish": "tool_calls", "calls": ["calculator"], "render_ok": true, "history_verbatim": true, "reuse_ok": true, "calls_ok": true, "golden_match": true}
+OK   {"task": "What is (24 - 12) * 3.5? Use the calcula", "step": 1, "prompt_tokens": 765, "rendered_tokens": 765, "cached": 750, "completion": 24, "finish": "stop", "calls": [], "render_ok": true, "history_verbatim": true, "reuse_ok": true, "calls_ok": true, "golden_match": true}
+6 turns, 0 failing; final answer: '42.0'
+== golden
+    25 prompt tokens ->  64 'The user asks: "Name the planets of the solar system in orde'
+  1238 prompt tokens ->  64 'The user wants a one-sentence summary of this documentation.'
+  2436 prompt tokens ->  64 'The user asks: "What is the main command shown in this docum'
+wrote golden_dev.json
+== compare
+    25  31/ 64 gap=0.122 'Name the planets of the solar system in order.'
+  1238  64/ 64 gap=None 'Summarize this documentation in one sentence.\n\n# S'
+  2436  64/ 64 gap=None 'What is the main command shown in this documentati'
+{"prompts": 14, "full_match": 9, "median_matched": 64, "max_gap": 0.296, "bad": 0, "alt_stored": 14, "alt_decided": 0, "verdict": "PASS"}
+== sampling
+FAIL temperature 0 == greedy
+FAIL top_k 1 == greedy
+OK   same seed reproduces
+OK   different seeds vary (11 distinct of 12)
+GATES FAIL level=dev 126s {'consistency': 'PASS', 'agent': 'PASS', 'golden': 'PASS', 'compare': 'PASS', 'sampling': 'FAIL'}
+[audit] AUDIT FAIL (3 failing)
+OK   {"task": "What is (24 - 12) * 3.5? Use the calcula", "step": 1, "prompt_tokens": 752, "rendered_tokens": 752, "cached": 738, "completion": 13, "finish": "stop", "calls": [], "render_ok": true, "history_verbatim": true, "reuse_ok": true, "calls_ok": true}
+6 turns, 0 failing; final answer: '42.0'
+OK   {"task": "What is (24 - 12) * 3.5? Use the calcula", "step": 1, "prompt_tokens": 734, "rendered_tokens": 734, "cached": 719, "completion": 13, "finish": "stop", "calls": [], "render_ok": true, "history_verbatim": true, "reuse_ok": true, "calls_ok": true, "golden_match": false, "diverge_at": 2, "of": 12, "gap": 0.08327674865722656, "near_tie": true}
+6 turns, 0 failing; final answer: '42.0'
+OK   same seed reproduces
+OK   different seeds vary (11 distinct of 12)
+SKIP first-token distribution: the first generated token is a structural channel header (not in the text)
+OK   temperature 0 repeats (3 runs equal)
+OK   top_k 1 at temperature 1 equals temperature 0
+OK   top_p 1e-6 at temperature 1 equals temperature 0
+OK   same seed reproduces
+INFO a request without sampling fields gave 5 distinct of 6 answers (default temperature is not 0)
+ADMITTED 130991 tokens of a 131072-token context, but the server did not cancel the request within 60s (WARN: later steps may stall)
+COMPLETED 130991 tokens of a 131072-token context in 619s
+GATES_JOB_DONE
