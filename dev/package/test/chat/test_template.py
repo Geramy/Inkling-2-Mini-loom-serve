@@ -7,7 +7,7 @@ import json, os, sys, urllib.error, urllib.request
 PORT = sys.argv[1]
 ECHO = "--echo" in sys.argv
 GOLDEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden.json")
-MODEL = "inkling-2-mini"
+MODEL = os.environ.get("INKLING_MODEL", "inkling-2-mini")
 
 
 def post(path, doc):
@@ -74,10 +74,10 @@ KWARGS = [
     ("kwargs null object", {"chat_template_kwargs": None}, {}),
     ("kwargs empty object", {"chat_template_kwargs": {}}, {}),
     ("top-level enable_thinking is ignored", {"enable_thinking": False}, {}),
+    ("unknown kwargs key is ignored", {"chat_template_kwargs": {"enable_thinking": False, "add_generation_prompt": True}}, {"reasoning_effort": "none"}),
+    ("unknown kwargs key only is ignored", {"chat_template_kwargs": {"foo": 1}}, {}),
 ]
 KWARGS_REJECT = [
-    ("unknown kwargs key", {"chat_template_kwargs": {"enable_thinking": False, "add_generation_prompt": True}}),
-    ("unknown kwargs key only", {"chat_template_kwargs": {"foo": 1}}),
     ("kwargs not an object", {"chat_template_kwargs": [1]}),
     ("kwargs string", {"chat_template_kwargs": "x"}),
     ("enable_thinking string", {"chat_template_kwargs": {"enable_thinking": "false"}}),

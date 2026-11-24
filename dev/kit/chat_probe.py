@@ -990,6 +990,7 @@ INKLING_TERMINAL = "<|content_model_end_sampling|>"
 INKLING_THINK = "<|message_model|><|content_thinking|>"
 INKLING_TEXT = "<|message_model|><|content_text|>"
 INKLING_INVOKE = "<|content_invoke_tool_json|>"
+INKLING_DEMAND = "<|message_system|><|content_text|>The next assistant message must be a call of a declared tool. Do not answer in text.<|end_message|>"
 
 
 def is_inkling(template_text):
@@ -1079,9 +1080,21 @@ def _ik_resolve(enable_thinking, reasoning_effort):
     return reasoning_effort
 
 
-def inkling_simulate(chat, messages, tools=None, gen=False, enable_thinking=None, reasoning_effort=None):
+INKLING_MODE = {"template": False}   # True: the template exactly (verify); False: the Loom policy (what the server renders)
+
+
+def inkling_simulate(chat, messages, tools=None, gen=False, enable_thinking=None, reasoning_effort=None, tool_choice=None):
+    policy = not INKLING_MODE["template"]
     reasoning_effort = _ik_resolve(enable_thinking, reasoning_effort)
     out = ""
+    demanded = False
+    if policy and tool_choice == "none":
+        tools = None
+    elif policy and tools and (tool_choice == "required" or isinstance(tool_choice, dict)):
+        demanded = True   # the next assistant message must be a call: one system message ends the prompt
+        if isinstance(tool_choice, dict):
+            wanted = (tool_choice.get("function") or tool_choice).get("name")
+            tools = [t for t in tools if (t.get("function") or t).get("name") == wanted]
     if tools:
         specs = []
         for tool in tools:
@@ -1091,25 +1104,27 @@ def inkling_simulate(chat, messages, tools=None, gen=False, enable_thinking=None
         out += "<|message_system|>tool_declare<|content_xml|>" + _ik_json(specs, sort_keys=True, separators=(",", ":")) + INKLING_END
     emitted = False
     for m in messages:
-        role = m["role"]
+        role = "system" if policy and m["role"] == "developer" else m["role"]
         if role not in INKLING_ROLES:
             raise ProbeError(f"Unknown message role: {role}")
         if not emitted and role != "system":
             out += _ik_effort(reasoning_effort)
             emitted = True
         head = INKLING_ROLES[role]
+        calls = (m.get("tool_calls") or []) if role == "assistant" else []
         if role == "tool":
             if m.get("name"):
                 head += m["name"]
-            elif m.get("tool_call_id"):
+            elif m.get("tool_call_id") and not policy:   # the policy sees one message at a time: no name without "name"
                 for prev in messages:
                     for tc in (prev.get("tool_calls") or []) if prev["role"] == "assistant" else []:
                         if tc.get("id") == m["tool_call_id"] and "name" in tc["function"]:
                             head += tc["function"]["name"]
-        elif role == "assistant" and m.get("name"):
+        elif role == "assistant" and m.get("name") and not (policy and calls):   # the policy ignores the name of a message with calls
             head += m["name"]
-        calls = (m.get("tool_calls") or []) if role == "assistant" else []
-        reasoning = m.get("reasoning_content") if role == "assistant" else None
+        reasoning = (m.get("reasoning_content") or (m.get("reasoning") if policy else None)) if role == "assistant" else None
+        if reasoning is not None and not isinstance(reasoning, str):
+            reasoning = None
         content = m.get("content")
         if reasoning:
             out += head + "<|content_thinking|>" + reasoning + INKLING_END
@@ -1134,13 +1149,15 @@ def inkling_simulate(chat, messages, tools=None, gen=False, enable_thinking=None
             fn = tc["function"]
             if not isinstance(fn.get("name"), str):
                 raise ProbeError("tool call function name must be a string")
-            if m.get("name") and m["name"] != fn["name"]:
+            if not policy and m.get("name") and m["name"] != fn["name"]:
                 raise ProbeError(f"assistant name {m['name']} does not match its tool call {fn['name']}")
             out += _ik_call(fn, True)
         if role == "assistant":
             out += INKLING_TERMINAL
     if not emitted:
         out += _ik_effort(reasoning_effort)
+    if demanded:
+        out += INKLING_DEMAND
     return out
 
 
@@ -1171,9 +1188,9 @@ def _is_inkling(chat):
 _ik_generic = {"simulate": simulate, "render_calls": render_calls, "verify": verify, "derive": derive}
 
 
-def simulate(chat, messages, tools=None, gen=False, enable_thinking=None, reasoning_effort=None):  # noqa: F811
+def simulate(chat, messages, tools=None, gen=False, enable_thinking=None, reasoning_effort=None, tool_choice=None):  # noqa: F811
     if _is_inkling(chat):
-        return inkling_simulate(chat, messages, tools, gen, enable_thinking, reasoning_effort)
+        return inkling_simulate(chat, messages, tools, gen, enable_thinking, reasoning_effort, tool_choice)
     return _ik_generic["simulate"](chat, messages, tools, gen, enable_thinking, reasoning_effort)
 
 
@@ -1246,7 +1263,7 @@ def _ik_check(label, got, ref):
     return label, False, f"differs at byte {k}: kit {got[max(0, k - 40):k + 60]!r} vs template {ref[max(0, k - 40):k + 60]!r}"
 
 
-def verify(template_text, chat, bos="", eos=""):  # noqa: F811
+def _ik_verify_template(template_text, chat, bos="", eos=""):
     if not _is_inkling(chat):
         return _ik_generic["verify"](template_text, chat, bos, eos)
     T = Template(template_text, bos, eos)
@@ -1265,6 +1282,11 @@ def verify(template_text, chat, bos="", eos=""):  # noqa: F811
     for case in _ik_golden():
         label, body, want = "golden " + case["name"], case["body"], case["jinja"]
         kw = {"reasoning_effort": body["reasoning_effort"]} if "reasoning_effort" in body else {}
+        if case["expect"] == "policy":   # the policy cases are checked in _ik_verify_policy; the template's own render of tool_id_only stays here
+            if case["name"] == "tool_id_only":
+                results.append(_ik_check(label + " (template names)", simulate(chat, body["messages"], body.get("tools"), gen=True, **kw),
+                                         T.render(_ik_reference_messages(body["messages"]), tools=body.get("tools"), gen=True, **kw)))
+            continue
         try:
             got = simulate(chat, body["messages"], body.get("tools"), gen=True, **kw)
         except ProbeError as e:
@@ -1301,6 +1323,101 @@ def verify(template_text, chat, bos="", eos=""):  # noqa: F811
     for label, message, finished, want in outputs:
         results.append(_ik_check(label, raw_from_chat(chat, message, finished), want))
     return results
+
+
+def _ik_unresolved(msgs):
+    """The template cannot look a name up: every tool message without a name gets an id that no call carries."""
+    out = json.loads(json.dumps(msgs))
+    for m in out:
+        if m["role"] == "tool" and not m.get("name"):
+            m["tool_call_id"] = "unresolved"
+    return out
+
+
+def _ik_nameless(msgs):
+    out = json.loads(json.dumps(msgs))
+    for m in out:
+        if m["role"] == "assistant" and m.get("tool_calls"):
+            m.pop("name", None)
+    return out
+
+
+def _ik_aliased(msgs):
+    out = json.loads(json.dumps(msgs))
+    for m in out:
+        if "reasoning" in m:
+            m["reasoning_content"] = m.pop("reasoning")
+    return out
+
+
+def _ik_developer(msgs):
+    out = json.loads(json.dumps(msgs))
+    for m in out:
+        if m["role"] == "developer":
+            m["role"] = "system"
+    return out
+
+
+INKLING_POLICY_CASES = [
+    # name, messages, tools, request kwargs for simulate, how the template reference is made from the messages
+    ("tool message with only tool_call_id has no name", INKLING_STRING_ARGS[:3], TOOLS, {}, _ik_unresolved),
+    ("two tool messages without names", INKLING_STRING_ARGS[:2] + [{"role": "tool", "tool_call_id": "call_7_0", "content": "a"}, {"role": "tool", "tool_call_id": "call_7_1", "content": "b"}], TOOLS, {}, _ik_unresolved),
+    ("agent loop without names", [{"role": "user", "content": "Weather in Paris?"}, calls_msg("", [{"name": "get_weather", "arguments": {"city": "Paris"}}], reasoning="Need the tool."),
+                                  {"role": "tool", "tool_call_id": "call_0", "content": "{\"temp\": 18}"}, {"role": "assistant", "content": "It is 18."}, {"role": "user", "content": "Thanks"}], TOOLS, {}, _ik_unresolved),
+    ("developer message is a system message", [{"role": "developer", "content": "Be brief."}, {"role": "user", "content": "Hi"}], None, {}, _ik_developer),
+    ("developer message after the user", [{"role": "user", "content": "Hi"}, {"role": "developer", "content": "Be brief."}, {"role": "user", "content": "Hello"}], None, {}, _ik_developer),
+    ("assistant name is ignored with tool calls", [{"role": "user", "content": "Weather in Paris?"}, dict(calls_msg("", [{"name": "get_weather", "arguments": {"city": "Paris"}}]), name="bot"),
+                                                    {"role": "tool", "name": "get_weather", "tool_call_id": "call_0", "content": "ok"}], TOOLS, {}, _ik_nameless),
+    ("assistant name that differs from its call", [{"role": "user", "content": "x"}, dict(calls_msg("Checking.", [CALL1]), name="assistant"),
+                                                    {"role": "tool", "name": "get_weather", "content": "ok"}], TOOLS, {}, _ik_nameless),
+    ("reasoning field is reasoning_content", [{"role": "user", "content": "One"}, {"role": "assistant", "content": "Two", "reasoning": "Think."}, {"role": "user", "content": "Three"}], None, {}, _ik_aliased),
+    ("reasoning field on a call message", [{"role": "user", "content": "x"}, dict(calls_msg("", [CALL1]), reasoning="Need it."),
+                                           {"role": "tool", "name": "get_weather", "content": "ok"}], TOOLS, {}, _ik_aliased),
+    ("tool_choice none declares no tools", [{"role": "user", "content": "Weather in Paris?"}], TOOLS, {"tool_choice": "none"}, lambda m: m),
+    ("tool_choice none with tool history", [{"role": "user", "content": "Weather?"}, calls_msg("", [CALL1]), {"role": "tool", "name": "get_weather", "content": "ok"}], TOOLS, {"tool_choice": "none"}, lambda m: m),
+    ("tool_choice required demands a call", [{"role": "user", "content": "Weather in Paris?"}], TOOLS, {"tool_choice": "required"}, lambda m: m),
+    ("tool_choice named keeps one tool and demands a call", [{"role": "user", "content": "Weather in Paris?"}], TOOLS, {"tool_choice": {"type": "function", "function": {"name": "search"}}}, lambda m: m),
+    ("tool_choice required in a tool loop", [{"role": "user", "content": "Weather?"}, calls_msg("", [CALL1]), {"role": "tool", "name": "get_weather", "content": "ok"}], TOOLS, {"tool_choice": "required"}, lambda m: m),
+]
+
+
+def _ik_verify_policy(template_text, chat, bos="", eos=""):
+    """The deliberate differences of the Loom policy from the template, each against the template's own render of the equivalent message list."""
+    T = Template(template_text, bos, eos)
+    results = []
+    for name, msgs, tools, kw, reference in INKLING_POLICY_CASES:
+        for effort in (None, "low"):
+            label = "policy: " + name + (f" (reasoning_effort={effort!r})" if effort else "")
+            eff = {"reasoning_effort": effort} if effort else {}
+            choice = kw.get("tool_choice")
+            ref_tools = None if choice == "none" else [t for t in tools if (t.get("function") or t).get("name") == (choice.get("function") or choice).get("name")] if isinstance(choice, dict) else tools
+            ref_msgs = reference(msgs) + ([{"role": "system", "content": INKLING_DEMAND[len("<|message_system|><|content_text|>"):-len("<|end_message|>")]}] if tools and (choice == "required" or isinstance(choice, dict)) else [])
+            try:
+                ref = T.render(_ik_reference_messages(ref_msgs), tools=ref_tools, gen=True, **eff)
+            except ProbeError as e:
+                results.append((label, None, f"template refuses: {e}"))
+                continue
+            results.append(_ik_check(label, simulate(chat, msgs, tools, gen=True, **eff, **kw), ref))
+    for case in _ik_golden():
+        if case["expect"] != "policy":
+            continue
+        body = case["body"]
+        kwargs = body.get("chat_template_kwargs") or {}
+        got = simulate(chat, body["messages"], body.get("tools"), gen=True, enable_thinking=kwargs.get("enable_thinking"),
+                       reasoning_effort=body.get("reasoning_effort"), tool_choice=body.get("tool_choice"))
+        results.append(_ik_check("golden policy " + case["name"], got, case["jinja"]))
+    return results
+
+
+def verify(template_text, chat, bos="", eos=""):  # noqa: F811
+    if not _is_inkling(chat):
+        return _ik_generic["verify"](template_text, chat, bos, eos)
+    INKLING_MODE["template"] = True
+    try:
+        results = _ik_verify_template(template_text, chat, bos, eos)
+    finally:
+        INKLING_MODE["template"] = False
+    return results + _ik_verify_policy(template_text, chat, bos, eos)
 
 
 if __name__ == "__main__":  # last: main() must see the inkling overrides above

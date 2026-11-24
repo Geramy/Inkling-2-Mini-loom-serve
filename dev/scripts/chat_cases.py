@@ -20,6 +20,7 @@ def call(name, args, id="call_1_0"):
     return {"id": id, "type": "function", "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}}
 
 
+# tool_id_only and the other policy cases live in chat_golden_policy.py (their reference is the template render of the equivalent messages)
 CASES = [
     ("single_turn", {"messages": [U("Hello")]}),
     ("system_user", {"messages": [S("You are terse."), U("Hello")]}),
@@ -39,7 +40,6 @@ CASES = [
     ("tool_call_with_text", {"messages": [U("go"), A("Let me look.", tool_calls=[call("search", {"q": "llama"})]),
         {"role": "tool", "name": "search", "content": "3 hits"}], "tools": [SEARCH]}),
     ("tool_call_no_args", {"messages": [U("go"), A("", tool_calls=[call("noop", {})]), {"role": "tool", "name": "noop", "content": ""}], "tools": [NOOP]}),
-    ("tool_id_only", {"messages": [U("go"), A("", tool_calls=[call("noop", {}, "call_9_0")]), {"role": "tool", "tool_call_id": "call_9_0", "content": "ok"}], "tools": [NOOP]}, "reject"),
     ("reasoning_history", {"messages": [U("2+2?"), A("4", reasoning_content="Add two and two."), U("and 3+3?")]}),
     ("reasoning_only_assistant", {"messages": [U("hm"), A("", reasoning_content="thinking only"), U("go on")]}),
     ("empty_assistant", {"messages": [U("hm"), A(""), U("go on")]}),

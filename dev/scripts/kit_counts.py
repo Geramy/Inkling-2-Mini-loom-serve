@@ -22,8 +22,11 @@ def post(body):
 
 bad = 0
 for case in json.load(open(golden, encoding="utf-8")):
-    body = dict(case["body"], model="inkling-2-mini")
+    body = dict(case["body"], model=os.environ.get("INKLING_MODEL", "inkling-2-mini"))
     kw = {"reasoning_effort": body["reasoning_effort"]} if "reasoning_effort" in body else {}
+    ctk = body.get("chat_template_kwargs") or {}
+    kw.update({"enable_thinking": ctk["enable_thinking"]} if "enable_thinking" in ctk else {})
+    kw.update({"tool_choice": body["tool_choice"]} if isinstance(body.get("tool_choice"), str) else {})
     try:
         text = chat_probe.simulate(chat, body["messages"], body.get("tools"), gen=True, **kw)
         n = len(tok.encode(text, add_special_tokens=False).ids)

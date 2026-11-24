@@ -1,0 +1,249 @@
+--- /dev/null	2026-11-23 15:11:24.000000000 -0800
++++ scripts_A64/a64_probe.py	2026-11-23 14:24:12.348241000 -0800
+@@ -0,0 +1,234 @@
++#!/usr/bin/env python3
++"""Fetch-alignment probe (lane A64). Streaming kernels shaped like the decode GEMV: groups of G lanes read one row each.
++usage: a64_probe.py build <group> | run <group> <gfx1201|gfx1151> [iterations]   (run is meant to be wrapped in one flock -x)
++A config is a list of segments (base, stride S, contiguous bytes C) plus start offset O, load width W and group size G."""
++import json, os, subprocess, sys
++
++ROOT = os.path.expanduser("~/inkling/optA64/probe")
++URI = {"gfx1151": "amdgpu://id/000000e2000000808e270f2b0bbb4e00", "gfx1201": "amdgpu://GPU-e0880c05003c324d"}
++BUF = 1 << 31
++X = 1024
++WG = 128
++
++
++def up(v, a):
++    return (v + a - 1) // a * a
++
++
++def cfg(name, segs, W, G, O=0):
++    """segs: list of (S, C)."""
++    return dict(name=name, segs=segs, W=W, G=G, O=O)
++
++
++def groups():
++    g = {}
++    a = []
++    for pad in (None, 32, 64, 128, 256):
++        tag = "nat" if pad is None else f"p{pad}"
++        S = lambda c: c if pad is None else up(c, pad)
++        a.append(cfg(f"q8_2448_{tag}_w16", [(S(2448), 2448)], 16, 8))
++        a.append(cfg(f"q8_2448_{tag}_w4", [(S(2448), 2448)], 4, 8))
++        for w in (4, 8, 16):
++            a.append(cfg(f"nv_1296_{tag}_w{w}", [(S(1296), 1296)], w, 8))
++        for w in (4, 8):
++            a.append(cfg(f"nv_648_{tag}_w{w}", [(S(648), 648)], w, 8))
++        if pad:
++            a.append(cfg(f"nv_648_{tag}_w16_readpad", [(S(648), S(648))], 16, 8))
++            a.append(cfg(f"nv_1296_{tag}_w16_readpad", [(S(1296), S(1296))], 16, 8))
++            a.append(cfg(f"q8_2448_{tag}_w16_readpad", [(S(2448), S(2448))], 16, 8))
++        a.append(cfg(f"q8split_{tag}_w16", [(S(144), 144), (S(2304), 2304)], 16, 8))
++    g["layout"] = a
++    b = []
++    for o in (0, 4, 8, 16, 32, 48, 64, 96, 128):
++        for w in (4, 16):
++            b.append(cfg(f"off{o}_w{w}", [(2048, 2048)], w, 8, o))
++    g["offset"] = b
++    c = []
++    for S in (512, 768):
++        for C in (16, 32, 64, 128, 256, 512):
++            for w in (4, 8, 16):
++                if C // w >= 1 and C <= S:
++                    c.append(cfg(f"c{C}_s{S}_w{w}", [(S, C)], w, min(32, C // w)))
++    g["contig"] = c
++    d = []
++    for C in (64, 128, 256):
++        for o in (0, 32, 64, 96, 128, 192, 224):
++            d.append(cfg(f"g{C}_o{o}", [(1024, C)], 16, C // 16, o))
++    g["gran"] = d
++    return g
++
++
++def rows_for(c):
++    segsum = sum(s for s, _ in c["segs"])
++    bases, pos = [], 0
++    rpwg = 4 * (32 // c["G"])
++    unit = X * rpwg
++    # rows R multiple of unit with all planes inside BUF
++    R = (BUF - 4096 * len(c["segs"]) - c["O"]) // segsum // unit * unit
++    for s, _ in c["segs"]:
++        bases.append(pos)
++        pos = up(pos + R * s + c["O"] + 4096, 4096)
++    return R, bases, R // unit
++
++
++def kernel_src(c):
++    W, G, O = c["W"], c["G"], c["O"]
++    rpw = 32 // G
++    rpwg = 4 * rpw
++    R, bases, Y = rows_for(c)
++    n = c["name"]
++    L = []
++    L.append(f'kernel.def export("{n}") @{n}() {{')
++    L.append(f"  %cx = index.constant {X} : index")
++    L.append(f"  %cy = index.constant {Y} : index")
++    L.append("  %c1 = index.constant 1 : index")
++    L.append("  %c128 = index.constant 128 : index")
++    L.append("  kernel.launch.config workgroups(%cx, %cy, %c1) workgroup_size(%c128, %c1, %c1) : index")
++    L.append("} launch(%w: buffer, %out: buffer) {")
++    L.append("  %c0 = index.constant 0 : index")
++    L.append("  %origin = index.constant 0 : offset")
++    L.append(f"  %cX = index.constant {X} : index")
++    L.append(f"  %cG = index.constant {G} : index")
++    L.append(f"  %cRPW = index.constant {rpw} : index")
++    L.append(f"  %cRPWG = index.constant {rpwg} : index")
++    L.append("  %gx = kernel.workgroup.id<x> : index")
++    L.append("  %gy = kernel.workgroup.id<y> : index")
++    L.append("  %wave = kernel.subgroup.id : index")
++    L.append("  %lane = kernel.subgroup.lane.id : index")
++    L.append("  %grp = index.div %lane, %cG : index")
++    L.append("  %lr = index.rem %lane, %cG : index")
++    L.append("  %wg = index.madd %gy, %cX, %gx : index")
++    L.append("  %r0 = index.mul %wg, %cRPWG : index")
++    L.append("  %r1 = index.mul %wave, %cRPW : index")
++    L.append("  %r2 = index.add %r0, %r1 : index")
++    L.append("  %row = index.add %r2, %grp : index")
++    L.append("  %zero = scalar.constant 0.0 : f32")
++    acc = "%zero"
++    vt = {4: None, 8: "vector<2xi32>", 16: "vector<4xi32>"}[W]
++    wel = W // 4
++    k = 0
++    for si, ((S, C), base) in enumerate(zip(c["segs"], bases)):
++        nel = (S * (R + 1) + O + 4096) // 4
++        L.append(f"  %b{si} = index.constant {base} : offset")
++        L.append(f"  %nel{si} = index.constant {nel} : index")
++        L.append(f"  %cs{si} = index.constant {S // 4} : index")
++        L.append(f"  %co{si} = index.constant {O // 4} : index")
++        L.append(f"  %v{si} = buffer.view %w[%b{si}] : buffer -> view<[%nel{si}]xi32>")
++        L.append(f"  %re{si} = index.mul %row, %cs{si} : index")
++        L.append(f"  %st{si} = index.add %re{si}, %co{si} : index")
++        iters = (C + G * W - 1) // (G * W)
++        for i in range(iters):
++            tail = (i + 1) * G * W > C
++            ci = f"%ci{si}_{i}"
++            L.append(f"  %ck{si}_{i} = index.constant {i * G * wel} : index")
++            L.append(f"  %cw{si}_{i} = index.constant {wel} : index")
++            L.append(f"  %lw{si}_{i} = index.mul %lr, %cw{si}_{i} : index")
++            L.append(f"  %e0{si}_{i} = index.add %st{si}, %ck{si}_{i} : index")
++            L.append(f"  {ci} = index.add %e0{si}_{i}, %lw{si}_{i} : index")
++
++            def body(ind, k):
++                out = []
++                if W == 4:
++                    out.append(f"{ind}%x{k} = view.load %v{si}[{ci}] : view<[%nel{si}]xi32> -> i32")
++                    out.append(f"{ind}%f{k}_0 = scalar.bitcast %x{k} : i32 to f32")
++                    parts = [f"%f{k}_0"]
++                else:
++                    out.append(f"{ind}%x{k} = vector.load %v{si}[{ci}] : view<[%nel{si}]xi32> -> {vt}")
++                    parts = []
++                    for j in range(wel):
++                        out.append(f"{ind}%i{k}_{j} = vector.extract %x{k}[{j}] : {vt} -> i32")
++                        out.append(f"{ind}%f{k}_{j} = scalar.bitcast %i{k}_{j} : i32 to f32")
++                        parts.append(f"%f{k}_{j}")
++                s = parts[0]
++                for j, p in enumerate(parts[1:]):
++                    out.append(f"{ind}%s{k}_{j} = scalar.addf {s}, {p} : f32")
++                    s = f"%s{k}_{j}"
++                return out, s
++
++            if tail:
++                lim = C // W
++                L.append(f"  %cl{si}_{i} = index.constant {lim - i * G} : index")
++                L.append(f"  %ok{si}_{i} = index.cmp ult, %lr, %cl{si}_{i} : index")
++                L.append(f"  %a{k} = scf.if %ok{si}_{i} -> (f32) {{")
++                lines, s = body("    ", k)
++                L += lines
++                L.append(f"    %t{k} = scalar.addf {acc}, {s} : f32")
++                L.append(f"    scf.yield %t{k} : f32")
++                L.append("  } else {")
++                L.append(f"    scf.yield {acc} : f32")
++                L.append("  }")
++                acc = f"%a{k}"
++            else:
++                lines, s = body("  ", k)
++                L += lines
++                L.append(f"  %a{k} = scalar.addf {acc}, {s} : f32")
++                acc = f"%a{k}"
++            k += 1
++    L.append(f"  %sum = kernel.subgroup.reduce<addf> {acc} : f32")
++    L.append("  %lead = index.cmp eq, %lane, %c0 : index")
++    L.append("  scf.if %lead {")
++    L.append("    %c4 = index.constant 4 : index")
++    L.append(f"    %nout = index.constant {X * Y * 4} : index")
++    L.append("    %ov = buffer.view %out[%origin] : buffer -> view<[%nout]xf32>")
++    L.append("    %oi = index.madd %wg, %c4, %wave : index")
++    L.append("    view.store %sum, %ov[%oi] : f32, view<[%nout]xf32>")
++    L.append("  }")
++    L.append("  kernel.return")
++    L.append("}")
++    return "\n".join(L), R, Y
++
++
++def case_src(c, Y):
++    n = c["name"]
++    nout = X * Y * 4
++    return (f"check.case public @b_{n} {{\n"
++            f"  %seed = check.literal value(7) : i64\n"
++            f"  %w = check.generate.random.uniform seed(%seed) range(-128 to 127) : tensor<{BUF}xi8>\n"
++            f"  %out = check.generate.fill value(0.0) : tensor<{nout}xf32>\n"
++            f"  kernel.launch @{n}(%w, %out) : (tensor<{BUF}xi8>, tensor<{nout}xf32>)\n"
++            f"  check.return\n}}\ncheck.benchmark<@b_{n}> @bench_{n}\n")
++
++
++def build(group):
++    d = os.path.join(ROOT, group)
++    os.makedirs(d, exist_ok=True)
++    meta = []
++    for c in groups()[group]:
++        k, R, Y = kernel_src(c)
++        src = k + "\n\n" + case_src(c, Y)
++        p = os.path.join(d, c["name"] + ".loom")
++        open(p, "w").write(src)
++        m = p[:-5] + "_m.loom"
++        subprocess.run(["loom-link", p, "--output=" + m], check=True)
++        segs = c["segs"]
++        meta.append(dict(c, rows=R, span=R * sum(s for s, _ in segs), useful=R * sum(cc for _, cc in segs), merged=m))
++    json.dump(meta, open(os.path.join(d, "meta.json"), "w"))
++    print("built", len(meta))
++
++
++def run(group, arch, iters):
++    d = os.path.join(ROOT, group)
++    meta = [m for m in json.load(open(os.path.join(d, "meta.json"))) if not any(s and s in m["name"] for s in os.environ.get("A64_SKIP", "").split(","))]
++    outf = open(os.path.join(ROOT, f"results_{group}_{arch}.jsonl"), "a")
++    for m in meta:
++        res = os.path.join(d, f"res_{m['name']}_{arch}.json")
++        cmd = ["loom-benchmark", m["merged"], f"--benchmark=@bench_{m['name']}", "--device=" + URI[arch], "--output=" + res,
++               "--measure=dispatch_complete", "--batch-size=1", f"--iterations={iters}", "--warmup-iterations=3", "--input-ring-count=1"]
++        r = subprocess.run(cmd, capture_output=True, text=True)
++        if r.returncode != 0:
++            print(m["name"], "FAILED", r.stderr[-800:], r.stdout[-300:])
++            continue
++        j = json.load(open(res))
++        t = j["work_items"][0]["measurement"]["operation_timing_ns"]
++        row = dict(name=m["name"], arch=arch, W=m["W"], G=m["G"], O=m["O"], segs=m["segs"], rows=m["rows"], span=m["span"], useful=m["useful"], timing=t)
++        outf.write(json.dumps(row) + "\n")
++        outf.flush()
++        p50 = t["p50"]
++        print(f"{m['name']:28s} p50={p50 / 1e3:9.1f}us useful={m['useful'] / p50:7.2f} GB/s span={m['span'] / p50:7.2f} GB/s  {({k: t[k] for k in t if k != 'p50'})}", flush=True)
++
++
++if __name__ == "__main__":
++    if sys.argv[1] == "build":
++        build(sys.argv[2])
++    else:
++        run(sys.argv[2], sys.argv[3], int(sys.argv[4]) if len(sys.argv) > 4 else 25)
+--- /dev/null	2026-11-23 15:11:25.000000000 -0800
++++ scripts_A64/a64_sum.py	2026-11-23 13:53:11.155363200 -0800
+@@ -0,0 +1,9 @@
++#!/usr/bin/env python3
++"""Prints the table of a probe results file: a64_sum.py <results.jsonl>"""
++import json, sys
++
++for line in open(sys.argv[1]):
++    r = json.loads(line)
++    t = r["timing"]
++    keys = [k for k in t if k not in ("p50",)]
++    print(f"{r['name']:28s} p50={t['p50'] / 1e3:9.1f}us useful={r['useful'] / t['p50']:7.2f} GB/s span={r['span'] / t['p50']:7.2f} GB/s", {k: (round(v / 1e3, 1) if isinstance(v, (int, float)) else v) for k, v in t.items() if k != "p50"})

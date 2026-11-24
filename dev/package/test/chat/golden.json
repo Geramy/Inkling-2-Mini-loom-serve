@@ -384,48 +384,6 @@
   "engines_agree": true
  },
  {
-  "name": "tool_id_only",
-  "body": {
-   "messages": [
-    {
-     "role": "user",
-     "content": "go"
-    },
-    {
-     "role": "assistant",
-     "content": "",
-     "tool_calls": [
-      {
-       "id": "call_9_0",
-       "type": "function",
-       "function": {
-        "name": "noop",
-        "arguments": "{}"
-       }
-      }
-     ]
-    },
-    {
-     "role": "tool",
-     "tool_call_id": "call_9_0",
-     "content": "ok"
-    }
-   ],
-   "tools": [
-    {
-     "type": "function",
-     "function": {
-      "name": "noop"
-     }
-    }
-   ]
-  },
-  "expect": "reject",
-  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
-  "oracle": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
-  "engines_agree": true
- },
- {
   "name": "reasoning_history",
   "body": {
    "messages": [
@@ -1272,6 +1230,775 @@
   "expect": "reject",
   "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.1234567<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
   "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.123457<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "engines_agree": true
+ },
+ {
+  "name": "tool_id_only",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "call_9_0",
+       "type": "function",
+       "function": {
+        "name": "noop",
+        "arguments": "{}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_9_0",
+     "content": "ok"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "noop"
+     }
+    }
+   ]
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|><|content_text|>ok<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "tool_id_only_parallel",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "reasoning_content": "Two lookups.",
+     "tool_calls": [
+      {
+       "id": "call_9_0",
+       "type": "function",
+       "function": {
+        "name": "noop",
+        "arguments": "{}"
+       }
+      },
+      {
+       "id": "call_9_1",
+       "type": "function",
+       "function": {
+        "name": "search",
+        "arguments": "{\"q\": \"x\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_9_0",
+     "content": "a"
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_9_1",
+     "content": "b"
+    },
+    {
+     "role": "assistant",
+     "content": "done"
+    },
+    {
+     "role": "user",
+     "content": "again"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "noop"
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "search",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"},{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|><|content_thinking|>Two lookups.<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|message_model|>search<|content_invoke_tool_json|>{\"name\":\"search\",\"args\":{\"q\":\"x\"}}<|end_message|><|content_model_end_sampling|><|message_tool|><|content_text|>a<|end_message|><|message_tool|><|content_text|>b<|end_message|><|message_model|><|content_text|>done<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>again<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "tool_id_only_and_named_mixed",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "c0",
+       "type": "function",
+       "function": {
+        "name": "noop",
+        "arguments": "{}"
+       }
+      },
+      {
+       "id": "c1",
+       "type": "function",
+       "function": {
+        "name": "search",
+        "arguments": "{\"q\": \"x\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "c0",
+     "content": "a"
+    },
+    {
+     "role": "tool",
+     "name": "search",
+     "tool_call_id": "c1",
+     "content": "b"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "noop"
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "search",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    }
+   ]
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"},{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|message_model|>search<|content_invoke_tool_json|>{\"name\":\"search\",\"args\":{\"q\":\"x\"}}<|end_message|><|content_model_end_sampling|><|message_tool|><|content_text|>a<|end_message|><|message_tool|>search<|content_text|>b<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "developer_role",
+  "body": {
+   "messages": [
+    {
+     "role": "developer",
+     "content": "Be terse."
+    },
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ]
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|><|content_text|>Be terse.<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "developer_role_with_tools",
+  "body": {
+   "messages": [
+    {
+     "role": "developer",
+     "content": "Be terse."
+    },
+    {
+     "role": "user",
+     "content": "Weather?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Get the weather for a city",
+      "parameters": {
+       "type": "object",
+       "required": [
+        "city"
+       ],
+       "properties": {
+        "unit": {
+         "enum": [
+          "c",
+          "f"
+         ],
+         "type": "string",
+         "description": "Unit \"quoted\"\nsecond line"
+        },
+        "city": {
+         "type": "string",
+         "description": "Name, e.g. Zürich 東京"
+        },
+        "days": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 14
+        }
+       }
+      }
+     }
+    }
+   ],
+   "reasoning_effort": "low"
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Get the weather for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"description\":\"Name, e.g. Zürich 東京\",\"type\":\"string\"},\"days\":{\"maximum\":14,\"minimum\":1,\"type\":\"integer\"},\"unit\":{\"description\":\"Unit \\\"quoted\\\"\\nsecond line\",\"enum\":[\"c\",\"f\"],\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Be terse.<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.2<|end_message|><|message_user|><|content_text|>Weather?<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "assistant_name_with_calls",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "name": "bot",
+     "tool_calls": [
+      {
+       "id": "c0",
+       "type": "function",
+       "function": {
+        "name": "noop",
+        "arguments": "{}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "name": "noop",
+     "content": "ok"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "noop"
+     }
+    }
+   ]
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "assistant_name_equals_call",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "Checking.",
+     "name": "noop",
+     "tool_calls": [
+      {
+       "id": "c0",
+       "type": "function",
+       "function": {
+        "name": "noop",
+        "arguments": "{}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "name": "noop",
+     "content": "ok"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "noop"
+     }
+    }
+   ]
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|><|content_text|>Checking.<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "reasoning_field_alias",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "2+2?"
+    },
+    {
+     "role": "assistant",
+     "content": "4",
+     "reasoning": "Add two and two."
+    },
+    {
+     "role": "user",
+     "content": "and 3+3?"
+    }
+   ]
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>2+2?<|end_message|><|message_model|><|content_thinking|>Add two and two.<|end_message|><|message_model|><|content_text|>4<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>and 3+3?<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "reasoning_field_alias_with_calls",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "reasoning": "Need the tool.",
+     "tool_calls": [
+      {
+       "id": "c0",
+       "type": "function",
+       "function": {
+        "name": "noop",
+        "arguments": "{}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "name": "noop",
+     "content": "ok"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "noop"
+     }
+    }
+   ]
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|><|content_thinking|>Need the tool.<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "tool_choice_none_drops_tools",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Weather in Zürich?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Get the weather for a city",
+      "parameters": {
+       "type": "object",
+       "required": [
+        "city"
+       ],
+       "properties": {
+        "unit": {
+         "enum": [
+          "c",
+          "f"
+         ],
+         "type": "string",
+         "description": "Unit \"quoted\"\nsecond line"
+        },
+        "city": {
+         "type": "string",
+         "description": "Name, e.g. Zürich 東京"
+        },
+        "days": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 14
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "search",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    }
+   ],
+   "tool_choice": "none"
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "tool_choice_none_with_history",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "c0",
+       "type": "function",
+       "function": {
+        "name": "noop",
+        "arguments": "{}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "name": "noop",
+     "content": "ok"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "noop"
+     }
+    }
+   ],
+   "tool_choice": "none"
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "tool_choice_auto_keeps_tools",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Weather in Zürich?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Get the weather for a city",
+      "parameters": {
+       "type": "object",
+       "required": [
+        "city"
+       ],
+       "properties": {
+        "unit": {
+         "enum": [
+          "c",
+          "f"
+         ],
+         "type": "string",
+         "description": "Unit \"quoted\"\nsecond line"
+        },
+        "city": {
+         "type": "string",
+         "description": "Name, e.g. Zürich 東京"
+        },
+        "days": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 14
+        }
+       }
+      }
+     }
+    }
+   ],
+   "tool_choice": "auto"
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Get the weather for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"description\":\"Name, e.g. Zürich 東京\",\"type\":\"string\"},\"days\":{\"maximum\":14,\"minimum\":1,\"type\":\"integer\"},\"unit\":{\"description\":\"Unit \\\"quoted\\\"\\nsecond line\",\"enum\":[\"c\",\"f\"],\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "tool_choice_required_demands_call",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Weather in Zürich?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Get the weather for a city",
+      "parameters": {
+       "type": "object",
+       "required": [
+        "city"
+       ],
+       "properties": {
+        "unit": {
+         "enum": [
+          "c",
+          "f"
+         ],
+         "type": "string",
+         "description": "Unit \"quoted\"\nsecond line"
+        },
+        "city": {
+         "type": "string",
+         "description": "Name, e.g. Zürich 東京"
+        },
+        "days": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 14
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "search",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    }
+   ],
+   "tool_choice": "required"
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Get the weather for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"description\":\"Name, e.g. Zürich 東京\",\"type\":\"string\"},\"days\":{\"maximum\":14,\"minimum\":1,\"type\":\"integer\"},\"unit\":{\"description\":\"Unit \\\"quoted\\\"\\nsecond line\",\"enum\":[\"c\",\"f\"],\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"},\"type\":\"function\"},{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|><|message_system|><|content_text|>The next assistant message must be a call of a declared tool. Do not answer in text.<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "tool_choice_named_keeps_one_tool",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Weather in Zürich?"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Get the weather for a city",
+      "parameters": {
+       "type": "object",
+       "required": [
+        "city"
+       ],
+       "properties": {
+        "unit": {
+         "enum": [
+          "c",
+          "f"
+         ],
+         "type": "string",
+         "description": "Unit \"quoted\"\nsecond line"
+        },
+        "city": {
+         "type": "string",
+         "description": "Name, e.g. Zürich 東京"
+        },
+        "days": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 14
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "search",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "q": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    }
+   ],
+   "tool_choice": {
+    "type": "function",
+    "function": {
+     "name": "search"
+    }
+   }
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|><|message_system|><|content_text|>The next assistant message must be a call of a declared tool. Do not answer in text.<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "tool_choice_required_after_tool_result",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "go"
+    },
+    {
+     "role": "assistant",
+     "content": "",
+     "tool_calls": [
+      {
+       "id": "c0",
+       "type": "function",
+       "function": {
+        "name": "noop",
+        "arguments": "{}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "name": "noop",
+     "content": "ok"
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "noop"
+     }
+    }
+   ],
+   "tool_choice": "required",
+   "reasoning_effort": "low"
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.2<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|><|message_system|><|content_text|>The next assistant message must be a call of a declared tool. Do not answer in text.<|end_message|>",
+  "oracle": null,
+  "engines_agree": true
+ },
+ {
+  "name": "kwargs_unknown_key_ignored",
+  "body": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "hi"
+    }
+   ],
+   "chat_template_kwargs": {
+    "preserve_thinking": true,
+    "enable_thinking": false
+   }
+  },
+  "expect": "policy",
+  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+  "oracle": null,
   "engines_agree": true
  }
 ]

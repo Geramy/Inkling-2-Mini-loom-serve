@@ -28,9 +28,14 @@ func.decl @chat_put_object(%output: buffer, %position: offset, %source: buffer, 
 
 func.decl @chat_decode(%source: buffer, %begin: i64, %length: i64) -> (buffer)
 
-// State of one rendered request: bits 0-19 effort in millionths, bit 23 effort header emitted.
+// State of one rendered request: bits 0-19 effort in millionths, bit 22 a tool call is demanded (tool_choice required or a named function), bit 23 effort header emitted.
 func.def @chat_state_header_bit() -> (i64) {
   %bit = scalar.constant 8388608 : i64
+  func.return %bit : i64
+}
+
+func.def @chat_state_demand_bit() -> (i64) {
+  %bit = scalar.constant 4194304 : i64
   func.return %bit : i64
 }
 
@@ -402,7 +407,6 @@ func.def @chat_kwargs_in(%source: buffer, %begin: i64, %length: i64) -> (i64) {
   %false_type = scalar.constant 5 : i64
   %null_type = scalar.constant 6 : i64
   %true = scalar.constant true : i1
-  %effort_key = buffer.constant utf8("reasoning_effort") : buffer
   %thinking_key = buffer.constant utf8("enable_thinking") : buffer
   %error = func.call @chat_error_kwargs_error() : () -> (buffer)
   %records, %kind, %count64 = func.call @members_range(%source, %begin, %length) : (buffer, i64, i64) -> (buffer, i32, i64)
@@ -414,10 +418,7 @@ func.def @chat_kwargs_in(%source: buffer, %begin: i64, %length: i64) -> (i64) {
     %key_length = view.load %fields[%i, 1] : view<[%count]x5xi64> -> i64
     %value_type = view.load %fields[%i, 4] : view<[%count]x5xi64> -> i64
     %key = func.call @chat_decode(%source, %key_begin, %key_length) : (buffer, i64, i64) -> (buffer)
-    %is_effort = func.call @chat_equal(%key, %effort_key) : (buffer, buffer) -> (i1)
     %is_thinking = func.call @chat_equal(%key, %thinking_key) : (buffer, buffer) -> (i1)
-    %known = scalar.ori %is_effort, %is_thinking : i1
-    func.call @chat_check(%known, %error) : (i1, buffer)
     %is_true = scalar.cmpi eq, %value_type, %true_type : i64
     %is_false = scalar.cmpi eq, %value_type, %false_type : i64
     %is_null = scalar.cmpi eq, %value_type, %null_type : i64
@@ -620,7 +621,37 @@ func.def @chat_tool_spec(%output: buffer, %position: offset, %tools: buffer, %be
   func.return %p8 : offset
 }
 
-func.def @chat_tool_declaration(%tools: buffer) -> (buffer) {
+// Name of one declared tool (the tool itself or its function member), empty when it is not a string.
+func.def @chat_tool_name(%tools: buffer, %begin: i64, %length: i64) -> (buffer) {
+  %c2_i64 = scalar.constant 2 : i64
+  %function_key = buffer.constant utf8("function") : buffer
+  %name_key = buffer.constant utf8("name") : buffer
+  %function_type, %function_begin, %function_length = func.call @chat_find(%tools, %begin, %length, %function_key) : (buffer, i64, i64, buffer) -> (i64, i64, i64)
+  %has_function = scalar.cmpi eq, %function_type, %c2_i64 : i64
+  %fn_begin = scf.select %has_function, %function_begin, %begin : i64
+  %fn_length = scf.select %has_function, %function_length, %length : i64
+  %name = func.call @chat_string_member_in(%tools, %fn_begin, %fn_length, %name_key) : (buffer, i64, i64, buffer) -> (buffer)
+  func.return %name : buffer
+}
+
+// Text of a string member of the object in [begin, begin+length), empty when absent or not a string.
+func.def @chat_string_member_in(%source: buffer, %begin: i64, %length: i64, %key: buffer) -> (buffer) {
+  %string_type = scalar.constant 0 : i64
+  %empty = buffer.constant utf8("") : buffer
+  %type, %value_begin, %value_length = func.call @chat_find(%source, %begin, %length, %key) : (buffer, i64, i64, buffer) -> (i64, i64, i64)
+  %is_string = scalar.cmpi eq, %type, %string_type : i64
+  %text = scf.if %is_string -> (buffer) {
+    %decoded = func.call @chat_decode(%source, %value_begin, %value_length) : (buffer, i64, i64) -> (buffer)
+    scf.yield %decoded : buffer
+  } else {
+    scf.yield %empty : buffer
+  }
+  func.return %text : buffer
+}
+
+// The tools declaration. A non-empty only keeps just the tool of that name (tool_choice naming a function).
+func.def @chat_tool_declaration(%tools: buffer, %only: buffer) -> (buffer) {
+  %true = scalar.constant true : i1
   %origin = index.constant 0 : offset
   %c0 = index.constant 0 : index
   %c1 = index.constant 1 : index
@@ -653,14 +684,24 @@ func.def @chat_tool_declaration(%tools: buffer) -> (buffer) {
       %value_type = view.load %fields[%i, 4] : view<[%count]x5xi64> -> i64
       %is_object = scalar.cmpi eq, %value_type, %c2_i64 : i64
       func.call @chat_check(%is_object, %error) : (i1, buffer)
-      %first = index.cmp eq, %i, %c0 : index
-      %separated = scf.if %first -> (offset) {
-        scf.yield %at : offset
+      %tool_name = func.call @chat_tool_name(%tools, %value_begin, %value_length) : (buffer, i64, i64) -> (buffer)
+      %same_name = func.call @chat_equal(%tool_name, %only) : (buffer, buffer) -> (i1)
+      %filtering = func.call @chat_nonempty(%only) : (buffer) -> (i1)
+      %not_filtering = scalar.xori %filtering, %true : i1
+      %keep = scalar.ori %not_filtering, %same_name : i1
+      %after = scf.if %keep -> (offset) {
+        %first = index.cmp eq, %at, %start : offset
+        %separated = scf.if %first -> (offset) {
+          scf.yield %at : offset
+        } else {
+          %next = func.call @chat_put(%output, %at, %comma) : (buffer, offset, buffer) -> (offset)
+          scf.yield %next : offset
+        }
+        %written = func.call @chat_tool_spec(%output, %separated, %tools, %value_begin, %value_length) : (buffer, offset, buffer, i64, i64) -> (offset)
+        scf.yield %written : offset
       } else {
-        %next = func.call @chat_put(%output, %at, %comma) : (buffer, offset, buffer) -> (offset)
-        scf.yield %next : offset
+        scf.yield %at : offset
       }
-      %after = func.call @chat_tool_spec(%output, %separated, %tools, %value_begin, %value_length) : (buffer, offset, buffer, i64, i64) -> (offset)
       scf.yield %after : offset
     }
     %final = func.call @chat_put(%output, %end, %suffix) : (buffer, offset, buffer) -> (offset)
@@ -1006,8 +1047,52 @@ func.def public @text_chat_image_limits_v1() -> (i64, i64, i64, i64, i64) {
 
 func.def public @text_chat_begin_v1(%request: buffer, %tools: buffer) -> (buffer, i64) {
   %micro = func.call @chat_effort(%request) : (buffer) -> (i64)
-  %declaration = func.call @chat_tool_declaration(%tools) : (buffer) -> (buffer)
-  func.return %declaration, %micro : buffer, i64
+  %choice_key = buffer.constant utf8("tool_choice") : buffer
+  %none = buffer.constant utf8("none") : buffer
+  %empty = buffer.constant utf8("") : buffer
+  %string_type = scalar.constant 0 : i64
+  %false = scalar.constant false : i1
+  %choice_type, %choice_begin, %choice_length = func.call @chat_member(%request, %choice_key) : (buffer, buffer) -> (i64, i64, i64)
+  %choice_is_string = scalar.cmpi eq, %choice_type, %string_type : i64
+  %choice_none = scf.if %choice_is_string -> (i1) {
+    %choice = func.call @chat_decode(%request, %choice_begin, %choice_length) : (buffer, i64, i64) -> (buffer)
+    %matches = func.call @chat_equal(%choice, %none) : (buffer, buffer) -> (i1)
+    scf.yield %matches : i1
+  } else {
+    scf.yield %false : i1
+  }
+  %declaration = scf.if %choice_none -> (buffer) {
+    scf.yield %empty : buffer
+  } else {
+    %c2_i64 = scalar.constant 2 : i64
+    %choice_is_object = scalar.cmpi eq, %choice_type, %c2_i64 : i64
+    %only = scf.if %choice_is_object -> (buffer) {
+      %named = func.call @chat_tool_name(%request, %choice_begin, %choice_length) : (buffer, i64, i64) -> (buffer)
+      scf.yield %named : buffer
+    } else {
+      scf.yield %empty : buffer
+    }
+    %declared = func.call @chat_tool_declaration(%tools, %only) : (buffer, buffer) -> (buffer)
+    scf.yield %declared : buffer
+  }
+  %required = buffer.constant utf8("required") : buffer
+  %choice_required = scf.if %choice_is_string -> (i1) {
+    %choice = func.call @chat_decode(%request, %choice_begin, %choice_length) : (buffer, i64, i64) -> (buffer)
+    %matches = func.call @chat_equal(%choice, %required) : (buffer, buffer) -> (i1)
+    scf.yield %matches : i1
+  } else {
+    scf.yield %false : i1
+  }
+  %c2_object = scalar.constant 2 : i64
+  %choice_named = scalar.cmpi eq, %choice_type, %c2_object : i64
+  %wants_call = scalar.ori %choice_required, %choice_named : i1
+  %has_declaration = func.call @chat_nonempty(%declaration) : (buffer) -> (i1)
+  %demands = scalar.andi %wants_call, %has_declaration : i1
+  %c0_state = scalar.constant 0 : i64
+  %demand_bit = func.call @chat_state_demand_bit() : () -> (i64)
+  %demand_state = scf.select %demands, %demand_bit, %c0_state : i64
+  %state = scalar.ori %micro, %demand_state : i64
+  func.return %declaration, %state : buffer, i64
 }
 
 // One text message per content part, or the single string content.
@@ -1070,7 +1155,10 @@ func.def public @text_chat_message_v1(%raw: buffer, %role: buffer, %content: buf
   %tool_role = buffer.constant utf8("tool") : buffer
   %user = func.call @chat_equal(%role, %user_role) : (buffer, buffer) -> (i1)
   %assistant = func.call @chat_equal(%role, %assistant_role) : (buffer, buffer) -> (i1)
-  %system = func.call @chat_equal(%role, %system_role) : (buffer, buffer) -> (i1)
+  %developer_role = buffer.constant utf8("developer") : buffer
+  %system_plain = func.call @chat_equal(%role, %system_role) : (buffer, buffer) -> (i1)
+  %developer = func.call @chat_equal(%role, %developer_role) : (buffer, buffer) -> (i1)
+  %system = scalar.ori %system_plain, %developer : i1
   %tool = func.call @chat_equal(%role, %tool_role) : (buffer, buffer) -> (i1)
   %known_a = scalar.ori %user, %assistant : i1
   %known_b = scalar.ori %system, %tool : i1
@@ -1098,29 +1186,26 @@ func.def public @text_chat_message_v1(%raw: buffer, %role: buffer, %content: buf
   %name = func.call @chat_string_member(%raw, %name_key) : (buffer, buffer) -> (buffer)
   %has_name = func.call @chat_nonempty(%name) : (buffer) -> (i1)
   %has_calls = func.call @chat_nonempty(%calls) : (buffer) -> (i1)
-  %has_reasoning = func.call @chat_nonempty(%reasoning) : (buffer) -> (i1)
+  %reasoning_key = buffer.constant utf8("reasoning") : buffer
+  %reasoning_alias = func.call @chat_string_member(%raw, %reasoning_key) : (buffer, buffer) -> (buffer)
+  %has_primary = func.call @chat_nonempty(%reasoning) : (buffer) -> (i1)
+  %reasoning_text = scf.select %has_primary, %reasoning, %reasoning_alias : buffer
+  %has_reasoning = func.call @chat_nonempty(%reasoning_text) : (buffer) -> (i1)
   %has_content = func.call @chat_nonempty(%content) : (buffer) -> (i1)
   %named_role = scalar.ori %tool, %assistant : i1
-  %uses_name = scalar.andi %named_role, %has_name : i1
+  %assistant_calls = scalar.andi %assistant, %has_calls : i1
+  %name_allowed = scalar.xori %assistant_calls, %true : i1
+  %role_name = scalar.andi %named_role, %has_name : i1
+  %uses_name = scalar.andi %role_name, %name_allowed : i1
   %token_name = scf.select %uses_name, %name, %empty : buffer
   %token = func.call @chat_join(%base, %token_name, %empty, %empty, %empty, %empty, %empty, %empty) : (buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer) -> (buffer)
-  %call_name = scalar.andi %assistant, %has_name : i1
-  %call_conflict = scalar.andi %call_name, %has_calls : i1
-  %no_call_conflict = scalar.xori %call_conflict, %true : i1
-  %assistant_name_error = func.call @chat_error_assistant_name_error() : () -> (buffer)
-  func.call @chat_check(%no_call_conflict, %assistant_name_error) : (i1, buffer)
-  %tool_without_name = scalar.andi %tool, %has_name : i1
-  %tool_named = scalar.xori %tool, %true : i1
-  %tool_ok = scalar.ori %tool_without_name, %tool_named : i1
-  %tool_name_error = func.call @chat_error_tool_name_error() : () -> (buffer)
-  func.call @chat_check(%tool_ok, %tool_name_error) : (i1, buffer)
   %thinking_marker = buffer.constant utf8("<|content_thinking|>") : buffer
   %text_marker = buffer.constant utf8("<|content_text|>") : buffer
   %end_message = buffer.constant utf8("<|end_message|>") : buffer
   %end_sampling = buffer.constant utf8("<|content_model_end_sampling|>") : buffer
   %thought_enabled = scalar.andi %assistant, %has_reasoning : i1
   %thought_piece = scf.if %thought_enabled -> (buffer) {
-    %value = func.call @chat_join(%token, %thinking_marker, %reasoning, %end_message, %empty, %empty, %empty, %empty) : (buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer) -> (buffer)
+    %value = func.call @chat_join(%token, %thinking_marker, %reasoning_text, %end_message, %empty, %empty, %empty, %empty) : (buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer) -> (buffer)
     scf.yield %value : buffer
   } else {
     scf.yield %empty : buffer
@@ -1165,7 +1250,13 @@ func.def public @text_chat_end_v1(%state: i64) -> (buffer, i64) {
   %mask = scalar.constant 1048575 : i64
   %micro = scalar.andi %state, %mask : i64
   %header = func.call @chat_effort_header(%micro) : (i64) -> (buffer)
-  %suffix = scf.select %emitted, %empty, %header : buffer
+  %effort_suffix = scf.select %emitted, %empty, %header : buffer
+  %demand_bit = func.call @chat_state_demand_bit() : () -> (i64)
+  %demand_bits = scalar.andi %state, %demand_bit : i64
+  %demanded = scalar.cmpi ne, %demand_bits, %c0_i64 : i64
+  %demand_text = buffer.constant utf8("<|message_system|><|content_text|>The next assistant message must be a call of a declared tool. Do not answer in text.<|end_message|>") : buffer
+  %demand_suffix = scf.select %demanded, %demand_text, %empty : buffer
+  %suffix = func.call @chat_join(%effort_suffix, %demand_suffix, %empty, %empty, %empty, %empty, %empty, %empty) : (buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer) -> (buffer)
   func.return %suffix, %c0_i64 : buffer, i64
 }
 
@@ -1200,17 +1291,7 @@ func.def @chat_error_unsupported_error() -> (buffer) {
 }
 
 func.def @chat_error_message_error() -> (buffer) {
-  %text = buffer.constant utf8("message role must be user, assistant, system or tool") : buffer
-  func.return %text : buffer
-}
-
-func.def @chat_error_tool_name_error() -> (buffer) {
-  %text = buffer.constant utf8("a tool message needs a name: the policy sees one message at a time and cannot look the function name up from tool_call_id") : buffer
-  func.return %text : buffer
-}
-
-func.def @chat_error_assistant_name_error() -> (buffer) {
-  %text = buffer.constant utf8("an assistant message with tool calls cannot have a name") : buffer
+  %text = buffer.constant utf8("message role must be user, assistant, system, developer or tool") : buffer
   func.return %text : buffer
 }
 

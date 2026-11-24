@@ -274,12 +274,12 @@
         "checkpoint_capacity": 4,
         "max_tokens": 4096,
         "session_cache_capacity": 0,
-        "prefix_cache_capacity": 0
+        "prefix_cache_capacity": 16
       },
       "memory": {
         "weights_bytes": 17617780736,
-        "transient_bytes": 6700000000,
-        "workload": "4 rows, 32768 context, 4 checkpoints; slots 12 x 171.6 MB, KV pool 131072 tokens x 32 KiB, workspace at 512 tokens"
+        "transient_bytes": 9500000000,
+        "workload": "4 rows, 32768 context, 4 checkpoints, 16 prefix cache endpoints; slots 28 x 171.6 MB, KV pool 131072 tokens x 32 KiB, workspace at 512 tokens"
       }
     },
     "interactive-q8": {
@@ -293,12 +293,12 @@
         "checkpoint_capacity": 4,
         "max_tokens": 4096,
         "session_cache_capacity": 0,
-        "prefix_cache_capacity": 0
+        "prefix_cache_capacity": 16
       },
       "memory": {
         "weights_bytes": 22855473152,
-        "transient_bytes": 6700000000,
-        "workload": "4 rows, 32768 context, 4 checkpoints; slots 12 x 171.6 MB, KV pool 131072 tokens x 32 KiB, workspace at 512 tokens"
+        "transient_bytes": 9500000000,
+        "workload": "4 rows, 32768 context, 4 checkpoints, 16 prefix cache endpoints; slots 28 x 171.6 MB, KV pool 131072 tokens x 32 KiB, workspace at 512 tokens"
       }
     },
     "capture-q8": {

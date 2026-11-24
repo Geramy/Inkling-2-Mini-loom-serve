@@ -1,0 +1,3417 @@
+diff -ruN -x __pycache__ package_M30/card.json package_CHAT/card.json
+--- package_M30/card.json	2026-11-22 17:00:48.868145300 -0800
++++ package_CHAT/card.json	2026-11-24 08:49:52.291782500 -0800
+@@ -274,12 +274,12 @@
+         "checkpoint_capacity": 4,
+         "max_tokens": 4096,
+         "session_cache_capacity": 0,
+-        "prefix_cache_capacity": 0
++        "prefix_cache_capacity": 16
+       },
+       "memory": {
+         "weights_bytes": 17617780736,
+-        "transient_bytes": 6700000000,
+-        "workload": "4 rows, 32768 context, 4 checkpoints; slots 12 x 171.6 MB, KV pool 131072 tokens x 32 KiB, workspace at 512 tokens"
++        "transient_bytes": 9500000000,
++        "workload": "4 rows, 32768 context, 4 checkpoints, 16 prefix cache endpoints; slots 28 x 171.6 MB, KV pool 131072 tokens x 32 KiB, workspace at 512 tokens"
+       }
+     },
+     "interactive-q8": {
+@@ -293,12 +293,12 @@
+         "checkpoint_capacity": 4,
+         "max_tokens": 4096,
+         "session_cache_capacity": 0,
+-        "prefix_cache_capacity": 0
++        "prefix_cache_capacity": 16
+       },
+       "memory": {
+         "weights_bytes": 22855473152,
+-        "transient_bytes": 6700000000,
+-        "workload": "4 rows, 32768 context, 4 checkpoints; slots 12 x 171.6 MB, KV pool 131072 tokens x 32 KiB, workspace at 512 tokens"
++        "transient_bytes": 9500000000,
++        "workload": "4 rows, 32768 context, 4 checkpoints, 16 prefix cache endpoints; slots 28 x 171.6 MB, KV pool 131072 tokens x 32 KiB, workspace at 512 tokens"
+       }
+     },
+     "capture-q8": {
+diff -ruN -x __pycache__ package_M30/control/chat.loom package_CHAT/control/chat.loom
+--- package_M30/control/chat.loom	2026-11-22 16:59:53.468090300 -0800
++++ package_CHAT/control/chat.loom	2026-11-24 10:31:55.418573700 -0800
+@@ -28,12 +28,17 @@
+ 
+ func.decl @chat_decode(%source: buffer, %begin: i64, %length: i64) -> (buffer)
+ 
+-// State of one rendered request: bits 0-19 effort in millionths, bit 23 effort header emitted.
++// State of one rendered request: bits 0-19 effort in millionths, bit 22 a tool call is demanded (tool_choice required or a named function), bit 23 effort header emitted.
+ func.def @chat_state_header_bit() -> (i64) {
+   %bit = scalar.constant 8388608 : i64
+   func.return %bit : i64
+ }
+ 
++func.def @chat_state_demand_bit() -> (i64) {
++  %bit = scalar.constant 4194304 : i64
++  func.return %bit : i64
++}
++
+ func.def @chat_check(%valid: i1, %message: buffer) {
+   %condition = scalar.extui %valid : i1 to i32
+   func.call @require(%condition, %message) : (i32, buffer)
+@@ -402,7 +407,6 @@
+   %false_type = scalar.constant 5 : i64
+   %null_type = scalar.constant 6 : i64
+   %true = scalar.constant true : i1
+-  %effort_key = buffer.constant utf8("reasoning_effort") : buffer
+   %thinking_key = buffer.constant utf8("enable_thinking") : buffer
+   %error = func.call @chat_error_kwargs_error() : () -> (buffer)
+   %records, %kind, %count64 = func.call @members_range(%source, %begin, %length) : (buffer, i64, i64) -> (buffer, i32, i64)
+@@ -414,10 +418,7 @@
+     %key_length = view.load %fields[%i, 1] : view<[%count]x5xi64> -> i64
+     %value_type = view.load %fields[%i, 4] : view<[%count]x5xi64> -> i64
+     %key = func.call @chat_decode(%source, %key_begin, %key_length) : (buffer, i64, i64) -> (buffer)
+-    %is_effort = func.call @chat_equal(%key, %effort_key) : (buffer, buffer) -> (i1)
+     %is_thinking = func.call @chat_equal(%key, %thinking_key) : (buffer, buffer) -> (i1)
+-    %known = scalar.ori %is_effort, %is_thinking : i1
+-    func.call @chat_check(%known, %error) : (i1, buffer)
+     %is_true = scalar.cmpi eq, %value_type, %true_type : i64
+     %is_false = scalar.cmpi eq, %value_type, %false_type : i64
+     %is_null = scalar.cmpi eq, %value_type, %null_type : i64
+@@ -620,7 +621,37 @@
+   func.return %p8 : offset
+ }
+ 
+-func.def @chat_tool_declaration(%tools: buffer) -> (buffer) {
++// Name of one declared tool (the tool itself or its function member), empty when it is not a string.
++func.def @chat_tool_name(%tools: buffer, %begin: i64, %length: i64) -> (buffer) {
++  %c2_i64 = scalar.constant 2 : i64
++  %function_key = buffer.constant utf8("function") : buffer
++  %name_key = buffer.constant utf8("name") : buffer
++  %function_type, %function_begin, %function_length = func.call @chat_find(%tools, %begin, %length, %function_key) : (buffer, i64, i64, buffer) -> (i64, i64, i64)
++  %has_function = scalar.cmpi eq, %function_type, %c2_i64 : i64
++  %fn_begin = scf.select %has_function, %function_begin, %begin : i64
++  %fn_length = scf.select %has_function, %function_length, %length : i64
++  %name = func.call @chat_string_member_in(%tools, %fn_begin, %fn_length, %name_key) : (buffer, i64, i64, buffer) -> (buffer)
++  func.return %name : buffer
++}
++
++// Text of a string member of the object in [begin, begin+length), empty when absent or not a string.
++func.def @chat_string_member_in(%source: buffer, %begin: i64, %length: i64, %key: buffer) -> (buffer) {
++  %string_type = scalar.constant 0 : i64
++  %empty = buffer.constant utf8("") : buffer
++  %type, %value_begin, %value_length = func.call @chat_find(%source, %begin, %length, %key) : (buffer, i64, i64, buffer) -> (i64, i64, i64)
++  %is_string = scalar.cmpi eq, %type, %string_type : i64
++  %text = scf.if %is_string -> (buffer) {
++    %decoded = func.call @chat_decode(%source, %value_begin, %value_length) : (buffer, i64, i64) -> (buffer)
++    scf.yield %decoded : buffer
++  } else {
++    scf.yield %empty : buffer
++  }
++  func.return %text : buffer
++}
++
++// The tools declaration. A non-empty only keeps just the tool of that name (tool_choice naming a function).
++func.def @chat_tool_declaration(%tools: buffer, %only: buffer) -> (buffer) {
++  %true = scalar.constant true : i1
+   %origin = index.constant 0 : offset
+   %c0 = index.constant 0 : index
+   %c1 = index.constant 1 : index
+@@ -653,14 +684,24 @@
+       %value_type = view.load %fields[%i, 4] : view<[%count]x5xi64> -> i64
+       %is_object = scalar.cmpi eq, %value_type, %c2_i64 : i64
+       func.call @chat_check(%is_object, %error) : (i1, buffer)
+-      %first = index.cmp eq, %i, %c0 : index
+-      %separated = scf.if %first -> (offset) {
+-        scf.yield %at : offset
++      %tool_name = func.call @chat_tool_name(%tools, %value_begin, %value_length) : (buffer, i64, i64) -> (buffer)
++      %same_name = func.call @chat_equal(%tool_name, %only) : (buffer, buffer) -> (i1)
++      %filtering = func.call @chat_nonempty(%only) : (buffer) -> (i1)
++      %not_filtering = scalar.xori %filtering, %true : i1
++      %keep = scalar.ori %not_filtering, %same_name : i1
++      %after = scf.if %keep -> (offset) {
++        %first = index.cmp eq, %at, %start : offset
++        %separated = scf.if %first -> (offset) {
++          scf.yield %at : offset
++        } else {
++          %next = func.call @chat_put(%output, %at, %comma) : (buffer, offset, buffer) -> (offset)
++          scf.yield %next : offset
++        }
++        %written = func.call @chat_tool_spec(%output, %separated, %tools, %value_begin, %value_length) : (buffer, offset, buffer, i64, i64) -> (offset)
++        scf.yield %written : offset
+       } else {
+-        %next = func.call @chat_put(%output, %at, %comma) : (buffer, offset, buffer) -> (offset)
+-        scf.yield %next : offset
++        scf.yield %at : offset
+       }
+-      %after = func.call @chat_tool_spec(%output, %separated, %tools, %value_begin, %value_length) : (buffer, offset, buffer, i64, i64) -> (offset)
+       scf.yield %after : offset
+     }
+     %final = func.call @chat_put(%output, %end, %suffix) : (buffer, offset, buffer) -> (offset)
+@@ -1006,8 +1047,52 @@
+ 
+ func.def public @text_chat_begin_v1(%request: buffer, %tools: buffer) -> (buffer, i64) {
+   %micro = func.call @chat_effort(%request) : (buffer) -> (i64)
+-  %declaration = func.call @chat_tool_declaration(%tools) : (buffer) -> (buffer)
+-  func.return %declaration, %micro : buffer, i64
++  %choice_key = buffer.constant utf8("tool_choice") : buffer
++  %none = buffer.constant utf8("none") : buffer
++  %empty = buffer.constant utf8("") : buffer
++  %string_type = scalar.constant 0 : i64
++  %false = scalar.constant false : i1
++  %choice_type, %choice_begin, %choice_length = func.call @chat_member(%request, %choice_key) : (buffer, buffer) -> (i64, i64, i64)
++  %choice_is_string = scalar.cmpi eq, %choice_type, %string_type : i64
++  %choice_none = scf.if %choice_is_string -> (i1) {
++    %choice = func.call @chat_decode(%request, %choice_begin, %choice_length) : (buffer, i64, i64) -> (buffer)
++    %matches = func.call @chat_equal(%choice, %none) : (buffer, buffer) -> (i1)
++    scf.yield %matches : i1
++  } else {
++    scf.yield %false : i1
++  }
++  %declaration = scf.if %choice_none -> (buffer) {
++    scf.yield %empty : buffer
++  } else {
++    %c2_i64 = scalar.constant 2 : i64
++    %choice_is_object = scalar.cmpi eq, %choice_type, %c2_i64 : i64
++    %only = scf.if %choice_is_object -> (buffer) {
++      %named = func.call @chat_tool_name(%request, %choice_begin, %choice_length) : (buffer, i64, i64) -> (buffer)
++      scf.yield %named : buffer
++    } else {
++      scf.yield %empty : buffer
++    }
++    %declared = func.call @chat_tool_declaration(%tools, %only) : (buffer, buffer) -> (buffer)
++    scf.yield %declared : buffer
++  }
++  %required = buffer.constant utf8("required") : buffer
++  %choice_required = scf.if %choice_is_string -> (i1) {
++    %choice = func.call @chat_decode(%request, %choice_begin, %choice_length) : (buffer, i64, i64) -> (buffer)
++    %matches = func.call @chat_equal(%choice, %required) : (buffer, buffer) -> (i1)
++    scf.yield %matches : i1
++  } else {
++    scf.yield %false : i1
++  }
++  %c2_object = scalar.constant 2 : i64
++  %choice_named = scalar.cmpi eq, %choice_type, %c2_object : i64
++  %wants_call = scalar.ori %choice_required, %choice_named : i1
++  %has_declaration = func.call @chat_nonempty(%declaration) : (buffer) -> (i1)
++  %demands = scalar.andi %wants_call, %has_declaration : i1
++  %c0_state = scalar.constant 0 : i64
++  %demand_bit = func.call @chat_state_demand_bit() : () -> (i64)
++  %demand_state = scf.select %demands, %demand_bit, %c0_state : i64
++  %state = scalar.ori %micro, %demand_state : i64
++  func.return %declaration, %state : buffer, i64
+ }
+ 
+ // One text message per content part, or the single string content.
+@@ -1070,7 +1155,10 @@
+   %tool_role = buffer.constant utf8("tool") : buffer
+   %user = func.call @chat_equal(%role, %user_role) : (buffer, buffer) -> (i1)
+   %assistant = func.call @chat_equal(%role, %assistant_role) : (buffer, buffer) -> (i1)
+-  %system = func.call @chat_equal(%role, %system_role) : (buffer, buffer) -> (i1)
++  %developer_role = buffer.constant utf8("developer") : buffer
++  %system_plain = func.call @chat_equal(%role, %system_role) : (buffer, buffer) -> (i1)
++  %developer = func.call @chat_equal(%role, %developer_role) : (buffer, buffer) -> (i1)
++  %system = scalar.ori %system_plain, %developer : i1
+   %tool = func.call @chat_equal(%role, %tool_role) : (buffer, buffer) -> (i1)
+   %known_a = scalar.ori %user, %assistant : i1
+   %known_b = scalar.ori %system, %tool : i1
+@@ -1098,29 +1186,26 @@
+   %name = func.call @chat_string_member(%raw, %name_key) : (buffer, buffer) -> (buffer)
+   %has_name = func.call @chat_nonempty(%name) : (buffer) -> (i1)
+   %has_calls = func.call @chat_nonempty(%calls) : (buffer) -> (i1)
+-  %has_reasoning = func.call @chat_nonempty(%reasoning) : (buffer) -> (i1)
++  %reasoning_key = buffer.constant utf8("reasoning") : buffer
++  %reasoning_alias = func.call @chat_string_member(%raw, %reasoning_key) : (buffer, buffer) -> (buffer)
++  %has_primary = func.call @chat_nonempty(%reasoning) : (buffer) -> (i1)
++  %reasoning_text = scf.select %has_primary, %reasoning, %reasoning_alias : buffer
++  %has_reasoning = func.call @chat_nonempty(%reasoning_text) : (buffer) -> (i1)
+   %has_content = func.call @chat_nonempty(%content) : (buffer) -> (i1)
+   %named_role = scalar.ori %tool, %assistant : i1
+-  %uses_name = scalar.andi %named_role, %has_name : i1
++  %assistant_calls = scalar.andi %assistant, %has_calls : i1
++  %name_allowed = scalar.xori %assistant_calls, %true : i1
++  %role_name = scalar.andi %named_role, %has_name : i1
++  %uses_name = scalar.andi %role_name, %name_allowed : i1
+   %token_name = scf.select %uses_name, %name, %empty : buffer
+   %token = func.call @chat_join(%base, %token_name, %empty, %empty, %empty, %empty, %empty, %empty) : (buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer) -> (buffer)
+-  %call_name = scalar.andi %assistant, %has_name : i1
+-  %call_conflict = scalar.andi %call_name, %has_calls : i1
+-  %no_call_conflict = scalar.xori %call_conflict, %true : i1
+-  %assistant_name_error = func.call @chat_error_assistant_name_error() : () -> (buffer)
+-  func.call @chat_check(%no_call_conflict, %assistant_name_error) : (i1, buffer)
+-  %tool_without_name = scalar.andi %tool, %has_name : i1
+-  %tool_named = scalar.xori %tool, %true : i1
+-  %tool_ok = scalar.ori %tool_without_name, %tool_named : i1
+-  %tool_name_error = func.call @chat_error_tool_name_error() : () -> (buffer)
+-  func.call @chat_check(%tool_ok, %tool_name_error) : (i1, buffer)
+   %thinking_marker = buffer.constant utf8("<|content_thinking|>") : buffer
+   %text_marker = buffer.constant utf8("<|content_text|>") : buffer
+   %end_message = buffer.constant utf8("<|end_message|>") : buffer
+   %end_sampling = buffer.constant utf8("<|content_model_end_sampling|>") : buffer
+   %thought_enabled = scalar.andi %assistant, %has_reasoning : i1
+   %thought_piece = scf.if %thought_enabled -> (buffer) {
+-    %value = func.call @chat_join(%token, %thinking_marker, %reasoning, %end_message, %empty, %empty, %empty, %empty) : (buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer) -> (buffer)
++    %value = func.call @chat_join(%token, %thinking_marker, %reasoning_text, %end_message, %empty, %empty, %empty, %empty) : (buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer) -> (buffer)
+     scf.yield %value : buffer
+   } else {
+     scf.yield %empty : buffer
+@@ -1165,7 +1250,13 @@
+   %mask = scalar.constant 1048575 : i64
+   %micro = scalar.andi %state, %mask : i64
+   %header = func.call @chat_effort_header(%micro) : (i64) -> (buffer)
+-  %suffix = scf.select %emitted, %empty, %header : buffer
++  %effort_suffix = scf.select %emitted, %empty, %header : buffer
++  %demand_bit = func.call @chat_state_demand_bit() : () -> (i64)
++  %demand_bits = scalar.andi %state, %demand_bit : i64
++  %demanded = scalar.cmpi ne, %demand_bits, %c0_i64 : i64
++  %demand_text = buffer.constant utf8("<|message_system|><|content_text|>The next assistant message must be a call of a declared tool. Do not answer in text.<|end_message|>") : buffer
++  %demand_suffix = scf.select %demanded, %demand_text, %empty : buffer
++  %suffix = func.call @chat_join(%effort_suffix, %demand_suffix, %empty, %empty, %empty, %empty, %empty, %empty) : (buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer) -> (buffer)
+   func.return %suffix, %c0_i64 : buffer, i64
+ }
+ 
+@@ -1200,17 +1291,7 @@
+ }
+ 
+ func.def @chat_error_message_error() -> (buffer) {
+-  %text = buffer.constant utf8("message role must be user, assistant, system or tool") : buffer
+-  func.return %text : buffer
+-}
+-
+-func.def @chat_error_tool_name_error() -> (buffer) {
+-  %text = buffer.constant utf8("a tool message needs a name: the policy sees one message at a time and cannot look the function name up from tool_call_id") : buffer
+-  func.return %text : buffer
+-}
+-
+-func.def @chat_error_assistant_name_error() -> (buffer) {
+-  %text = buffer.constant utf8("an assistant message with tool calls cannot have a name") : buffer
++  %text = buffer.constant utf8("message role must be user, assistant, system, developer or tool") : buffer
+   func.return %text : buffer
+ }
+ 
+diff -ruN -x __pycache__ package_M30/dispatch/model.loom package_CHAT/dispatch/model.loom
+--- package_M30/dispatch/model.loom	2026-11-22 16:59:53.000000000 -0800
++++ package_CHAT/dispatch/model.loom	2026-11-24 10:17:17.313452100 -0800
+@@ -8,6 +8,8 @@
+ 
+ kernel.decl @inkling_prep_spans() launch(%metadata: buffer, %origins: buffer, %span_table: buffer, %token_map: buffer)
+ 
++kernel.decl @inkling_fork_state() launch(%span_table: buffer, %arena: buffer)
++
+ kernel.decl @inkling_capture_rows() launch(%src_width: index, %col: index, %half: index, %metadata: buffer, %src: buffer, %residual: buffer)
+ 
+ target.decl @inkling_execution
+@@ -88,6 +90,7 @@
+   %y = buffer.alloca<global> align(256) %b_y : buffer
+   command.serial {
+     kernel.launch @inkling_prep_spans(%metadata, %origins, %span_table, %token_map) : (buffer, buffer, buffer, buffer)
++    kernel.launch @inkling_fork_state(%span_table, %arena) : (buffer, buffer)
+     command.launch @inkling_hook_embed(%parameters, %metadata, %tokens, %embd, %cur) : (buffer, buffer, buffer, buffer, buffer)
+     %capture = config.get @inkling.capture_id : index
+     command.launch @inkling_hook_debug[%capture](%parameters, %metadata, %cur, %residual) : [index](buffer, buffer, buffer, buffer)
+diff -ruN -x __pycache__ package_M30/dispatch/spans.loom package_CHAT/dispatch/spans.loom
+--- package_M30/dispatch/spans.loom	2026-11-22 16:59:53.000000000 -0800
++++ package_CHAT/dispatch/spans.loom	2026-11-24 10:17:16.586811400 -0800
+@@ -95,3 +95,66 @@
+   }
+   kernel.return
+ }
++
++// The first span after a fork reads the anchor slot but the attention kernels (ring, conv state) use the write slot only: copy the recurrent region of every such span from its read slot to its write slot.
++// Grid: x = 1024 chunks of 41896 words (the region is 42,901,504 words), y = span.
++kernel.def target(@target) @inkling_fork_state() {
++  %spans = config.get @inkling.spans : index
++  %c1 = index.constant 1 : index
++  %c1024 = index.constant 1024 : index
++  %c256 = index.constant 256 : index
++  kernel.launch.config workgroups(%c1024, %spans, %c1) workgroup_size(%c256, %c1, %c1) : index
++} launch(%span_table: buffer, %arena: buffer) {
++  %spans = config.get @inkling.spans : index
++  %origin = index.constant 0 : offset
++  %c16 = index.constant 16 : offset
++  %c0 = index.constant 0 : index
++  %c256 = index.constant 256 : index
++  %chunk_bytes = index.constant 167584 : offset
++  %words = index.constant 41896 : index
++  %c32 = scalar.constant 32 : i64
++  %chunk0 = kernel.workgroup.id<x> : index
++  %chunk = index.assume %chunk0 [range(%chunk0, 0, 1023)] : index
++  %span = kernel.workgroup.id<y> : index
++  %item = kernel.workitem.id<x> : index
++  %header = buffer.view %span_table[%origin] : buffer -> view<4xi32>
++  %table = buffer.view %span_table[%c16] : buffer -> view<[%spans]x8xi32>
++  %live_spans = view.load %header[0] : view<4xi32> -> i32
++  %count = index.cast %live_spans : i32 to index
++  %live = index.cmp ult, %span, %count : index
++  scf.if %live {
++    %bounded = index.assume %span [range(%span, 0, 2147483646), lt(%span, %spans)] : index
++    %read_lo = view.load %table[%bounded, 2] : view<[%spans]x8xi32> -> i32
++    %read_hi = view.load %table[%bounded, 3] : view<[%spans]x8xi32> -> i32
++    %write_lo = view.load %table[%bounded, 4] : view<[%spans]x8xi32> -> i32
++    %write_hi = view.load %table[%bounded, 5] : view<[%spans]x8xi32> -> i32
++    %lo_differs = scalar.cmpi ne, %read_lo, %write_lo : i32
++    %hi_differs = scalar.cmpi ne, %read_hi, %write_hi : i32
++    %differs = scalar.ori %lo_differs, %hi_differs : i1
++    scf.if %differs {
++      %rl = scalar.extui %read_lo : i32 to i64
++      %rh = scalar.extui %read_hi : i32 to i64
++      %rh_shifted = scalar.shli %rh, %c32 : i64
++      %read64 = scalar.ori %rh_shifted, %rl : i64
++      %wl = scalar.extui %write_lo : i32 to i64
++      %wh = scalar.extui %write_hi : i32 to i64
++      %wh_shifted = scalar.shli %wh, %c32 : i64
++      %write64 = scalar.ori %wh_shifted, %wl : i64
++      %read_ok = scalar.assume %read64 [range(%read64, 0, 9223372036854775807)] : i64
++      %write_ok = scalar.assume %write64 [range(%write64, 0, 9223372036854775807)] : i64
++      %read_base = index.cast %read_ok : i64 to offset
++      %write_base = index.cast %write_ok : i64 to offset
++      %inside = index.scale %chunk, %chunk_bytes : index, offset -> offset
++      %src_at = index.add %read_base, %inside : offset
++      %dst_at = index.add %write_base, %inside : offset
++      %src = buffer.view %arena[%src_at] : buffer -> view<41896xi32>
++      %dst = buffer.view %arena[%dst_at] : buffer -> view<41896xi32>
++      scf.for %j = [%item to %words step %c256] {
++        %at = index.assume %j [range(%j, 0, 41895)] : index
++        %value = view.load %src[%at] : view<41896xi32> -> i32
++        view.store %value, %dst[%at] : i32, view<41896xi32>
++      }
++    }
++  }
++  kernel.return
++}
+diff -ruN -x __pycache__ package_M30/test/chat/golden.json package_CHAT/test/chat/golden.json
+--- package_M30/test/chat/golden.json	2026-11-22 16:59:53.716977900 -0800
++++ package_CHAT/test/chat/golden.json	2026-11-24 10:43:00.729045000 -0800
+@@ -384,48 +384,6 @@
+   "engines_agree": true
+  },
+  {
+-  "name": "tool_id_only",
+-  "body": {
+-   "messages": [
+-    {
+-     "role": "user",
+-     "content": "go"
+-    },
+-    {
+-     "role": "assistant",
+-     "content": "",
+-     "tool_calls": [
+-      {
+-       "id": "call_9_0",
+-       "type": "function",
+-       "function": {
+-        "name": "noop",
+-        "arguments": "{}"
+-       }
+-      }
+-     ]
+-    },
+-    {
+-     "role": "tool",
+-     "tool_call_id": "call_9_0",
+-     "content": "ok"
+-    }
+-   ],
+-   "tools": [
+-    {
+-     "type": "function",
+-     "function": {
+-      "name": "noop"
+-     }
+-    }
+-   ]
+-  },
+-  "expect": "reject",
+-  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
+-  "oracle": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
+-  "engines_agree": true
+- },
+- {
+   "name": "reasoning_history",
+   "body": {
+    "messages": [
+@@ -1273,5 +1231,774 @@
+   "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.1234567<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+   "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.123457<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+   "engines_agree": true
++ },
++ {
++  "name": "tool_id_only",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "tool_calls": [
++      {
++       "id": "call_9_0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "tool_call_id": "call_9_0",
++     "content": "ok"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|><|content_text|>ok<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_id_only_parallel",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "reasoning_content": "Two lookups.",
++     "tool_calls": [
++      {
++       "id": "call_9_0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      },
++      {
++       "id": "call_9_1",
++       "type": "function",
++       "function": {
++        "name": "search",
++        "arguments": "{\"q\": \"x\"}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "tool_call_id": "call_9_0",
++     "content": "a"
++    },
++    {
++     "role": "tool",
++     "tool_call_id": "call_9_1",
++     "content": "b"
++    },
++    {
++     "role": "assistant",
++     "content": "done"
++    },
++    {
++     "role": "user",
++     "content": "again"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    },
++    {
++     "type": "function",
++     "function": {
++      "name": "search",
++      "parameters": {
++       "type": "object",
++       "properties": {
++        "q": {
++         "type": "string"
++        }
++       }
++      }
++     }
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"},{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|><|content_thinking|>Two lookups.<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|message_model|>search<|content_invoke_tool_json|>{\"name\":\"search\",\"args\":{\"q\":\"x\"}}<|end_message|><|content_model_end_sampling|><|message_tool|><|content_text|>a<|end_message|><|message_tool|><|content_text|>b<|end_message|><|message_model|><|content_text|>done<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>again<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_id_only_and_named_mixed",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "tool_calls": [
++      {
++       "id": "c0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      },
++      {
++       "id": "c1",
++       "type": "function",
++       "function": {
++        "name": "search",
++        "arguments": "{\"q\": \"x\"}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "tool_call_id": "c0",
++     "content": "a"
++    },
++    {
++     "role": "tool",
++     "name": "search",
++     "tool_call_id": "c1",
++     "content": "b"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    },
++    {
++     "type": "function",
++     "function": {
++      "name": "search",
++      "parameters": {
++       "type": "object",
++       "properties": {
++        "q": {
++         "type": "string"
++        }
++       }
++      }
++     }
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"},{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|message_model|>search<|content_invoke_tool_json|>{\"name\":\"search\",\"args\":{\"q\":\"x\"}}<|end_message|><|content_model_end_sampling|><|message_tool|><|content_text|>a<|end_message|><|message_tool|>search<|content_text|>b<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "developer_role",
++  "body": {
++   "messages": [
++    {
++     "role": "developer",
++     "content": "Be terse."
++    },
++    {
++     "role": "user",
++     "content": "hi"
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|><|content_text|>Be terse.<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "developer_role_with_tools",
++  "body": {
++   "messages": [
++    {
++     "role": "developer",
++     "content": "Be terse."
++    },
++    {
++     "role": "user",
++     "content": "Weather?"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "get_weather",
++      "description": "Get the weather for a city",
++      "parameters": {
++       "type": "object",
++       "required": [
++        "city"
++       ],
++       "properties": {
++        "unit": {
++         "enum": [
++          "c",
++          "f"
++         ],
++         "type": "string",
++         "description": "Unit \"quoted\"\nsecond line"
++        },
++        "city": {
++         "type": "string",
++         "description": "Name, e.g. Zürich 東京"
++        },
++        "days": {
++         "type": "integer",
++         "minimum": 1,
++         "maximum": 14
++        }
++       }
++      }
++     }
++    }
++   ],
++   "reasoning_effort": "low"
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Get the weather for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"description\":\"Name, e.g. Zürich 東京\",\"type\":\"string\"},\"days\":{\"maximum\":14,\"minimum\":1,\"type\":\"integer\"},\"unit\":{\"description\":\"Unit \\\"quoted\\\"\\nsecond line\",\"enum\":[\"c\",\"f\"],\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Be terse.<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.2<|end_message|><|message_user|><|content_text|>Weather?<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "assistant_name_with_calls",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "name": "bot",
++     "tool_calls": [
++      {
++       "id": "c0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "name": "noop",
++     "content": "ok"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "assistant_name_equals_call",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "Checking.",
++     "name": "noop",
++     "tool_calls": [
++      {
++       "id": "c0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "name": "noop",
++     "content": "ok"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|><|content_text|>Checking.<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "reasoning_field_alias",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "2+2?"
++    },
++    {
++     "role": "assistant",
++     "content": "4",
++     "reasoning": "Add two and two."
++    },
++    {
++     "role": "user",
++     "content": "and 3+3?"
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>2+2?<|end_message|><|message_model|><|content_thinking|>Add two and two.<|end_message|><|message_model|><|content_text|>4<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>and 3+3?<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "reasoning_field_alias_with_calls",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "reasoning": "Need the tool.",
++     "tool_calls": [
++      {
++       "id": "c0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "name": "noop",
++     "content": "ok"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|><|content_thinking|>Need the tool.<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_choice_none_drops_tools",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "Weather in Zürich?"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "get_weather",
++      "description": "Get the weather for a city",
++      "parameters": {
++       "type": "object",
++       "required": [
++        "city"
++       ],
++       "properties": {
++        "unit": {
++         "enum": [
++          "c",
++          "f"
++         ],
++         "type": "string",
++         "description": "Unit \"quoted\"\nsecond line"
++        },
++        "city": {
++         "type": "string",
++         "description": "Name, e.g. Zürich 東京"
++        },
++        "days": {
++         "type": "integer",
++         "minimum": 1,
++         "maximum": 14
++        }
++       }
++      }
++     }
++    },
++    {
++     "type": "function",
++     "function": {
++      "name": "search",
++      "parameters": {
++       "type": "object",
++       "properties": {
++        "q": {
++         "type": "string"
++        }
++       }
++      }
++     }
++    }
++   ],
++   "tool_choice": "none"
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_choice_none_with_history",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "tool_calls": [
++      {
++       "id": "c0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "name": "noop",
++     "content": "ok"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    }
++   ],
++   "tool_choice": "none"
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_choice_auto_keeps_tools",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "Weather in Zürich?"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "get_weather",
++      "description": "Get the weather for a city",
++      "parameters": {
++       "type": "object",
++       "required": [
++        "city"
++       ],
++       "properties": {
++        "unit": {
++         "enum": [
++          "c",
++          "f"
++         ],
++         "type": "string",
++         "description": "Unit \"quoted\"\nsecond line"
++        },
++        "city": {
++         "type": "string",
++         "description": "Name, e.g. Zürich 東京"
++        },
++        "days": {
++         "type": "integer",
++         "minimum": 1,
++         "maximum": 14
++        }
++       }
++      }
++     }
++    }
++   ],
++   "tool_choice": "auto"
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Get the weather for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"description\":\"Name, e.g. Zürich 東京\",\"type\":\"string\"},\"days\":{\"maximum\":14,\"minimum\":1,\"type\":\"integer\"},\"unit\":{\"description\":\"Unit \\\"quoted\\\"\\nsecond line\",\"enum\":[\"c\",\"f\"],\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_choice_required_demands_call",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "Weather in Zürich?"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "get_weather",
++      "description": "Get the weather for a city",
++      "parameters": {
++       "type": "object",
++       "required": [
++        "city"
++       ],
++       "properties": {
++        "unit": {
++         "enum": [
++          "c",
++          "f"
++         ],
++         "type": "string",
++         "description": "Unit \"quoted\"\nsecond line"
++        },
++        "city": {
++         "type": "string",
++         "description": "Name, e.g. Zürich 東京"
++        },
++        "days": {
++         "type": "integer",
++         "minimum": 1,
++         "maximum": 14
++        }
++       }
++      }
++     }
++    },
++    {
++     "type": "function",
++     "function": {
++      "name": "search",
++      "parameters": {
++       "type": "object",
++       "properties": {
++        "q": {
++         "type": "string"
++        }
++       }
++      }
++     }
++    }
++   ],
++   "tool_choice": "required"
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Get the weather for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"description\":\"Name, e.g. Zürich 東京\",\"type\":\"string\"},\"days\":{\"maximum\":14,\"minimum\":1,\"type\":\"integer\"},\"unit\":{\"description\":\"Unit \\\"quoted\\\"\\nsecond line\",\"enum\":[\"c\",\"f\"],\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"},\"type\":\"function\"},{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|><|message_system|><|content_text|>The next assistant message must be a call of a declared tool. Do not answer in text.<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_choice_named_keeps_one_tool",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "Weather in Zürich?"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "get_weather",
++      "description": "Get the weather for a city",
++      "parameters": {
++       "type": "object",
++       "required": [
++        "city"
++       ],
++       "properties": {
++        "unit": {
++         "enum": [
++          "c",
++          "f"
++         ],
++         "type": "string",
++         "description": "Unit \"quoted\"\nsecond line"
++        },
++        "city": {
++         "type": "string",
++         "description": "Name, e.g. Zürich 東京"
++        },
++        "days": {
++         "type": "integer",
++         "minimum": 1,
++         "maximum": 14
++        }
++       }
++      }
++     }
++    },
++    {
++     "type": "function",
++     "function": {
++      "name": "search",
++      "parameters": {
++       "type": "object",
++       "properties": {
++        "q": {
++         "type": "string"
++        }
++       }
++      }
++     }
++    }
++   ],
++   "tool_choice": {
++    "type": "function",
++    "function": {
++     "name": "search"
++    }
++   }
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|><|message_system|><|content_text|>The next assistant message must be a call of a declared tool. Do not answer in text.<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_choice_required_after_tool_result",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "tool_calls": [
++      {
++       "id": "c0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "name": "noop",
++     "content": "ok"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    }
++   ],
++   "tool_choice": "required",
++   "reasoning_effort": "low"
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.2<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|><|message_system|><|content_text|>The next assistant message must be a call of a declared tool. Do not answer in text.<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "kwargs_unknown_key_ignored",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "hi"
++    }
++   ],
++   "chat_template_kwargs": {
++    "preserve_thinking": true,
++    "enable_thinking": false
++   }
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
+  }
+ ]
+\ No newline at end of file
+diff -ruN -x __pycache__ package_M30/test/chat/test_options.py package_CHAT/test/chat/test_options.py
+--- package_M30/test/chat/test_options.py	2026-11-22 16:59:53.712976300 -0800
++++ package_CHAT/test/chat/test_options.py	2026-11-24 08:46:08.030173400 -0800
+@@ -66,6 +66,7 @@
+     ("null options", {"temperature": None, "top_p": None, "top_k": None, "seed": None, "tool_choice": None}, (1.0, 1.0, 0, 0, None)),
+     ("default values of unsupported fields", {"n": 1, "stop": None, "logprobs": False, "frequency_penalty": 0, "presence_penalty": 0, "repetition_penalty": 1, "min_p": 0, "response_format": None, "chat_template_kwargs": None}, (1.0, 1.0, 0, 0, None)),
+     ("template kwargs object", {"chat_template_kwargs": {"enable_thinking": False}}, (1.0, 1.0, 0, 0, None)),
++    ("template kwargs unknown key is ignored", {"chat_template_kwargs": {"foo": 1, "preserve_thinking": True}}, (1.0, 1.0, 0, 0, None)),
+     ("unknown extension fields", {"user": "u", "metadata": {"a": 1}, "store": False, "parallel_tool_calls": True}, (1.0, 1.0, 0, 0, None)),
+ ]:
+     status, got = record(extra)
+@@ -76,7 +77,7 @@
+     ("zero top_p", {"top_p": 0}), ("top_p above one", {"top_p": 1.5}), ("negative top_k", {"top_k": -1}), ("fractional top_k", {"top_k": 1.5}), ("huge top_k", {"top_k": 3000000000}),
+     ("fractional seed", {"seed": 1.5}), ("string seed", {"seed": "7"}), ("n above one", {"n": 2}), ("stop", {"stop": ["x"]}), ("logprobs", {"logprobs": True}),
+     ("penalty", {"presence_penalty": 0.5}), ("repetition penalty", {"repetition_penalty": 1.1}), ("min_p", {"min_p": 0.1}), ("response_format", {"response_format": {"type": "json_object"}}),
+-    ("template kwargs string", {"chat_template_kwargs": "x"}), ("template kwargs unknown key", {"chat_template_kwargs": {"foo": 1}}), ("logit_bias", {"logit_bias": {"1": 5}}),
++    ("template kwargs string", {"chat_template_kwargs": "x"}), ("logit_bias", {"logit_bias": {"1": 5}}),
+ ]:
+     status, got = record(extra)
+     check(f"rejects {name}", status == 400, f"status {status} {got if status != 400 else ''}")
+diff -ruN -x __pycache__ package_M30/test/chat/test_template.py package_CHAT/test/chat/test_template.py
+--- package_M30/test/chat/test_template.py	2026-11-22 16:59:53.726707200 -0800
++++ package_CHAT/test/chat/test_template.py	2026-11-24 09:04:59.463251200 -0800
+@@ -7,7 +7,7 @@
+ PORT = sys.argv[1]
+ ECHO = "--echo" in sys.argv
+ GOLDEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden.json")
+-MODEL = "inkling-2-mini"
++MODEL = os.environ.get("INKLING_MODEL", "inkling-2-mini")
+ 
+ 
+ def post(path, doc):
+@@ -74,10 +74,10 @@
+     ("kwargs null object", {"chat_template_kwargs": None}, {}),
+     ("kwargs empty object", {"chat_template_kwargs": {}}, {}),
+     ("top-level enable_thinking is ignored", {"enable_thinking": False}, {}),
++    ("unknown kwargs key is ignored", {"chat_template_kwargs": {"enable_thinking": False, "add_generation_prompt": True}}, {"reasoning_effort": "none"}),
++    ("unknown kwargs key only is ignored", {"chat_template_kwargs": {"foo": 1}}, {}),
+ ]
+ KWARGS_REJECT = [
+-    ("unknown kwargs key", {"chat_template_kwargs": {"enable_thinking": False, "add_generation_prompt": True}}),
+-    ("unknown kwargs key only", {"chat_template_kwargs": {"foo": 1}}),
+     ("kwargs not an object", {"chat_template_kwargs": [1]}),
+     ("kwargs string", {"chat_template_kwargs": "x"}),
+     ("enable_thinking string", {"chat_template_kwargs": {"enable_thinking": "false"}}),
+diff -ruN -x __pycache__ scripts_M30/chat_cache_correct.py scripts_CHAT/chat_cache_correct.py
+--- scripts_M30/chat_cache_correct.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chat_cache_correct.py	2026-11-24 08:50:53.515566400 -0800
+@@ -0,0 +1,55 @@
++"""usage: chat_cache_correct.py [--tokens N] [--out F] URL      then: chat_cache_correct.py --compare A.json B.json
++A fixed sequence of greedy requests (fixed assistant history, so every request is a function of the script only): a conversation and its follow-ups,
++a fork of the same history, a second conversation that shares only the system prompt, an unrelated conversation, eviction traffic, and repeats.
++The output (reasoning, content, completion tokens) of every request is written; --compare checks that two runs (cache on and off) are identical."""
++import argparse
++import json
++import os
++import sys
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++from chatlib import cached, chat
++from chat_cache_probe_text import system_text
++
++ap = argparse.ArgumentParser()
++ap.add_argument("url", nargs="?")
++ap.add_argument("--tokens", type=int, default=5000)
++ap.add_argument("--out", default="")
++ap.add_argument("--max-tokens", type=int, default=96)
++ap.add_argument("--compare", nargs=2)
++a = ap.parse_args()
++
++if a.compare:
++    A, B = (json.load(open(p)) for p in a.compare)
++    bad = 0
++    for x, y in zip(A, B):
++        same = (x["reasoning"], x["content"], x["completion"], x["prompt"]) == (y["reasoning"], y["content"], y["completion"], y["prompt"])
++        bad += not same
++        print("SAME" if same else "DIFF", x["label"], f"prompt {x['prompt']} cached {x['cached']} vs {y['cached']}")
++    print(f"{'FAIL' if bad else 'PASS'}: {bad} different of {len(A)}")
++    sys.exit(1 if bad or len(A) != len(B) else 0)
++
++SYS_X = system_text("alpha-fixed", a.tokens)
++SYS_Z = system_text("zulu-fixed", a.tokens)
++ASSIST = lambda i: {"role": "assistant", "content": f"Noted ({i}). The listed entries are consistent."}
++USER = lambda t: {"role": "user", "content": t}
++X1 = [{"role": "system", "content": SYS_X}, USER("What is the survey count of the first glaciers note?")]
++X2 = X1 + [ASSIST(1), USER("And the margin of that same note?")]
++X2b = X1 + [ASSIST(1), USER("Name the topic of note 3 instead.")]
++X3 = X2 + [ASSIST(2), USER("List the next review cycle of note 2.")]
++Y1 = [{"role": "system", "content": SYS_X}, USER("Which note mentions railway signalling first?")]
++Y2 = Y1 + [ASSIST(1), USER("What is its block number?")]
++Z1 = [{"role": "system", "content": SYS_Z}, USER("What is the survey count of the first glaciers note?")]
++Z2 = Z1 + [ASSIST(1), USER("And the margin of that same note?")]
++EVICT = [[{"role": "system", "content": system_text(f"filler{i}", a.tokens)}, USER("Summarize note 1 briefly.")] for i in range(4)]
++SEQ = [("X1 cold", X1), ("X2 follow-up", X2), ("X2b fork of the same history", X2b), ("Y1 shares only the system prompt", Y1), ("Y2 follow-up", Y2), ("Z1 other conversation", Z1), ("Z2 follow-up", Z2),
++       ("X3 second follow-up", X3), ("X2 repeat", X2)] + [(f"EVICT{i}", m) for i, m in enumerate(EVICT)] + [("X2 after eviction traffic", X2), ("X1 after eviction traffic", X1), ("Z2 repeat", Z2)]
++rows = []
++for label, msgs in SEQ:
++    r = chat(a.url, msgs, stream=len(rows) % 2 == 1, temperature=0, max_tokens=a.max_tokens, reasoning_effort="none")
++    pt, ct, comp = cached(r)
++    row = {"label": label, "prompt": pt, "cached": ct, "completion": comp, "reasoning": r["reasoning"], "content": r["content"], "ttft": round(r["ttft"], 3), "status": r["status"]}
++    rows.append(row)
++    print(json.dumps({k: row[k] for k in ("label", "prompt", "cached", "completion", "ttft", "status")}), flush=True)
++if a.out:
++    json.dump(rows, open(a.out, "w"))
+diff -ruN -x __pycache__ scripts_M30/chat_cache_probe.py scripts_CHAT/chat_cache_probe.py
+--- scripts_M30/chat_cache_probe.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chat_cache_probe.py	2026-11-24 08:01:52.133877700 -0800
+@@ -0,0 +1,63 @@
++"""usage: chat_cache_probe.py [--tokens N] [--effort E] [--turns T] [--max-tokens M] [--modes m1,m2,...] [--out F] URL
++Turn 1 (system N tokens + user) then follow-up turns that extend the same conversation. Prints TTFT, prompt, cached and completion tokens per turn.
++Modes: <stream|json>-<echo|plain|noreason> : echo sends reasoning_content back, plain sends content only (reasoning dropped), noreason is plain with effort none."""
++import argparse
++import json
++import os
++import sys
++import time
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++from chatlib import cached, chat, get
++
++ap = argparse.ArgumentParser()
++ap.add_argument("url")
++ap.add_argument("--tokens", type=int, default=4000)
++ap.add_argument("--effort", default="low")
++ap.add_argument("--turns", type=int, default=2)
++ap.add_argument("--max-tokens", type=int, default=300)
++ap.add_argument("--modes", default="json-echo,json-plain,stream-echo,stream-plain")
++ap.add_argument("--out", default="")
++ap.add_argument("--temperature", type=float, default=0.0)
++a = ap.parse_args()
++
++from chat_cache_probe_text import system_text
++
++
++def snap(url):
++    out = {}
++    try:
++        st = get(url, "/v1/status")
++        out["status"] = st
++    except Exception as e:
++        out["status"] = str(e)
++    return out
++
++
++rows = []
++for mode in a.modes.split(","):
++    st, how = mode.split("-")
++    nonce = f"{int(time.time() * 1000) % 10**9}"
++    effort = "none" if how == "noreason" else a.effort
++    msgs = [{"role": "system", "content": system_text(nonce, a.tokens)}, {"role": "user", "content": "Summarize the notes about glaciers in two sentences."}]
++    follow = ["Now give the three most important numbers from your summary.", "Which of the topics has the smallest margin?", "Thank you. Repeat your first answer in one line."]
++    for turn in range(a.turns):
++        r = chat(a.url, msgs, stream=(st == "stream"), temperature=a.temperature, max_tokens=a.max_tokens, reasoning_effort=effort)
++        pt, ct, comp = cached(r)
++        row = {"mode": mode, "turn": turn + 1, "status": r["status"], "ttft": round(r["ttft"], 3), "total": round(r["total"], 3), "prompt": pt, "cached": ct,
++               "completion": comp, "finish": r["finish"], "reasoning_chars": len(r["reasoning"]), "content_chars": len(r["content"]), "content": r["content"][:80], "error": r["error"]}
++        rows.append(row)
++        print(json.dumps(row), flush=True)
++        if r["status"] != 200:
++            break
++        m = {"role": "assistant", "content": r["content"]}
++        if how == "echo" and r["reasoning"]:
++            m["reasoning_content"] = r["reasoning"]
++        msgs = msgs + [m, {"role": "user", "content": follow[turn % len(follow)]}]
++print("STATUS", json.dumps(snap(a.url))[:1500])
++try:
++    print("METRICS", [l for l in str(get(a.url, "/metrics")).splitlines() if ("cache" in l or "prefix" in l or "session" in l or "checkpoint" in l) and not l.startswith("#")][:40])
++except Exception as e:
++    print("metrics error", e)
++if a.out:
++    open(a.out, "a").write("\n".join(json.dumps(r) for r in rows) + "\n")
+diff -ruN -x __pycache__ scripts_M30/chat_cache_probe_text.py scripts_CHAT/chat_cache_probe_text.py
+--- scripts_M30/chat_cache_probe_text.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chat_cache_probe_text.py	2026-11-24 08:01:23.470742400 -0800
+@@ -0,0 +1,15 @@
++"""Shared prompt text builder for the chat probes."""
++import time
++
++TOPICS = ["glaciers", "container ships", "the printing press", "chess openings", "volcanoes", "bread baking", "railway signalling", "tide tables", "coral reefs", "bridge engineering"]
++
++
++def system_text(nonce, tokens):
++    parts = [f"Session {nonce}. You are a careful assistant that answers from the reference notes below."]
++    i = 0
++    while sum(len(p) for p in parts) < tokens * 4.1:
++        t = TOPICS[i % len(TOPICS)]
++        parts.append(f"Note {i} on {t}: entry {nonce}-{i * 7919 % 1009} records that the {t} survey of block {i * 31 % 97} found {i * 13 % 89 + 3} items, "
++                     f"with a margin of {i * 17 % 41} percent, and the next review of {t} is due in cycle {i * 5 % 23}.")
++        i += 1
++    return "\n".join(parts)
+diff -ruN -x __pycache__ scripts_M30/chat_cases.py scripts_CHAT/chat_cases.py
+--- scripts_M30/chat_cases.py	2026-11-22 16:43:26.345092500 -0800
++++ scripts_CHAT/chat_cases.py	2026-11-24 08:44:44.637245600 -0800
+@@ -20,6 +20,7 @@
+     return {"id": id, "type": "function", "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}}
+ 
+ 
++# tool_id_only and the other policy cases live in chat_golden_policy.py (their reference is the template render of the equivalent messages)
+ CASES = [
+     ("single_turn", {"messages": [U("Hello")]}),
+     ("system_user", {"messages": [S("You are terse."), U("Hello")]}),
+@@ -39,7 +40,6 @@
+     ("tool_call_with_text", {"messages": [U("go"), A("Let me look.", tool_calls=[call("search", {"q": "llama"})]),
+         {"role": "tool", "name": "search", "content": "3 hits"}], "tools": [SEARCH]}),
+     ("tool_call_no_args", {"messages": [U("go"), A("", tool_calls=[call("noop", {})]), {"role": "tool", "name": "noop", "content": ""}], "tools": [NOOP]}),
+-    ("tool_id_only", {"messages": [U("go"), A("", tool_calls=[call("noop", {}, "call_9_0")]), {"role": "tool", "tool_call_id": "call_9_0", "content": "ok"}], "tools": [NOOP]}, "reject"),
+     ("reasoning_history", {"messages": [U("2+2?"), A("4", reasoning_content="Add two and two."), U("and 3+3?")]}),
+     ("reasoning_only_assistant", {"messages": [U("hm"), A("", reasoning_content="thinking only"), U("go on")]}),
+     ("empty_assistant", {"messages": [U("hm"), A(""), U("go on")]}),
+diff -ruN -x __pycache__ scripts_M30/chat_fill_ctx.py scripts_CHAT/chat_fill_ctx.py
+--- scripts_M30/chat_fill_ctx.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chat_fill_ctx.py	2026-11-24 09:20:31.417659700 -0800
+@@ -0,0 +1,38 @@
++"""usage: chat_fill_ctx.py [--convs 4] [--tokens 8000] [--big 120000] URL
++Fills the prefix cache with several conversations, then sends one request of about --big tokens (the pool must reclaim cache entries), then repeats a first conversation."""
++import argparse
++import json
++import os
++import sys
++import time
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++from chatlib import cached, chat, get
++from chat_cache_probe_text import system_text
++
++ap = argparse.ArgumentParser()
++ap.add_argument("url")
++ap.add_argument("--convs", type=int, default=4)
++ap.add_argument("--tokens", type=int, default=8000)
++ap.add_argument("--big", type=int, default=120000)
++a = ap.parse_args()
++
++
++def obs():
++    out = {}
++    for l in str(get(a.url, "/metrics")).splitlines():
++        for k in ("pool_resident", "pool_capacity", "prefix_cache_endpoints"):
++            if f'field="{k}"' in l and not l.startswith("#"):
++                out[k] = l.rsplit(" ", 1)[1]
++    return out
++
++
++convs = [[{"role": "system", "content": system_text(f"fill{i}-{int(time.time())}", a.tokens)}, {"role": "user", "content": "Say hi."}] for i in range(a.convs)]
++for i, m in enumerate(convs):
++    r = chat(a.url, m, temperature=0, max_tokens=4, reasoning_effort="none")
++    print(json.dumps({"fill": i, "prompt": cached(r)[0], "cached": cached(r)[1], "ttft": round(r["ttft"], 2), **obs()}), flush=True)
++big = [{"role": "system", "content": system_text(f"big-{int(time.time())}", a.big)}, {"role": "user", "content": "Say hi."}]
++r = chat(a.url, big, temperature=0, max_tokens=4, reasoning_effort="none")
++print(json.dumps({"big": True, "status": r["status"], "prompt": cached(r)[0], "cached": cached(r)[1], "total": round(r["total"], 1), "error": r["error"] and str(r["error"])[:200], **obs()}), flush=True)
++r = chat(a.url, convs[-1], temperature=0, max_tokens=4, reasoning_effort="none")
++print(json.dumps({"repeat_last_fill": True, "status": r["status"], "prompt": cached(r)[0], "cached": cached(r)[1], "ttft": round(r["ttft"], 2), **obs()}), flush=True)
+diff -ruN -x __pycache__ scripts_M30/chat_golden_policy.py scripts_CHAT/chat_golden_policy.py
+--- scripts_M30/chat_golden_policy.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chat_golden_policy.py	2026-11-24 10:42:56.948067800 -0800
+@@ -0,0 +1,88 @@
++"""Adds the policy cases (deliberate differences from the template, docs/CHAT_POLICY.md section 2) to package/test/chat/golden.json.
++The reference of a policy case is the template's own render of the equivalent message list (jinja2, no oracle engine): a tool message without name gets an id that
++no call carries, a developer message is a system message, the name of an assistant message with calls is dropped, the reasoning field is reasoning_content,
++tool_choice none removes the tools.
++usage: chat_golden_policy.py <chat_template.jinja> <golden.json> [out.json]   (needs jinja2; rewrites golden.json when out is not given)"""
++import copy
++import json
++import re
++import sys
++
++import jinja2
++from chat_cases import A, S, U, WEATHER, SEARCH, NOOP, call
++
++source = open(sys.argv[1], encoding="utf-8").read()
++source = re.sub(r"\{%-?\s*(end)?generation\s*-?%\}", "", source)
++
++
++def tojson(x, ensure_ascii=False, indent=None, separators=None, sort_keys=False):
++    return json.dumps(x, ensure_ascii=ensure_ascii, indent=indent, separators=separators, sort_keys=sort_keys)
++
++
++env = jinja2.Environment(trim_blocks=False, lstrip_blocks=False, extensions=["jinja2.ext.loopcontrols"])
++env.filters["tojson"] = tojson
++env.globals["raise_exception"] = lambda message: (_ for _ in ()).throw(ValueError(message))
++template = env.from_string(source)
++
++
++def equivalent(body):
++    body = copy.deepcopy(body)
++    for m in body["messages"]:
++        if m["role"] == "tool" and not m.get("name"):
++            m["tool_call_id"] = "unresolved"
++        if m["role"] == "developer":
++            m["role"] = "system"
++        if m["role"] == "assistant" and m.get("tool_calls"):
++            m.pop("name", None)
++        if m["role"] == "assistant" and "reasoning" in m:
++            m["reasoning_content"] = m.pop("reasoning")
++        for c in m.get("tool_calls") or []:
++            c["function"]["arguments"] = json.loads(c["function"]["arguments"])
++    choice, tools = body.get("tool_choice"), body.get("tools")
++    if choice == "none":
++        tools = None
++    elif tools and (choice == "required" or isinstance(choice, dict)):
++        if isinstance(choice, dict):
++            tools = [t for t in tools if (t.get("function") or t).get("name") == (choice.get("function") or choice).get("name")]
++        body["messages"].append({"role": "system", "content": "The next assistant message must be a call of a declared tool. Do not answer in text."})
++    kwargs = {"messages": body["messages"], "tools": tools}
++    if "reasoning_effort" in body:
++        kwargs["reasoning_effort"] = body["reasoning_effort"]
++    return template.render(**kwargs)
++
++
++TOOL = {"role": "tool", "content": "ok"}
++POLICY = [
++    ("tool_id_only", {"messages": [U("go"), A("", tool_calls=[call("noop", {}, "call_9_0")]), {"role": "tool", "tool_call_id": "call_9_0", "content": "ok"}], "tools": [NOOP]}),
++    ("tool_id_only_parallel", {"messages": [U("go"), A("", reasoning_content="Two lookups.", tool_calls=[call("noop", {}, "call_9_0"), call("search", {"q": "x"}, "call_9_1")]),
++                                            {"role": "tool", "tool_call_id": "call_9_0", "content": "a"}, {"role": "tool", "tool_call_id": "call_9_1", "content": "b"},
++                                            A("done"), U("again")], "tools": [NOOP, SEARCH]}),
++    ("tool_id_only_and_named_mixed", {"messages": [U("go"), A("", tool_calls=[call("noop", {}, "c0"), call("search", {"q": "x"}, "c1")]),
++                                                   {"role": "tool", "tool_call_id": "c0", "content": "a"}, {"role": "tool", "name": "search", "tool_call_id": "c1", "content": "b"}], "tools": [NOOP, SEARCH]}),
++    ("developer_role", {"messages": [{"role": "developer", "content": "Be terse."}, U("hi")]}),
++    ("developer_role_with_tools", {"messages": [{"role": "developer", "content": "Be terse."}, U("Weather?")], "tools": [WEATHER], "reasoning_effort": "low"}),
++    ("assistant_name_with_calls", {"messages": [U("go"), A("", name="bot", tool_calls=[call("noop", {}, "c0")]), {"role": "tool", "name": "noop", "content": "ok"}], "tools": [NOOP]}),
++    ("assistant_name_equals_call", {"messages": [U("go"), A("Checking.", name="noop", tool_calls=[call("noop", {}, "c0")]), {"role": "tool", "name": "noop", "content": "ok"}], "tools": [NOOP]}),
++    ("reasoning_field_alias", {"messages": [U("2+2?"), A("4", reasoning="Add two and two."), U("and 3+3?")]}),
++    ("reasoning_field_alias_with_calls", {"messages": [U("go"), A("", reasoning="Need the tool.", tool_calls=[call("noop", {}, "c0")]), {"role": "tool", "name": "noop", "content": "ok"}], "tools": [NOOP]}),
++    ("tool_choice_none_drops_tools", {"messages": [U("Weather in Zürich?")], "tools": [WEATHER, SEARCH], "tool_choice": "none"}),
++    ("tool_choice_none_with_history", {"messages": [U("go"), A("", tool_calls=[call("noop", {}, "c0")]), {"role": "tool", "name": "noop", "content": "ok"}], "tools": [NOOP], "tool_choice": "none"}),
++    ("tool_choice_auto_keeps_tools", {"messages": [U("Weather in Zürich?")], "tools": [WEATHER], "tool_choice": "auto"}),
++    ("tool_choice_required_demands_call", {"messages": [U("Weather in Zürich?")], "tools": [WEATHER, SEARCH], "tool_choice": "required"}),
++    ("tool_choice_named_keeps_one_tool", {"messages": [U("Weather in Zürich?")], "tools": [WEATHER, SEARCH], "tool_choice": {"type": "function", "function": {"name": "search"}}}),
++    ("tool_choice_required_after_tool_result", {"messages": [U("go"), A("", tool_calls=[call("noop", {}, "c0")]), {"role": "tool", "name": "noop", "content": "ok"}], "tools": [NOOP], "tool_choice": "required", "reasoning_effort": "low"}),
++    ("kwargs_unknown_key_ignored", {"messages": [U("hi")], "chat_template_kwargs": {"preserve_thinking": True, "enable_thinking": False}, "reasoning_effort": None}),
++]
++
++golden = json.load(open(sys.argv[2], encoding="utf-8"))
++names = {n for n, _ in POLICY}
++golden = [g for g in golden if g["name"] not in names]
++for name, body in POLICY:
++    if name == "kwargs_unknown_key_ignored":
++        entry = {"name": name, "body": {"messages": body["messages"], "chat_template_kwargs": body["chat_template_kwargs"]},
++                 "expect": "policy", "jinja": template.render(messages=body["messages"], tools=None, reasoning_effort="none"), "oracle": None, "engines_agree": True}
++    else:
++        entry = {"name": name, "body": body, "expect": "policy", "jinja": equivalent(body), "oracle": None, "engines_agree": True}
++    golden.append(entry)
++json.dump(golden, open(sys.argv[3] if len(sys.argv) > 3 else sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False, indent=1)
++print(len(POLICY), "policy cases,", len(golden), "cases in total")
+diff -ruN -x __pycache__ scripts_M30/chat_multi_probe.py scripts_CHAT/chat_multi_probe.py
+--- scripts_M30/chat_multi_probe.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chat_multi_probe.py	2026-11-24 08:17:17.534234900 -0800
+@@ -0,0 +1,42 @@
++"""usage: chat_multi_probe.py [--convs 6] [--turns 2] [--tokens 3000] [--echo] [--shared] URL
++Round-robin conversations (turn k of every conversation before turn k+1). Generated replies are fed back (with reasoning_content when --echo).
++--shared: all conversations share the same system prompt and differ only in the user message (a common-prefix case)."""
++import argparse
++import json
++import os
++import sys
++import time
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++from chatlib import cached, chat
++from chat_cache_probe_text import system_text
++
++ap = argparse.ArgumentParser()
++ap.add_argument("url")
++ap.add_argument("--convs", type=int, default=6)
++ap.add_argument("--turns", type=int, default=2)
++ap.add_argument("--tokens", type=int, default=3000)
++ap.add_argument("--echo", action="store_true")
++ap.add_argument("--shared", action="store_true")
++ap.add_argument("--max-tokens", type=int, default=1500)
++ap.add_argument("--out", default="")
++a = ap.parse_args()
++nonce = f"{int(time.time() * 1000) % 10**9}"
++convs = []
++for i in range(a.convs):
++    sysm = system_text(nonce if a.shared else f"{nonce}{i}", a.tokens)
++    convs.append([{"role": "system", "content": sysm}, {"role": "user", "content": f"Question {i}: in one sentence, what is on note {i} of the list?"}])
++rows = []
++for turn in range(a.turns):
++    for i, msgs in enumerate(convs):
++        r = chat(a.url, msgs, temperature=0, max_tokens=a.max_tokens, reasoning_effort="none")
++        pt, ct, comp = cached(r)
++        row = {"conv": i, "turn": turn + 1, "prompt": pt, "cached": ct, "completion": comp, "ttft": round(r["ttft"], 2), "finish": r["finish"], "status": r["status"], "text": r["content"][:60], "reasoning": r["reasoning"][:60]}
++        rows.append(row)
++        print(json.dumps(row), flush=True)
++        m = {"role": "assistant", "content": r["content"]}
++        if a.echo and r["reasoning"]:
++            m["reasoning_content"] = r["reasoning"]
++        convs[i] = msgs + [m, {"role": "user", "content": f"Follow-up {turn}: say it again with fewer words."}]
++if a.out:
++    open(a.out, "a").write("\n".join(json.dumps(r) for r in rows) + "\n")
+diff -ruN -x __pycache__ scripts_M30/chat_numerics.py scripts_CHAT/chat_numerics.py
+--- scripts_M30/chat_numerics.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chat_numerics.py	2026-11-24 10:00:16.800807000 -0800
+@@ -0,0 +1,55 @@
++"""usage: chat_numerics.py [--n 24] [--tokens 5000] [--max-tokens 40] [--reps 3] --out F URL      then: chat_numerics.py --compare A.json B.json [C.json ...]
++For n fixed prompts, sends each one reps times in a row (cold, hit, hit) with greedy decoding and stores the generated text.
++--compare: for every pair of files, the fraction of prompts whose first-run text is identical, and the median first-difference position (characters)."""
++import argparse
++import json
++import os
++import statistics
++import sys
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++from chatlib import cached, chat
++from chat_cache_probe_text import system_text
++
++ap = argparse.ArgumentParser()
++ap.add_argument("url", nargs="?")
++ap.add_argument("--n", type=int, default=24)
++ap.add_argument("--tokens", type=int, default=5000)
++ap.add_argument("--max-tokens", type=int, default=40)
++ap.add_argument("--reps", type=int, default=3)
++ap.add_argument("--out", default="")
++ap.add_argument("--compare", nargs="+")
++a = ap.parse_args()
++
++
++def first_diff(x, y):
++    return next((i for i, (p, q) in enumerate(zip(x, y)) if p != q), -1 if len(x) == len(y) else min(len(x), len(y)))
++
++
++if a.compare:
++    files = [json.load(open(p)) for p in a.compare]
++    for i, fa in enumerate(files):
++        for j in range(i + 1, len(files)):
++            fb = files[j]
++            same = [x["texts"][0] == y["texts"][0] for x, y in zip(fa, fb)]
++            diffs = [first_diff(x["texts"][0], y["texts"][0]) for x, y in zip(fa, fb) if x["texts"][0] != y["texts"][0]]
++            print(f"{a.compare[i]} vs {a.compare[j]} (first run): identical {sum(same)}/{len(same)}; first difference at chars {sorted(diffs)}")
++    for name, f in zip(a.compare, files):
++        reps = [[x["texts"][0] == t for t in x["texts"][1:]] for x in f]
++        flat = [v for r in reps for v in r]
++        if flat:
++            print(f"{name}: repeat of the same prompt equals its first run in {sum(flat)}/{len(flat)} requests (cached tokens of repeats: {sorted({c for x in f for c in x['cached'][1:]})})")
++    sys.exit(0)
++
++rows = []
++for k in range(a.n):
++    msgs = [{"role": "system", "content": system_text(f"num{k}", a.tokens)}, {"role": "user", "content": f"Question {k}: what is the survey count of note {k} in the list?"}]
++    texts, cs = [], []
++    for _ in range(a.reps):
++        r = chat(a.url, msgs, temperature=0, max_tokens=a.max_tokens, reasoning_effort="none")
++        texts.append(r["reasoning"] + "|" + r["content"])
++        cs.append(cached(r)[1])
++    rows.append({"k": k, "texts": texts, "cached": cs})
++    print(json.dumps({"k": k, "cached": cs, "hit_equals_cold": [t == texts[0] for t in texts[1:]]}), flush=True)
++if a.out:
++    json.dump(rows, open(a.out, "w"))
+diff -ruN -x __pycache__ scripts_M30/chat_obs.py scripts_CHAT/chat_obs.py
+--- scripts_M30/chat_obs.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chat_obs.py	2026-11-24 07:57:10.570358300 -0800
+@@ -0,0 +1,17 @@
++"""usage: chat_obs.py URL [grep]   prints the text-topic observation fields of /metrics (and optionally the lines that match grep)."""
++import re
++import sys
++import os
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++from chatlib import get
++
++url = sys.argv[1]
++pat = sys.argv[2] if len(sys.argv) > 2 else ""
++txt = get(url, "/metrics")
++for l in str(txt).splitlines():
++    if l.startswith("#") or "loom_serve_model_observation" not in l:
++        continue
++    m = re.search(r'topic="([^"]*)".*field="([^"]*)",unit="([^"]*)"\} (\S+)', l)
++    if m and (not pat or re.search(pat, l)):
++        print(f"{m.group(1)}.{m.group(2)} [{m.group(3)}] = {m.group(4)}")
+diff -ruN -x __pycache__ scripts_M30/chat_one.py scripts_CHAT/chat_one.py
+--- scripts_M30/chat_one.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chat_one.py	2026-11-24 08:33:29.228479300 -0800
+@@ -0,0 +1,17 @@
++"""usage: chat_one.py URL REQUEST.json [--stream]   sends one chat request and prints status, usage, reasoning, content and calls."""
++import json
++import os
++import sys
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++from chatlib import chat
++
++url, path = sys.argv[1], sys.argv[2]
++req = json.load(open(path))
++msgs = req.pop("messages")
++tools = req.pop("tools", None)
++r = chat(url, msgs, stream="--stream" in sys.argv, tools=tools, **req)
++print(json.dumps({k: r[k] for k in ("status", "ttft", "total", "usage", "finish", "error", "tool_calls")}, ensure_ascii=False))
++print("MESSAGE:", json.dumps(r.get("message"), ensure_ascii=False)[:600])
++print("REASONING:", r["reasoning"][:int(os.environ.get("CUT", "1500"))])
++print("CONTENT:", r["content"][:1500])
+diff -ruN -x __pycache__ scripts_M30/chat_prefix_probe.py scripts_CHAT/chat_prefix_probe.py
+--- scripts_M30/chat_prefix_probe.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chat_prefix_probe.py	2026-11-24 08:00:06.252713800 -0800
+@@ -0,0 +1,30 @@
++"""usage: chat_prefix_probe.py [--sizes 1500,3000,4500,8000] [--turns 3] [--stream] URL
++Controlled prefix reuse: a system prompt of about N tokens and fixed assistant replies (no generated text), one token per request.
++Turn k+1 extends turn k by one assistant and one user message. Prints prompt, cached and TTFT per turn."""
++import argparse
++import json
++import os
++import sys
++import time
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++from chatlib import cached, chat
++from chat_cache_probe_text import system_text
++
++ap = argparse.ArgumentParser()
++ap.add_argument("url")
++ap.add_argument("--sizes", default="1500,3000,4500,8000")
++ap.add_argument("--turns", type=int, default=3)
++ap.add_argument("--nostream", action="store_true")
++ap.add_argument("--effort", default="none")
++ap.add_argument("--shared", action="store_true", help="every size shares one system prefix (a different conversation each size)")
++a = ap.parse_args()
++base_nonce = f"{int(time.time() * 1000) % 10**9}"
++for size in [int(s) for s in a.sizes.split(",")]:
++    nonce = base_nonce if a.shared else f"{int(time.time() * 1000) % 10**9}"
++    msgs = [{"role": "system", "content": system_text(nonce, size)}, {"role": "user", "content": f"Question about the notes, variant {size}."}]
++    for turn in range(a.turns):
++        r = chat(a.url, msgs, stream=not a.nostream, temperature=0, max_tokens=1, reasoning_effort=a.effort)
++        pt, ct, _ = cached(r)
++        print(json.dumps({"size": size, "turn": turn + 1, "prompt": pt, "cached": ct, "new": (pt - ct) if pt is not None and ct is not None else None, "ttft": round(r["ttft"], 3), "status": r["status"]}), flush=True)
++        msgs = msgs + [{"role": "assistant", "content": f"Noted, turn {turn + 1}. The relevant entries are listed above."}, {"role": "user", "content": f"Next question number {turn + 2}, please keep it brief."}]
+diff -ruN -x __pycache__ scripts_M30/chat_repeat.py scripts_CHAT/chat_repeat.py
+--- scripts_M30/chat_repeat.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chat_repeat.py	2026-11-24 09:12:02.387970200 -0800
+@@ -0,0 +1,31 @@
++"""usage: chat_repeat.py [--n 5] [--tokens 5000] [--max-tokens 96] [--stream] [--flush] URL
++Sends the same greedy request n times; prints cached tokens and where each output first differs from the first. --flush sends an unrelated long request between the repeats."""
++import argparse
++import json
++import os
++import sys
++import time
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++from chatlib import cached, chat
++from chat_cache_probe_text import system_text
++
++ap = argparse.ArgumentParser()
++ap.add_argument("url")
++ap.add_argument("--n", type=int, default=5)
++ap.add_argument("--tokens", type=int, default=5000)
++ap.add_argument("--max-tokens", type=int, default=96)
++ap.add_argument("--stream", action="store_true")
++ap.add_argument("--flush", action="store_true")
++ap.add_argument("--seedtag", default="alpha-fixed")
++a = ap.parse_args()
++msgs = [{"role": "system", "content": system_text(a.seedtag, a.tokens)}, {"role": "user", "content": "What is the survey count of the first glaciers note?"}]
++outs = []
++for i in range(a.n):
++    r = chat(a.url, msgs, stream=a.stream, temperature=0, max_tokens=a.max_tokens, reasoning_effort="none")
++    text = r["reasoning"] + "|" + r["content"]
++    outs.append(text)
++    k = next((j for j, (x, y) in enumerate(zip(outs[0], text)) if x != y), -1 if len(text) == len(outs[0]) else min(len(text), len(outs[0])))
++    print(json.dumps({"i": i, "cached": cached(r)[1], "prompt": cached(r)[0], "len": len(text), "first_diff_vs_first": k, "ttft": round(r["ttft"], 3)}), flush=True)
++    if a.flush:
++        chat(a.url, [{"role": "system", "content": system_text(f"flush{i}", a.tokens)}, {"role": "user", "content": "Say hi."}], temperature=0, max_tokens=4, reasoning_effort="none")
+diff -ruN -x __pycache__ scripts_M30/chat_session.py scripts_CHAT/chat_session.py
+--- scripts_M30/chat_session.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chat_session.py	2026-11-24 08:50:30.306025500 -0800
+@@ -0,0 +1,112 @@
++"""usage: chat_session.py --mat DIR [--preset P] [--set key=value ...] [--arch gfx1201] [--port N] [--log F] -- COMMAND...
++Starts loom-serve on a materialized model directory (the preset execution values can be overridden with --set execution key=value),
++waits for registration, runs COMMAND with the URL as the last argument, then stops the server by its own PID.
++Call it under: flock -x (timed) or flock -s (correctness) ~/hrx-pr1/gpu.lock. Prints the peak VRAM of the R9700 (sysfs)."""
++import argparse
++import json
++import os
++import shutil
++import signal
++import subprocess
++import sys
++import threading
++import time
++import urllib.request
++
++ap = argparse.ArgumentParser()
++ap.add_argument("--mat", required=True)
++ap.add_argument("--preset", default="chat-r9700")
++ap.add_argument("--set", action="append", default=[])
++ap.add_argument("--patch", action="append", default=[], help="REL=FILE: replace REL (e.g. program/control/chat.loom) in the run copy of the package by FILE")
++ap.add_argument("--mem", action="append", default=[], help="memory key=value override of the preset (for example transient_bytes=10800000000)")
++ap.add_argument("--arch", default="gfx1201")
++ap.add_argument("--port", type=int, default=18500)
++ap.add_argument("--log", default="serve.log")
++ap.add_argument("--work", default=os.path.expanduser("~/inkling/optCHAT/run"))
++ap.add_argument("--venv", default=os.path.expanduser("~/inkling/tools/M30-venv"))
++ap.add_argument("cmd", nargs=argparse.REMAINDER)
++a = ap.parse_args()
++cmd = a.cmd[1:] if a.cmd and a.cmd[0] == "--" else a.cmd
++URI = {"gfx1201": "amdgpu://GPU-e0880c05003c324d", "gfx1151": "amdgpu://id/000000e2000000808e270f2b0bbb4e00"}[a.arch]
++VRAM = "/sys/class/drm/card0/device/mem_info_vram_used"
++
++os.makedirs(a.work, exist_ok=True)
++run = os.path.join(a.work, f"v{os.getpid()}")
++os.makedirs(run)
++for name in os.listdir(a.mat):
++    if name not in ("model.json", ".loom-fetch.lock"):
++        os.symlink(os.path.join(os.path.abspath(a.mat), name), os.path.join(run, name))
++for spec in a.patch:
++    rel, src = spec.split("=", 1)
++    link = os.path.join(run, rel.split("/")[0])
++    if os.path.islink(link):
++        real = os.path.realpath(link)
++        os.unlink(link)
++        shutil.copytree(real, link, copy_function=lambda s, d, **k: os.symlink(os.path.realpath(s), d))
++    target = os.path.join(run, rel)
++    os.unlink(target)
++    shutil.copyfile(os.path.abspath(os.path.expanduser(src)), target)
++doc = json.load(open(os.path.join(a.mat, "model.json")))
++ex = doc["presets"][a.preset]["execution"]
++for kv in a.set:
++    k, v = kv.split("=", 1)
++    ex[k] = json.loads(v)
++for kv in a.mem:
++    k, v = kv.split("=", 1)
++    doc["presets"][a.preset]["memory"][k] = json.loads(v)
++json.dump(doc, open(os.path.join(run, "model.json"), "w"), indent=1)
++print("execution", json.dumps(ex), flush=True)
++
++url = f"http://127.0.0.1:{a.port}"
++log = open(os.path.join(a.work, a.log), "w")
++env = dict(os.environ, PATH=os.path.join(a.venv, "bin") + ":" + os.environ["PATH"])
++proc = subprocess.Popen([os.path.join(a.venv, "bin", "loom-serve"), f"--device={URI}", f"--model={run}", f"--preset={a.preset}", "--pool_backing=fixed",
++                         f"--listen=127.0.0.1:{a.port}", "--workers=4"], stdout=log, stderr=subprocess.STDOUT, env=env, stdin=subprocess.DEVNULL)
++print("server pid", proc.pid, flush=True)
++peak = [0, 0]
++stop = threading.Event()
++
++
++def sample():
++    while not stop.is_set():
++        try:
++            v = int(open(VRAM).read())
++            peak[0] = max(peak[0], v)
++            peak[1] = v
++        except Exception:
++            pass
++        time.sleep(0.5)
++
++
++threading.Thread(target=sample, daemon=True).start()
++rc = 1
++try:
++    t0 = time.time()
++    while True:
++        if proc.poll() is not None:
++            print("server died", proc.returncode); sys.exit(2)
++        try:
++            st = json.load(urllib.request.urlopen(url + "/v1/status", timeout=2))
++            if '"registration": "ready"' in json.dumps(st) or '"registration":"ready"' in json.dumps(st):
++                break
++            if "failed" in json.dumps(st):
++                print("registration failed", json.dumps(st)[:600]); sys.exit(2)
++        except Exception:
++            pass
++        if time.time() - t0 > 900:
++            print("registration timeout"); sys.exit(2)
++        time.sleep(1)
++    print(f"ready after {time.time() - t0:.0f} s, vram used {peak[1] / 1e9:.2f} GB", flush=True)
++    cmd = [c.replace("@URL@", url) for c in cmd] if any("@URL@" in c for c in cmd) else cmd + [url]
++    rc = subprocess.call(cmd, env=dict(os.environ, SERVE_PID=str(proc.pid), VRAM_FILE=VRAM))
++finally:
++    stop.set()
++    print(f"peak vram {peak[0] / 1e9:.2f} GB, last {peak[1] / 1e9:.2f} GB", flush=True)
++    if proc.poll() is None:
++        proc.send_signal(signal.SIGTERM)
++        try:
++            proc.wait(60)
++        except subprocess.TimeoutExpired:
++            proc.kill()
++    shutil.rmtree(run, ignore_errors=True)
++sys.exit(rc)
+diff -ruN -x __pycache__ scripts_M30/chat_tool_probe.py scripts_CHAT/chat_tool_probe.py
+--- scripts_M30/chat_tool_probe.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chat_tool_probe.py	2026-11-24 10:24:21.245672300 -0800
+@@ -0,0 +1,255 @@
++"""usage: chat_tool_probe.py [--only a,b] [--out F] [--effort E] [--max-tokens N] URL
++OpenAI-compatible tool flows against the chat endpoint. Every case prints one JSON line {case, ok, status, note, ...}.
++ok is judged on the protocol (status, finish_reason, call shape), not on the model's wording. Cases that depend on the model are marked model=true."""
++import argparse
++import json
++import os
++import sys
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++from chatlib import cached, chat
++
++ap = argparse.ArgumentParser()
++ap.add_argument("url")
++ap.add_argument("--only", default="")
++ap.add_argument("--out", default="")
++ap.add_argument("--effort", default="low")
++ap.add_argument("--max-tokens", type=int, default=2500)
++a = ap.parse_args()
++
++WEATHER = {"type": "function", "function": {"name": "get_weather", "description": "Weather for a city.", "parameters": {"type": "object", "properties": {"city": {"type": "string"}, "days": {"type": "integer"}}, "required": ["city"]}}}
++SEARCH = {"type": "function", "function": {"name": "search", "description": "Search the web.", "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "filters": {"type": "object", "properties": {"lang": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}}}}, "required": ["query"]}}}
++NOTE = {"type": "function", "function": {"name": "save_note", "description": "Save a note with the given text.", "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "text": {"type": "string"}}, "required": ["title", "text"]}}}
++STEP = {"type": "function", "function": {"name": "next_step", "description": "Returns the next step number and a value. Call it again until it says done.", "parameters": {"type": "object", "properties": {"after": {"type": "integer"}}, "required": ["after"]}}}
++NOARGS = {"type": "function", "function": {"name": "get_time", "description": "Current time.", "parameters": {"type": "object", "properties": {}}}}
++TOOLS = [WEATHER, SEARCH]
++RESULTS = []
++
++
++def kw(**extra):
++    d = {"temperature": 0, "max_tokens": a.max_tokens, "reasoning_effort": a.effort}
++    d.update(extra)
++    return d
++
++
++def call_msg(calls, content=None, **extra):
++    m = {"role": "assistant", "content": content, "tool_calls": [{"id": cid, "type": "function", "function": {"name": n, "arguments": args}} for cid, n, args in calls]}
++    m.update(extra)
++    return m
++
++
++def report(case, ok, r=None, note="", model=False, **extra):
++    row = {"case": case, "ok": bool(ok), "status": r["status"] if r else None, "model": model, "note": note}
++    if r:
++        row["finish"] = r.get("finish")
++        row["prompt_cached"] = cached(r)
++        if r.get("error"):
++            row["error"] = (r["error"].get("error", r["error"]) if isinstance(r["error"], dict) else r["error"])
++    row.update(extra)
++    RESULTS.append(row)
++    print(json.dumps(row, ensure_ascii=False)[:900], flush=True)
++
++
++def valid_json(s):
++    try:
++        return json.loads(s)
++    except Exception:
++        return None
++
++
++def flow_first(stream):
++    r = chat(a.url, [{"role": "user", "content": "What is the weather in Paris for 3 days? Use the tool."}], stream=stream, tools=TOOLS, **kw())
++    calls = r["tool_calls"]
++    ok = r["status"] == 200 and r["finish"] == "tool_calls" and len(calls) >= 1 and calls[0]["name"] == "get_weather" and valid_json(calls[0]["arguments"]) is not None
++    report("basic_call_" + ("stream" if stream else "json"), ok, r, f"calls={[(c['name'], c['arguments']) for c in calls]} content={r['content'][:60]!r}", model=True)
++    return r
++
++
++def check_stream_shape():
++    r = chat(a.url, [{"role": "user", "content": "What is the weather in Paris for 3 days? Use the tool."}], stream=True, tools=TOOLS, **kw())
++    frames = [c for c in r["raw"] if c.get("choices")]
++    tcs = [(c["choices"][0]["delta"].get("tool_calls") or []) for c in frames]
++    flat = [t for l in tcs for t in l]
++    names = [t["function"].get("name") for t in flat if t.get("function", {}).get("name")]
++    ids = [t.get("id") for t in flat if t.get("id")]
++    idx = sorted({t.get("index") for t in flat})
++    fin = [c["choices"][0].get("finish_reason") for c in frames if c["choices"][0].get("finish_reason")]
++    first = flat[0] if flat else {}
++    ok = (r["status"] == 200 and len(names) == len(idx) and len(ids) == len(idx) and fin == ["tool_calls"] and first.get("type") == "function"
++          and valid_json("".join(t.get("function", {}).get("arguments") or "" for t in flat if t.get("index") == idx[0])) is not None if flat else False)
++    role_first = frames[0]["choices"][0]["delta"].get("role") if frames else None
++    report("stream_tool_delta_shape", ok, r, f"index={idx} ids={ids} names={names} finish={fin} first_type={first.get('type')} frames_with_calls={sum(1 for l in tcs if l)} first_role={role_first} usage={r['usage']}", model=True)
++
++
++def history(extra_tool=None, args_as="string", tool_content="Sunny, 21 C", with_name=False, with_id=True, content=None, reasoning=None, asst_extra=None):
++    args = {"city": "Paris", "days": 3}
++    a_val = json.dumps(args) if args_as == "string" else args
++    m = call_msg([("call_abc123", "get_weather", a_val)], content=content)
++    if reasoning:
++        m["reasoning_content"] = reasoning
++    m.update(asst_extra or {})
++    t = {"role": "tool", "content": tool_content}
++    if with_id:
++        t["tool_call_id"] = "call_abc123"
++    if with_name:
++        t["name"] = "get_weather"
++    return [{"role": "user", "content": "What is the weather in Paris for 3 days? Use the tool."}, m, t]
++
++
++def final_answer(case, msgs, model=True, tools=TOOLS, expect_status=200, **extra):
++    any_finish = extra.pop("model_ok", False)
++    r = chat(a.url, msgs, stream=extra.pop("stream", False), tools=tools, **kw(**extra))
++    ok = r["status"] == expect_status and (expect_status != 200 or any_finish or (r["finish"] in ("stop",) and (r["content"] or r["reasoning"])))
++    report(case, ok, r, f"content={r['content'][:100]!r}", model=model)
++    return r
++
++
++def loop_case(case, with_name, n_rounds, echo_reasoning=False, stream=False):
++    msgs = [{"role": "user", "content": "Call next_step with after=0, then keep calling next_step with the returned step number until it reports done. Then tell me the last step number."}]
++    rounds = 0
++    ids = 0
++    cache_rows = []
++    last = None
++    while rounds < n_rounds + 4:
++        r = chat(a.url, msgs, stream=stream, tools=[STEP], **kw(max_tokens=1500))
++        last = r
++        cache_rows.append(cached(r))
++        if r["status"] != 200:
++            report(case, False, r, f"round {rounds} failed", model=False)
++            return
++        if not r["tool_calls"]:
++            break
++        calls = r["tool_calls"]
++        am = {"role": "assistant", "content": r["content"] or None, "tool_calls": [{"id": c["id"] or f"call_{ids + i}", "type": "function", "function": {"name": c["name"], "arguments": c["arguments"]}} for i, c in enumerate(calls)]}
++        if echo_reasoning and r["reasoning"]:
++            am["reasoning_content"] = r["reasoning"]
++        msgs.append(am)
++        for i, c in enumerate(calls):
++            args = valid_json(c["arguments"]) or {}
++            after = args.get("after", 0) if isinstance(args, dict) else 0
++            nxt = after + 1
++            res = json.dumps({"step": nxt, "value": nxt * nxt, "done": nxt >= n_rounds})
++            tm = {"role": "tool", "tool_call_id": c["id"] or f"call_{ids + i}", "content": res}
++            if with_name:
++                tm["name"] = c["name"]
++            msgs.append(tm)
++        ids += len(calls)
++        rounds += 1
++    ok = last["status"] == 200 and not last["tool_calls"] and rounds >= n_rounds and str(n_rounds) in (last["content"] or "")
++    report(case, ok, last, f"rounds={rounds} final={last['content'][:80]!r} cache(prompt,cached,completion)={cache_rows}", model=True)
++
++
++def want(name):
++    return not a.only or name in a.only.split(",")
++
++
++def main():
++    if want("basic"):
++        flow_first(False)
++        flow_first(True)
++        check_stream_shape()
++    if want("results"):
++        final_answer("tool_result_name_and_id", history(with_name=True))
++        final_answer("tool_result_id_only", history(with_name=False))
++        final_answer("tool_result_name_only", history(with_name=True, with_id=False))
++        final_answer("tool_result_args_object_runtime_limit", history(with_name=True, args_as="object"), expect_status=400)
++        final_answer("tool_result_id_only_args_object_runtime_limit", history(with_name=False, args_as="object"), expect_status=400)
++        final_answer("assistant_content_empty_string", history(with_name=True, content=""))
++        final_answer("assistant_content_omitted", [m if m["role"] != "assistant" else {k: v for k, v in m.items() if k != "content"} for m in history(with_name=True)])
++        final_answer("assistant_with_name_and_calls", history(with_name=True, asst_extra={"name": "bot"}))
++        final_answer("assistant_reasoning_replay", history(with_name=True, reasoning="I should call the weather tool for Paris."))
++        final_answer("tool_content_parts", history(with_name=True, tool_content=[{"type": "text", "text": "Sunny, 21 C"}]))
++        final_answer("tool_content_json_object", history(with_name=True, tool_content={"temp": 21}), expect_status=400)
++        final_answer("tool_content_empty", history(with_name=True, tool_content=""))
++        final_answer("tool_msg_extra_fields", [dict(m, **({"is_error": False} if m["role"] == "tool" else {})) for m in history(with_name=True)])
++        final_answer("tool_call_without_type_runtime_limit", [m if m["role"] != "assistant" else dict(m, tool_calls=[{k: v for k, v in c.items() if k != "type"} for c in m["tool_calls"]]) for m in history(with_name=True)], expect_status=400)
++        final_answer("tool_call_empty_arguments", [m if m["role"] != "assistant" else dict(m, tool_calls=[dict(c, function={"name": "get_weather", "arguments": ""}) for c in m["tool_calls"]]) for m in history(with_name=True)], model_ok=True)
++        final_answer("tool_call_arguments_non_object", [m if m["role"] != "assistant" else dict(m, tool_calls=[dict(c, function={"name": "get_weather", "arguments": "[1]"}) for c in m["tool_calls"]]) for m in history(with_name=True)], expect_status=400)
++    if want("parallel"):
++        msgs = [{"role": "user", "content": "Get the weather in Paris and in Rome with two tool calls in the same turn."}]
++        r = chat(a.url, msgs, tools=TOOLS, **kw())
++        two = r["status"] == 200 and r["finish"] == "tool_calls" and len(r["tool_calls"]) >= 2
++        ids = [c["id"] for c in r["tool_calls"]]
++        report("parallel_calls_json", two and len(set(ids)) == len(ids), r, f"calls={[(c['id'], c['name'], c['arguments']) for c in r['tool_calls']]}", model=True)
++        r2 = chat(a.url, msgs, stream=True, tools=TOOLS, **kw())
++        report("parallel_calls_stream", r2["status"] == 200 and r2["finish"] == "tool_calls" and len(r2["tool_calls"]) >= 2 and [c["frames"] for c in r2["tool_calls"]] and all(c["names"] == 1 for c in r2["tool_calls"]), r2,
++               f"calls={[(c['id'], c['name'], c['arguments'], c['frames']) for c in r2['tool_calls']]}", model=True)
++        if two:
++            hist = msgs + [call_msg([(c["id"], c["name"], c["arguments"]) for c in r["tool_calls"]])]
++            for c in r["tool_calls"]:
++                city = (valid_json(c["arguments"]) or {}).get("city", "?")
++                hist.append({"role": "tool", "tool_call_id": c["id"], "name": c["name"], "content": f"{city}: 20 C"})
++            final_answer("parallel_results_named", hist)
++            hist2 = [m if m["role"] != "tool" else {k: v for k, v in m.items() if k != "name"} for m in hist]
++            final_answer("parallel_results_id_only", hist2)
++    if want("args"):
++        r = chat(a.url, [{"role": "user", "content": "Search for the Japanese words 東京 ラーメン with filters lang ja and tags [\"food\", \"café\"]. Use the search tool."}], tools=TOOLS, **kw())
++        c = r["tool_calls"][0] if r["tool_calls"] else None
++        args = valid_json(c["arguments"]) if c else None
++        report("unicode_nested_args", bool(args) and "東京" in c["arguments"] and isinstance(args.get("filters"), dict), r, f"args={c['arguments'][:200] if c else None}", model=True)
++        long_text = "The quick brown fox jumps over the lazy dog near the river bank."
++        r = chat(a.url, [{"role": "user", "content": f"Save a note titled 'long' whose text is this paragraph repeated 40 times, separated by spaces: {long_text}"}], tools=[NOTE], **kw(max_tokens=4000, reasoning_effort="none"))
++        c = r["tool_calls"][0] if r["tool_calls"] else None
++        args = valid_json(c["arguments"]) if c else None
++        report("long_arguments", bool(args) and len(args.get("text", "")) > 2500, r, f"len={len(args.get('text', '')) if args else None}", model=True)
++        r = chat(a.url, [{"role": "user", "content": "What time is it? Use the tool."}], tools=[NOARGS], **kw())
++        c = r["tool_calls"][0] if r["tool_calls"] else None
++        report("no_arguments_tool", bool(c) and valid_json(c["arguments"]) == {}, r, f"args={c['arguments'] if c else None}", model=True)
++    if want("choice"):
++        u = [{"role": "user", "content": "What is the weather in Paris? Use the tool."}]
++        r = chat(a.url, u, tools=TOOLS, **kw(tool_choice="none"))
++        report("tool_choice_none", r["status"] == 200 and not r["tool_calls"] and r["finish"] == "stop", r, f"content={r['content'][:80]!r}", model=True)
++        r = chat(a.url, [{"role": "user", "content": "Say hello."}], tools=TOOLS, **kw(tool_choice="required"))
++        report("tool_choice_required", r["status"] == 200 and len(r["tool_calls"]) >= 1, r, f"calls={len(r['tool_calls'])} content={r['content'][:60]!r}", model=True)
++        r = chat(a.url, [{"role": "user", "content": "Say hello."}], tools=TOOLS, **kw(tool_choice={"type": "function", "function": {"name": "search"}}))
++        report("tool_choice_named", r["status"] == 200 and len(r["tool_calls"]) >= 1 and r["tool_calls"][0]["name"] == "search", r, f"calls={[c['name'] for c in r['tool_calls']]}", model=True)
++        r = chat(a.url, u, tools=TOOLS, **kw(tool_choice="auto", parallel_tool_calls=False))
++        report("tool_choice_auto_parallel_false", r["status"] == 200 and r["finish"] == "tool_calls" and len(r["tool_calls"]) == 1, r, "", model=True)
++    if want("shapes"):
++        u = [{"role": "user", "content": "What is the weather in Paris? Use the tool."}]
++        for label, tools in [("tool_without_type", [{"function": WEATHER["function"]}]), ("flat_tool", [WEATHER["function"]]),
++                             ("tool_strict_flag", [{"type": "function", "function": dict(WEATHER["function"], strict=True)}]),
++                             ("tool_params_null", [{"type": "function", "function": {"name": "get_time", "description": "t", "parameters": None}}]),
++                             ("tool_description_null", [{"type": "function", "function": {"name": "get_time", "description": None, "parameters": {"type": "object", "properties": {}}}}]),
++                             ("tool_no_description", [{"type": "function", "function": {"name": "get_time", "parameters": {"type": "object", "properties": {}}}}])]:
++            r = chat(a.url, u, tools=tools, **kw(max_tokens=200))
++            report(label, r["status"] == 200, r, "")
++        r = chat(a.url, u, tools=[], **kw(max_tokens=200))
++        report("tools_empty_list", r["status"] == 200, r, "")
++        for label, role in [("developer_role", "developer"), ("system_role", "system")]:
++            r = chat(a.url, [{"role": role, "content": "Be terse."}] + u, tools=TOOLS, **kw(max_tokens=200))
++            report(label, r["status"] == 200, r, "")
++        r = chat(a.url, u + [{"role": "system", "content": "Reminder: be terse."}], **kw(max_tokens=200))
++        report("system_after_user", r["status"] == 200, r, "")
++        r = chat(a.url, [{"role": "user", "content": [{"type": "text", "text": "Hello"}, {"type": "text", "text": "there"}]}], **kw(max_tokens=100))
++        report("user_content_parts", r["status"] == 200, r, "")
++        r = chat(a.url, [{"role": "user", "content": "Hi", "name": "alice"}], **kw(max_tokens=100))
++        report("user_name_field", r["status"] == 200, r, "")
++        r = chat(a.url, [{"role": "function", "name": "get_weather", "content": "x"}, {"role": "user", "content": "Hi"}], **kw(max_tokens=100))
++        report("legacy_function_role_rejected", r["status"] == 400, r, "legacy role is not supported", model=False)
++    if want("effort"):
++        u = [{"role": "user", "content": "What is the weather in Paris? Use the tool."}]
++        for label, extra in [("effort_none", {"reasoning_effort": "none"}), ("effort_high", {"reasoning_effort": "high"}), ("effort_number", {"reasoning_effort": 0.5}),
++                             ("kwargs_enable_thinking_false", {"reasoning_effort": None, "chat_template_kwargs": {"enable_thinking": False}}),
++                             ("kwargs_effort_low", {"reasoning_effort": None, "chat_template_kwargs": {"reasoning_effort": "low"}}),
++                             ("top_enable_thinking_false", {"enable_thinking": False}),
++                             ("openai_reasoning_object", {"reasoning": {"effort": "low"}}),
++                             ("kwargs_unknown_key_ignored", {"chat_template_kwargs": {"preserve_thinking": True}})]:
++            k = kw(max_tokens=1500)
++            k.update(extra)
++            if k.get("reasoning_effort", 1) is None:
++                k.pop("reasoning_effort")
++            r = chat(a.url, u, tools=TOOLS, **k)
++            report(label, r["status"] == 200 and r["finish"] in ("tool_calls", "stop", "length"), r, f"reasoning_chars={len(r['reasoning'])} calls={[c['name'] for c in r['tool_calls']]}", model=True)
++    if want("loop"):
++        loop_case("loop6_named", True, 6)
++        loop_case("loop6_id_only", False, 6)
++        loop_case("loop6_id_only_echo_reasoning", False, 6, echo_reasoning=True)
++        loop_case("loop6_named_stream", True, 6, stream=True)
++    ok = sum(1 for r in RESULTS if r["ok"])
++    print(f"SUMMARY {ok}/{len(RESULTS)} ok; failing: {[r['case'] for r in RESULTS if not r['ok']]}")
++    if a.out:
++        open(a.out, "a").write("\n".join(json.dumps(r, ensure_ascii=False) for r in RESULTS) + "\n")
++
++
++main()
+diff -ruN -x __pycache__ scripts_M30/chatlib.py scripts_CHAT/chatlib.py
+--- scripts_M30/chatlib.py	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/chatlib.py	2026-11-24 07:50:09.443330700 -0800
+@@ -0,0 +1,119 @@
++"""Small OpenAI-compatible client (urllib only) for the chat cache and tool probes."""
++import json
++import time
++import urllib.error
++import urllib.request
++
++
++def model_id(url):
++    return json.load(urllib.request.urlopen(url + "/v1/models", timeout=10))["data"][0]["id"]
++
++
++def post(url, path, body, timeout=900):
++    req = urllib.request.Request(url + path, json.dumps(body).encode(), {"Content-Type": "application/json"})
++    try:
++        with urllib.request.urlopen(req, timeout=timeout) as r:
++            return r.status, json.load(r)
++    except urllib.error.HTTPError as e:
++        raw = e.read().decode("utf8", "replace")
++        try:
++            return e.code, json.loads(raw)
++        except Exception:
++            return e.code, {"raw": raw}
++
++
++def get(url, path):
++    with urllib.request.urlopen(url + path, timeout=30) as r:
++        raw = r.read().decode("utf8", "replace")
++    try:
++        return json.loads(raw)
++    except Exception:
++        return raw
++
++
++def chat(url, messages, stream=False, tools=None, model=None, **kw):
++    """Returns dict: status, ttft (first content/reasoning/tool delta, or total when not streaming), total, usage, content, reasoning,
++    tool_calls (list of {id,name,arguments}), finish, raw (non-stream body or list of chunks), error."""
++    body = {"model": model or model_id(url), "messages": messages}
++    if tools is not None:
++        body["tools"] = tools
++    body.update(kw)
++    t0 = time.time()
++    out = {"status": 0, "ttft": None, "usage": None, "content": "", "reasoning": "", "tool_calls": [], "finish": None, "error": None}
++    if not stream:
++        status, js = post(url, "/v1/chat/completions", body)
++        out["status"] = status
++        out["total"] = out["ttft"] = time.time() - t0
++        out["raw"] = js
++        if status != 200:
++            out["error"] = js
++            return out
++        ch = js["choices"][0]
++        m = ch["message"]
++        out["content"] = m.get("content") or ""
++        out["reasoning"] = m.get("reasoning_content") or ""
++        out["finish"] = ch["finish_reason"]
++        out["usage"] = js.get("usage")
++        out["message"] = m
++        for c in m.get("tool_calls") or []:
++            out["tool_calls"].append({"id": c.get("id"), "name": c["function"]["name"], "arguments": c["function"]["arguments"]})
++        return out
++    body["stream"] = True
++    body["stream_options"] = {"include_usage": True}
++    req = urllib.request.Request(url + "/v1/chat/completions", json.dumps(body).encode(), {"Content-Type": "application/json"})
++    chunks = []
++    calls = {}
++    try:
++        with urllib.request.urlopen(req, timeout=900) as r:
++            out["status"] = r.status
++            for line in r:
++                line = line.decode("utf8", "replace").strip()
++                if not line.startswith("data:"):
++                    continue
++                data = line[5:].strip()
++                if data == "[DONE]":
++                    break
++                js = json.loads(data)
++                chunks.append(js)
++                if js.get("usage"):
++                    out["usage"] = js["usage"]
++                for ch in js.get("choices") or []:
++                    d = ch.get("delta") or {}
++                    got = False
++                    if d.get("content"):
++                        out["content"] += d["content"]; got = True
++                    if d.get("reasoning_content"):
++                        out["reasoning"] += d["reasoning_content"]; got = True
++                    for tc in d.get("tool_calls") or []:
++                        got = True
++                        e = calls.setdefault(tc.get("index", 0), {"id": None, "name": "", "arguments": "", "frames": 0, "names": 0})
++                        e["frames"] += 1
++                        if tc.get("id"):
++                            e["id"] = tc["id"]
++                        f = tc.get("function") or {}
++                        if f.get("name"):
++                            e["name"] += f["name"]; e["names"] += 1
++                        e["arguments"] += f.get("arguments") or ""
++                    if got and out["ttft"] is None:
++                        out["ttft"] = time.time() - t0
++                    if ch.get("finish_reason"):
++                        out["finish"] = ch["finish_reason"]
++    except urllib.error.HTTPError as e:
++        out["status"] = e.code
++        raw = e.read().decode("utf8", "replace")
++        try:
++            out["error"] = json.loads(raw)
++        except Exception:
++            out["error"] = raw
++        return out
++    out["total"] = time.time() - t0
++    if out["ttft"] is None:
++        out["ttft"] = out["total"]
++    out["raw"] = chunks
++    out["tool_calls"] = [calls[k] for k in sorted(calls)]
++    return out
++
++
++def cached(out):
++    u = out.get("usage") or {}
++    return (u.get("prompt_tokens"), (u.get("prompt_tokens_details") or {}).get("cached_tokens"), u.get("completion_tokens"))
+diff -ruN -x __pycache__ scripts_M30/kit_counts.py scripts_CHAT/kit_counts.py
+--- scripts_M30/kit_counts.py	2026-11-22 16:43:26.449185700 -0800
++++ scripts_CHAT/kit_counts.py	2026-11-24 09:04:59.760344000 -0800
+@@ -22,8 +22,11 @@
+ 
+ bad = 0
+ for case in json.load(open(golden, encoding="utf-8")):
+-    body = dict(case["body"], model="inkling-2-mini")
++    body = dict(case["body"], model=os.environ.get("INKLING_MODEL", "inkling-2-mini"))
+     kw = {"reasoning_effort": body["reasoning_effort"]} if "reasoning_effort" in body else {}
++    ctk = body.get("chat_template_kwargs") or {}
++    kw.update({"enable_thinking": ctk["enable_thinking"]} if "enable_thinking" in ctk else {})
++    kw.update({"tool_choice": body["tool_choice"]} if isinstance(body.get("tool_choice"), str) else {})
+     try:
+         text = chat_probe.simulate(chat, body["messages"], body.get("tools"), gen=True, **kw)
+         n = len(tok.encode(text, add_special_tokens=False).ids)
+diff -ruN -x __pycache__ scripts_M30/mkgates.sh scripts_CHAT/mkgates.sh
+--- scripts_M30/mkgates.sh	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/mkgates.sh	2026-11-24 11:03:02.097329600 -0800
+@@ -0,0 +1,27 @@
++#!/usr/bin/env bash
++# usage: mkgates.sh   (box) builds ~/inkling/optCHAT/gr: a gates root for run_gates.sh whose materialized models carry the CHATFIX package files and presets.
++# The weights stay hard links of the shared GGUF. Run: INKR=~/inkling/optCHAT/gr LOOM_VENV=~/inkling/tools/M30-venv SKILLS=... bash gr/scripts/run_gates.sh r9700 prep serve gates extra stop
++set -euo pipefail
++O=$HOME/inkling/optCHAT; R=$O/gr
++rm -rf "$R"; mkdir -p "$R/W" "$R/scripts" "$R/kit"
++cp "$O"/kit_CHAT/chat_probe.py "$O"/kit_CHAT/chat_block.json "$O"/kit_CHAT/chat_golden.json "$R/kit/"
++cp "$O"/scripts/run_gates.sh "$O"/scripts/sampling_supplement.py "$R/scripts/"
++for pair in "r9700 mat-r9700 chat-r9700" "strix mat-strix chat"; do
++  set -- $pair
++  M=$R/W/mat-$1
++  cp -rl "$O/$2" "$M"
++  for f in control/chat.loom:chat.loom control/chat_sampler.loom:chat_sampler.loom dispatch/spans.loom:spans.loom dispatch/model.loom:model.loom; do
++    rm -f "$M/program/${f%%:*}"; cp "$O/${f##*:}" "$M/program/${f%%:*}"
++  done
++  rm -f "$M/model.json"
++  python3 - "$O/$2/model.json" "$M/model.json" "$3" <<'PY'
++import json, sys
++d = json.load(open(sys.argv[1]))
++p = d["presets"][sys.argv[3]]
++p["execution"]["prefix_cache_capacity"] = 16
++p["memory"]["transient_bytes"] += 2800000000
++d["presets"]["chat"] = p
++json.dump(d, open(sys.argv[2], "w"), indent=1)
++PY
++done
++echo built "$R"
+diff -ruN -x __pycache__ scripts_M30/publish_build.py scripts_CHAT/publish_build.py
+--- scripts_M30/publish_build.py	2026-11-22 16:43:26.516012600 -0800
++++ scripts_CHAT/publish_build.py	2026-11-24 08:48:50.175846500 -0800
+@@ -37,9 +37,10 @@
+ STRUCTURE = ["<|message_user|>", "<|message_model|>", "<|message_system|>", "<|message_tool|>", "<|content_text|>", "<|content_image|>", "<|content_thinking|>", "<|end_message|>", "<|content_tool_error|>", "<|content_xml|>", "<|content_invoke_tool_json|>", "<|content_invoke_tool_text|>"]
+ 
+ PRESET_CONTEXT = {"chat": 131072, "chat-r9700": 131072, "chat-q8": 32768, "chat-q8-r9700": 32768}
+-TRANSIENT_BYTES = {"chat": 8000000000, "chat-r9700": 8000000000, "chat-q8": 3600000000, "chat-q8-r9700": 3600000000}
++TRANSIENT_BYTES = {"chat": 10800000000, "chat-r9700": 10800000000, "chat-q8": 6400000000, "chat-q8-r9700": 6400000000}
+ PREFILL_CAPACITY = {"chat": 2048, "chat-r9700": 2048, "chat-q8": 512, "chat-q8-r9700": 512}
+-DELIBERATE = ("execution.context_capacity", "execution.prefill_capacity", "memory.transient_bytes", "memory.workload")
++PREFIX_CACHE_CAPACITY = {"chat": 16, "chat-r9700": 16, "chat-q8": 16, "chat-q8-r9700": 16}
++DELIBERATE = ("execution.context_capacity", "execution.prefill_capacity", "execution.prefix_cache_capacity", "memory.transient_bytes", "memory.workload")
+ 
+ PRESETS = {
+     "chat": ("interactive-q4", "ud-q4-k-xl"),
+@@ -108,8 +109,9 @@
+         assert p["variant"] == variant and p["service"] == "chat"
+         p["execution"]["context_capacity"] = PRESET_CONTEXT[new]
+         p["execution"]["prefill_capacity"] = PREFILL_CAPACITY[new]
++        p["execution"]["prefix_cache_capacity"] = PREFIX_CACHE_CAPACITY[new]
+         p["memory"]["transient_bytes"] = TRANSIENT_BYTES[new]
+-        p["memory"]["workload"] = f"4 rows, {PRESET_CONTEXT[new]} context, {PREFILL_CAPACITY[new]} prefill tokens, 4 checkpoints; measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
++        p["memory"]["workload"] = f"4 rows, {PRESET_CONTEXT[new]} context, {PREFILL_CAPACITY[new]} prefill tokens, 4 checkpoints, {PREFIX_CACHE_CAPACITY[new]} prefix cache endpoints (0.17 GB each); measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
+         card["presets"][new] = p
+     return card
+ 
+@@ -130,9 +132,10 @@
+         a, b = copy.deepcopy(old["presets"][olds]), copy.deepcopy(card["presets"][new_name])
+         assert b["execution"].pop("context_capacity") == PRESET_CONTEXT[new_name]
+         assert b["execution"].pop("prefill_capacity") == PREFILL_CAPACITY[new_name]
++        assert b["execution"].pop("prefix_cache_capacity") == PREFIX_CACHE_CAPACITY[new_name]
+         assert b["memory"].pop("transient_bytes") == TRANSIENT_BYTES[new_name]
+         b["memory"].pop("workload")
+-        a["execution"].pop("context_capacity"); a["execution"].pop("prefill_capacity"); a["memory"].pop("transient_bytes"); a["memory"].pop("workload")
++        a["execution"].pop("context_capacity"); a["execution"].pop("prefill_capacity"); a["execution"].pop("prefix_cache_capacity"); a["memory"].pop("transient_bytes"); a["memory"].pop("workload")
+         assert a == b, new_name
+     print("verify: chat service config, variants and programs equal package/card.json; presets equal it except " + ", ".join(DELIBERATE))
+ 
+diff -ruN -x __pycache__ scripts_M30/req_choice_none.json scripts_CHAT/req_choice_none.json
+--- scripts_M30/req_choice_none.json	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/req_choice_none.json	2026-11-24 08:16:36.587169400 -0800
+@@ -0,0 +1,3 @@
++{"temperature": 0, "max_tokens": 1200, "reasoning_effort": "low", "tool_choice": "none",
++ "tools": [{"type": "function", "function": {"name": "get_weather", "description": "Weather for a city.", "parameters": {"type": "object", "properties": {"city": {"type": "string"}, "days": {"type": "integer"}}, "required": ["city"]}}}],
++ "messages": [{"role": "user", "content": "What is the weather in Paris? Use the tool."}]}
+diff -ruN -x __pycache__ scripts_M30/req_long.json scripts_CHAT/req_long.json
+--- scripts_M30/req_long.json	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/req_long.json	2026-11-24 08:33:30.725338100 -0800
+@@ -0,0 +1,3 @@
++{"temperature": 0, "max_tokens": 6000, "reasoning_effort": "none",
++ "tools": [{"type": "function", "function": {"name": "save_note", "description": "Save a note with the given text.", "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "text": {"type": "string"}}, "required": ["title", "text"]}}}],
++ "messages": [{"role": "user", "content": "Save a note titled 'long' whose text is this paragraph repeated 40 times, separated by spaces: The quick brown fox jumps over the lazy dog near the river bank."}]}
+diff -ruN -x __pycache__ scripts_M30/run_multi.sh scripts_CHAT/run_multi.sh
+--- scripts_M30/run_multi.sh	1969-12-31 16:00:00.000000000 -0800
++++ scripts_CHAT/run_multi.sh	2026-11-24 08:17:58.844261600 -0800
+@@ -0,0 +1,5 @@
++#!/bin/bash
++# usage: run_multi.sh <session_cache> <prefix_cache> <probe args...>   (box) sessions on the R9700 under the caller's flock
++cd ~/inkling/optCHAT || exit 1
++SC=$1; PC=$2; shift 2
++python3 scripts/chat_session.py --mat mat-r9700 --port 18512 --log multi.log --set session_cache_capacity=$SC --set prefix_cache_capacity=$PC -- bash -c "python3 scripts/chat_multi_probe.py @URL@ $* | cut -c1-230; python3 scripts/chat_obs.py @URL@ 'pool|cache'"
+diff -ruN -x __pycache__ kit/chat_golden.json kit_CHAT/chat_golden.json
+--- kit/chat_golden.json	2026-11-21 09:37:50.452007500 -0800
++++ kit_CHAT/chat_golden.json	2026-11-24 10:43:01.082458500 -0800
+@@ -384,48 +384,6 @@
+   "engines_agree": true
+  },
+  {
+-  "name": "tool_id_only",
+-  "body": {
+-   "messages": [
+-    {
+-     "role": "user",
+-     "content": "go"
+-    },
+-    {
+-     "role": "assistant",
+-     "content": "",
+-     "tool_calls": [
+-      {
+-       "id": "call_9_0",
+-       "type": "function",
+-       "function": {
+-        "name": "noop",
+-        "arguments": "{}"
+-       }
+-      }
+-     ]
+-    },
+-    {
+-     "role": "tool",
+-     "tool_call_id": "call_9_0",
+-     "content": "ok"
+-    }
+-   ],
+-   "tools": [
+-    {
+-     "type": "function",
+-     "function": {
+-      "name": "noop"
+-     }
+-    }
+-   ]
+-  },
+-  "expect": "reject",
+-  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
+-  "oracle": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
+-  "engines_agree": true
+- },
+- {
+   "name": "reasoning_history",
+   "body": {
+    "messages": [
+@@ -1273,5 +1231,774 @@
+   "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.1234567<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+   "oracle": "<|message_system|><|content_text|>Thinking effort level: 0.123457<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
+   "engines_agree": true
++ },
++ {
++  "name": "tool_id_only",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "tool_calls": [
++      {
++       "id": "call_9_0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "tool_call_id": "call_9_0",
++     "content": "ok"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|><|content_text|>ok<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_id_only_parallel",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "reasoning_content": "Two lookups.",
++     "tool_calls": [
++      {
++       "id": "call_9_0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      },
++      {
++       "id": "call_9_1",
++       "type": "function",
++       "function": {
++        "name": "search",
++        "arguments": "{\"q\": \"x\"}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "tool_call_id": "call_9_0",
++     "content": "a"
++    },
++    {
++     "role": "tool",
++     "tool_call_id": "call_9_1",
++     "content": "b"
++    },
++    {
++     "role": "assistant",
++     "content": "done"
++    },
++    {
++     "role": "user",
++     "content": "again"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    },
++    {
++     "type": "function",
++     "function": {
++      "name": "search",
++      "parameters": {
++       "type": "object",
++       "properties": {
++        "q": {
++         "type": "string"
++        }
++       }
++      }
++     }
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"},{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|><|content_thinking|>Two lookups.<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|message_model|>search<|content_invoke_tool_json|>{\"name\":\"search\",\"args\":{\"q\":\"x\"}}<|end_message|><|content_model_end_sampling|><|message_tool|><|content_text|>a<|end_message|><|message_tool|><|content_text|>b<|end_message|><|message_model|><|content_text|>done<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>again<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_id_only_and_named_mixed",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "tool_calls": [
++      {
++       "id": "c0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      },
++      {
++       "id": "c1",
++       "type": "function",
++       "function": {
++        "name": "search",
++        "arguments": "{\"q\": \"x\"}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "tool_call_id": "c0",
++     "content": "a"
++    },
++    {
++     "role": "tool",
++     "name": "search",
++     "tool_call_id": "c1",
++     "content": "b"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    },
++    {
++     "type": "function",
++     "function": {
++      "name": "search",
++      "parameters": {
++       "type": "object",
++       "properties": {
++        "q": {
++         "type": "string"
++        }
++       }
++      }
++     }
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"},{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|message_model|>search<|content_invoke_tool_json|>{\"name\":\"search\",\"args\":{\"q\":\"x\"}}<|end_message|><|content_model_end_sampling|><|message_tool|><|content_text|>a<|end_message|><|message_tool|>search<|content_text|>b<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "developer_role",
++  "body": {
++   "messages": [
++    {
++     "role": "developer",
++     "content": "Be terse."
++    },
++    {
++     "role": "user",
++     "content": "hi"
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|><|content_text|>Be terse.<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "developer_role_with_tools",
++  "body": {
++   "messages": [
++    {
++     "role": "developer",
++     "content": "Be terse."
++    },
++    {
++     "role": "user",
++     "content": "Weather?"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "get_weather",
++      "description": "Get the weather for a city",
++      "parameters": {
++       "type": "object",
++       "required": [
++        "city"
++       ],
++       "properties": {
++        "unit": {
++         "enum": [
++          "c",
++          "f"
++         ],
++         "type": "string",
++         "description": "Unit \"quoted\"\nsecond line"
++        },
++        "city": {
++         "type": "string",
++         "description": "Name, e.g. Zürich 東京"
++        },
++        "days": {
++         "type": "integer",
++         "minimum": 1,
++         "maximum": 14
++        }
++       }
++      }
++     }
++    }
++   ],
++   "reasoning_effort": "low"
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Get the weather for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"description\":\"Name, e.g. Zürich 東京\",\"type\":\"string\"},\"days\":{\"maximum\":14,\"minimum\":1,\"type\":\"integer\"},\"unit\":{\"description\":\"Unit \\\"quoted\\\"\\nsecond line\",\"enum\":[\"c\",\"f\"],\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Be terse.<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.2<|end_message|><|message_user|><|content_text|>Weather?<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "assistant_name_with_calls",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "name": "bot",
++     "tool_calls": [
++      {
++       "id": "c0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "name": "noop",
++     "content": "ok"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "assistant_name_equals_call",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "Checking.",
++     "name": "noop",
++     "tool_calls": [
++      {
++       "id": "c0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "name": "noop",
++     "content": "ok"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|><|content_text|>Checking.<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "reasoning_field_alias",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "2+2?"
++    },
++    {
++     "role": "assistant",
++     "content": "4",
++     "reasoning": "Add two and two."
++    },
++    {
++     "role": "user",
++     "content": "and 3+3?"
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>2+2?<|end_message|><|message_model|><|content_thinking|>Add two and two.<|end_message|><|message_model|><|content_text|>4<|end_message|><|content_model_end_sampling|><|message_user|><|content_text|>and 3+3?<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "reasoning_field_alias_with_calls",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "reasoning": "Need the tool.",
++     "tool_calls": [
++      {
++       "id": "c0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "name": "noop",
++     "content": "ok"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    }
++   ]
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|><|content_thinking|>Need the tool.<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_choice_none_drops_tools",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "Weather in Zürich?"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "get_weather",
++      "description": "Get the weather for a city",
++      "parameters": {
++       "type": "object",
++       "required": [
++        "city"
++       ],
++       "properties": {
++        "unit": {
++         "enum": [
++          "c",
++          "f"
++         ],
++         "type": "string",
++         "description": "Unit \"quoted\"\nsecond line"
++        },
++        "city": {
++         "type": "string",
++         "description": "Name, e.g. Zürich 東京"
++        },
++        "days": {
++         "type": "integer",
++         "minimum": 1,
++         "maximum": 14
++        }
++       }
++      }
++     }
++    },
++    {
++     "type": "function",
++     "function": {
++      "name": "search",
++      "parameters": {
++       "type": "object",
++       "properties": {
++        "q": {
++         "type": "string"
++        }
++       }
++      }
++     }
++    }
++   ],
++   "tool_choice": "none"
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_choice_none_with_history",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "tool_calls": [
++      {
++       "id": "c0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "name": "noop",
++     "content": "ok"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    }
++   ],
++   "tool_choice": "none"
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_choice_auto_keeps_tools",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "Weather in Zürich?"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "get_weather",
++      "description": "Get the weather for a city",
++      "parameters": {
++       "type": "object",
++       "required": [
++        "city"
++       ],
++       "properties": {
++        "unit": {
++         "enum": [
++          "c",
++          "f"
++         ],
++         "type": "string",
++         "description": "Unit \"quoted\"\nsecond line"
++        },
++        "city": {
++         "type": "string",
++         "description": "Name, e.g. Zürich 東京"
++        },
++        "days": {
++         "type": "integer",
++         "minimum": 1,
++         "maximum": 14
++        }
++       }
++      }
++     }
++    }
++   ],
++   "tool_choice": "auto"
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Get the weather for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"description\":\"Name, e.g. Zürich 東京\",\"type\":\"string\"},\"days\":{\"maximum\":14,\"minimum\":1,\"type\":\"integer\"},\"unit\":{\"description\":\"Unit \\\"quoted\\\"\\nsecond line\",\"enum\":[\"c\",\"f\"],\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_choice_required_demands_call",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "Weather in Zürich?"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "get_weather",
++      "description": "Get the weather for a city",
++      "parameters": {
++       "type": "object",
++       "required": [
++        "city"
++       ],
++       "properties": {
++        "unit": {
++         "enum": [
++          "c",
++          "f"
++         ],
++         "type": "string",
++         "description": "Unit \"quoted\"\nsecond line"
++        },
++        "city": {
++         "type": "string",
++         "description": "Name, e.g. Zürich 東京"
++        },
++        "days": {
++         "type": "integer",
++         "minimum": 1,
++         "maximum": 14
++        }
++       }
++      }
++     }
++    },
++    {
++     "type": "function",
++     "function": {
++      "name": "search",
++      "parameters": {
++       "type": "object",
++       "properties": {
++        "q": {
++         "type": "string"
++        }
++       }
++      }
++     }
++    }
++   ],
++   "tool_choice": "required"
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"Get the weather for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"description\":\"Name, e.g. Zürich 東京\",\"type\":\"string\"},\"days\":{\"maximum\":14,\"minimum\":1,\"type\":\"integer\"},\"unit\":{\"description\":\"Unit \\\"quoted\\\"\\nsecond line\",\"enum\":[\"c\",\"f\"],\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"},\"type\":\"function\"},{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|><|message_system|><|content_text|>The next assistant message must be a call of a declared tool. Do not answer in text.<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_choice_named_keeps_one_tool",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "Weather in Zürich?"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "get_weather",
++      "description": "Get the weather for a city",
++      "parameters": {
++       "type": "object",
++       "required": [
++        "city"
++       ],
++       "properties": {
++        "unit": {
++         "enum": [
++          "c",
++          "f"
++         ],
++         "type": "string",
++         "description": "Unit \"quoted\"\nsecond line"
++        },
++        "city": {
++         "type": "string",
++         "description": "Name, e.g. Zürich 東京"
++        },
++        "days": {
++         "type": "integer",
++         "minimum": 1,
++         "maximum": 14
++        }
++       }
++      }
++     }
++    },
++    {
++     "type": "function",
++     "function": {
++      "name": "search",
++      "parameters": {
++       "type": "object",
++       "properties": {
++        "q": {
++         "type": "string"
++        }
++       }
++      }
++     }
++    }
++   ],
++   "tool_choice": {
++    "type": "function",
++    "function": {
++     "name": "search"
++    }
++   }
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"search\",\"parameters\":{\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|><|message_user|><|content_text|>Weather in Zürich?<|end_message|><|message_system|><|content_text|>The next assistant message must be a call of a declared tool. Do not answer in text.<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "tool_choice_required_after_tool_result",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "go"
++    },
++    {
++     "role": "assistant",
++     "content": "",
++     "tool_calls": [
++      {
++       "id": "c0",
++       "type": "function",
++       "function": {
++        "name": "noop",
++        "arguments": "{}"
++       }
++      }
++     ]
++    },
++    {
++     "role": "tool",
++     "name": "noop",
++     "content": "ok"
++    }
++   ],
++   "tools": [
++    {
++     "type": "function",
++     "function": {
++      "name": "noop"
++     }
++    }
++   ],
++   "tool_choice": "required",
++   "reasoning_effort": "low"
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|>tool_declare<|content_xml|>[{\"description\":\"\",\"name\":\"noop\",\"parameters\":{},\"type\":\"function\"}]<|end_message|><|message_system|><|content_text|>Thinking effort level: 0.2<|end_message|><|message_user|><|content_text|>go<|end_message|><|message_model|>noop<|content_invoke_tool_json|>{\"name\":\"noop\",\"args\":{}}<|end_message|><|content_model_end_sampling|><|message_tool|>noop<|content_text|>ok<|end_message|><|message_system|><|content_text|>The next assistant message must be a call of a declared tool. Do not answer in text.<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
++ },
++ {
++  "name": "kwargs_unknown_key_ignored",
++  "body": {
++   "messages": [
++    {
++     "role": "user",
++     "content": "hi"
++    }
++   ],
++   "chat_template_kwargs": {
++    "preserve_thinking": true,
++    "enable_thinking": false
++   }
++  },
++  "expect": "policy",
++  "jinja": "<|message_system|><|content_text|>Thinking effort level: 0<|end_message|><|message_user|><|content_text|>hi<|end_message|>",
++  "oracle": null,
++  "engines_agree": true
+  }
+ ]
+\ No newline at end of file
+diff -ruN -x __pycache__ kit/chat_probe.py kit_CHAT/chat_probe.py
+--- kit/chat_probe.py	2026-11-21 10:11:32.333172300 -0800
++++ kit_CHAT/chat_probe.py	2026-11-24 10:46:47.865832000 -0800
+@@ -990,6 +990,7 @@
+ INKLING_THINK = "<|message_model|><|content_thinking|>"
+ INKLING_TEXT = "<|message_model|><|content_text|>"
+ INKLING_INVOKE = "<|content_invoke_tool_json|>"
++INKLING_DEMAND = "<|message_system|><|content_text|>The next assistant message must be a call of a declared tool. Do not answer in text.<|end_message|>"
+ 
+ 
+ def is_inkling(template_text):
+@@ -1079,9 +1080,21 @@
+     return reasoning_effort
+ 
+ 
+-def inkling_simulate(chat, messages, tools=None, gen=False, enable_thinking=None, reasoning_effort=None):
++INKLING_MODE = {"template": False}   # True: the template exactly (verify); False: the Loom policy (what the server renders)
++
++
++def inkling_simulate(chat, messages, tools=None, gen=False, enable_thinking=None, reasoning_effort=None, tool_choice=None):
++    policy = not INKLING_MODE["template"]
+     reasoning_effort = _ik_resolve(enable_thinking, reasoning_effort)
+     out = ""
++    demanded = False
++    if policy and tool_choice == "none":
++        tools = None
++    elif policy and tools and (tool_choice == "required" or isinstance(tool_choice, dict)):
++        demanded = True   # the next assistant message must be a call: one system message ends the prompt
++        if isinstance(tool_choice, dict):
++            wanted = (tool_choice.get("function") or tool_choice).get("name")
++            tools = [t for t in tools if (t.get("function") or t).get("name") == wanted]
+     if tools:
+         specs = []
+         for tool in tools:
+@@ -1091,25 +1104,27 @@
+         out += "<|message_system|>tool_declare<|content_xml|>" + _ik_json(specs, sort_keys=True, separators=(",", ":")) + INKLING_END
+     emitted = False
+     for m in messages:
+-        role = m["role"]
++        role = "system" if policy and m["role"] == "developer" else m["role"]
+         if role not in INKLING_ROLES:
+             raise ProbeError(f"Unknown message role: {role}")
+         if not emitted and role != "system":
+             out += _ik_effort(reasoning_effort)
+             emitted = True
+         head = INKLING_ROLES[role]
++        calls = (m.get("tool_calls") or []) if role == "assistant" else []
+         if role == "tool":
+             if m.get("name"):
+                 head += m["name"]
+-            elif m.get("tool_call_id"):
++            elif m.get("tool_call_id") and not policy:   # the policy sees one message at a time: no name without "name"
+                 for prev in messages:
+                     for tc in (prev.get("tool_calls") or []) if prev["role"] == "assistant" else []:
+                         if tc.get("id") == m["tool_call_id"] and "name" in tc["function"]:
+                             head += tc["function"]["name"]
+-        elif role == "assistant" and m.get("name"):
++        elif role == "assistant" and m.get("name") and not (policy and calls):   # the policy ignores the name of a message with calls
+             head += m["name"]
+-        calls = (m.get("tool_calls") or []) if role == "assistant" else []
+-        reasoning = m.get("reasoning_content") if role == "assistant" else None
++        reasoning = (m.get("reasoning_content") or (m.get("reasoning") if policy else None)) if role == "assistant" else None
++        if reasoning is not None and not isinstance(reasoning, str):
++            reasoning = None
+         content = m.get("content")
+         if reasoning:
+             out += head + "<|content_thinking|>" + reasoning + INKLING_END
+@@ -1134,13 +1149,15 @@
+             fn = tc["function"]
+             if not isinstance(fn.get("name"), str):
+                 raise ProbeError("tool call function name must be a string")
+-            if m.get("name") and m["name"] != fn["name"]:
++            if not policy and m.get("name") and m["name"] != fn["name"]:
+                 raise ProbeError(f"assistant name {m['name']} does not match its tool call {fn['name']}")
+             out += _ik_call(fn, True)
+         if role == "assistant":
+             out += INKLING_TERMINAL
+     if not emitted:
+         out += _ik_effort(reasoning_effort)
++    if demanded:
++        out += INKLING_DEMAND
+     return out
+ 
+ 
+@@ -1171,9 +1188,9 @@
+ _ik_generic = {"simulate": simulate, "render_calls": render_calls, "verify": verify, "derive": derive}
+ 
+ 
+-def simulate(chat, messages, tools=None, gen=False, enable_thinking=None, reasoning_effort=None):  # noqa: F811
++def simulate(chat, messages, tools=None, gen=False, enable_thinking=None, reasoning_effort=None, tool_choice=None):  # noqa: F811
+     if _is_inkling(chat):
+-        return inkling_simulate(chat, messages, tools, gen, enable_thinking, reasoning_effort)
++        return inkling_simulate(chat, messages, tools, gen, enable_thinking, reasoning_effort, tool_choice)
+     return _ik_generic["simulate"](chat, messages, tools, gen, enable_thinking, reasoning_effort)
+ 
+ 
+@@ -1246,7 +1263,7 @@
+     return label, False, f"differs at byte {k}: kit {got[max(0, k - 40):k + 60]!r} vs template {ref[max(0, k - 40):k + 60]!r}"
+ 
+ 
+-def verify(template_text, chat, bos="", eos=""):  # noqa: F811
++def _ik_verify_template(template_text, chat, bos="", eos=""):
+     if not _is_inkling(chat):
+         return _ik_generic["verify"](template_text, chat, bos, eos)
+     T = Template(template_text, bos, eos)
+@@ -1265,6 +1282,11 @@
+     for case in _ik_golden():
+         label, body, want = "golden " + case["name"], case["body"], case["jinja"]
+         kw = {"reasoning_effort": body["reasoning_effort"]} if "reasoning_effort" in body else {}
++        if case["expect"] == "policy":   # the policy cases are checked in _ik_verify_policy; the template's own render of tool_id_only stays here
++            if case["name"] == "tool_id_only":
++                results.append(_ik_check(label + " (template names)", simulate(chat, body["messages"], body.get("tools"), gen=True, **kw),
++                                         T.render(_ik_reference_messages(body["messages"]), tools=body.get("tools"), gen=True, **kw)))
++            continue
+         try:
+             got = simulate(chat, body["messages"], body.get("tools"), gen=True, **kw)
+         except ProbeError as e:
+@@ -1303,5 +1325,100 @@
+     return results
+ 
+ 
++def _ik_unresolved(msgs):
++    """The template cannot look a name up: every tool message without a name gets an id that no call carries."""
++    out = json.loads(json.dumps(msgs))
++    for m in out:
++        if m["role"] == "tool" and not m.get("name"):
++            m["tool_call_id"] = "unresolved"
++    return out
++
++
++def _ik_nameless(msgs):
++    out = json.loads(json.dumps(msgs))
++    for m in out:
++        if m["role"] == "assistant" and m.get("tool_calls"):
++            m.pop("name", None)
++    return out
++
++
++def _ik_aliased(msgs):
++    out = json.loads(json.dumps(msgs))
++    for m in out:
++        if "reasoning" in m:
++            m["reasoning_content"] = m.pop("reasoning")
++    return out
++
++
++def _ik_developer(msgs):
++    out = json.loads(json.dumps(msgs))
++    for m in out:
++        if m["role"] == "developer":
++            m["role"] = "system"
++    return out
++
++
++INKLING_POLICY_CASES = [
++    # name, messages, tools, request kwargs for simulate, how the template reference is made from the messages
++    ("tool message with only tool_call_id has no name", INKLING_STRING_ARGS[:3], TOOLS, {}, _ik_unresolved),
++    ("two tool messages without names", INKLING_STRING_ARGS[:2] + [{"role": "tool", "tool_call_id": "call_7_0", "content": "a"}, {"role": "tool", "tool_call_id": "call_7_1", "content": "b"}], TOOLS, {}, _ik_unresolved),
++    ("agent loop without names", [{"role": "user", "content": "Weather in Paris?"}, calls_msg("", [{"name": "get_weather", "arguments": {"city": "Paris"}}], reasoning="Need the tool."),
++                                  {"role": "tool", "tool_call_id": "call_0", "content": "{\"temp\": 18}"}, {"role": "assistant", "content": "It is 18."}, {"role": "user", "content": "Thanks"}], TOOLS, {}, _ik_unresolved),
++    ("developer message is a system message", [{"role": "developer", "content": "Be brief."}, {"role": "user", "content": "Hi"}], None, {}, _ik_developer),
++    ("developer message after the user", [{"role": "user", "content": "Hi"}, {"role": "developer", "content": "Be brief."}, {"role": "user", "content": "Hello"}], None, {}, _ik_developer),
++    ("assistant name is ignored with tool calls", [{"role": "user", "content": "Weather in Paris?"}, dict(calls_msg("", [{"name": "get_weather", "arguments": {"city": "Paris"}}]), name="bot"),
++                                                    {"role": "tool", "name": "get_weather", "tool_call_id": "call_0", "content": "ok"}], TOOLS, {}, _ik_nameless),
++    ("assistant name that differs from its call", [{"role": "user", "content": "x"}, dict(calls_msg("Checking.", [CALL1]), name="assistant"),
++                                                    {"role": "tool", "name": "get_weather", "content": "ok"}], TOOLS, {}, _ik_nameless),
++    ("reasoning field is reasoning_content", [{"role": "user", "content": "One"}, {"role": "assistant", "content": "Two", "reasoning": "Think."}, {"role": "user", "content": "Three"}], None, {}, _ik_aliased),
++    ("reasoning field on a call message", [{"role": "user", "content": "x"}, dict(calls_msg("", [CALL1]), reasoning="Need it."),
++                                           {"role": "tool", "name": "get_weather", "content": "ok"}], TOOLS, {}, _ik_aliased),
++    ("tool_choice none declares no tools", [{"role": "user", "content": "Weather in Paris?"}], TOOLS, {"tool_choice": "none"}, lambda m: m),
++    ("tool_choice none with tool history", [{"role": "user", "content": "Weather?"}, calls_msg("", [CALL1]), {"role": "tool", "name": "get_weather", "content": "ok"}], TOOLS, {"tool_choice": "none"}, lambda m: m),
++    ("tool_choice required demands a call", [{"role": "user", "content": "Weather in Paris?"}], TOOLS, {"tool_choice": "required"}, lambda m: m),
++    ("tool_choice named keeps one tool and demands a call", [{"role": "user", "content": "Weather in Paris?"}], TOOLS, {"tool_choice": {"type": "function", "function": {"name": "search"}}}, lambda m: m),
++    ("tool_choice required in a tool loop", [{"role": "user", "content": "Weather?"}, calls_msg("", [CALL1]), {"role": "tool", "name": "get_weather", "content": "ok"}], TOOLS, {"tool_choice": "required"}, lambda m: m),
++]
++
++
++def _ik_verify_policy(template_text, chat, bos="", eos=""):
++    """The deliberate differences of the Loom policy from the template, each against the template's own render of the equivalent message list."""
++    T = Template(template_text, bos, eos)
++    results = []
++    for name, msgs, tools, kw, reference in INKLING_POLICY_CASES:
++        for effort in (None, "low"):
++            label = "policy: " + name + (f" (reasoning_effort={effort!r})" if effort else "")
++            eff = {"reasoning_effort": effort} if effort else {}
++            choice = kw.get("tool_choice")
++            ref_tools = None if choice == "none" else [t for t in tools if (t.get("function") or t).get("name") == (choice.get("function") or choice).get("name")] if isinstance(choice, dict) else tools
++            ref_msgs = reference(msgs) + ([{"role": "system", "content": INKLING_DEMAND[len("<|message_system|><|content_text|>"):-len("<|end_message|>")]}] if tools and (choice == "required" or isinstance(choice, dict)) else [])
++            try:
++                ref = T.render(_ik_reference_messages(ref_msgs), tools=ref_tools, gen=True, **eff)
++            except ProbeError as e:
++                results.append((label, None, f"template refuses: {e}"))
++                continue
++            results.append(_ik_check(label, simulate(chat, msgs, tools, gen=True, **eff, **kw), ref))
++    for case in _ik_golden():
++        if case["expect"] != "policy":
++            continue
++        body = case["body"]
++        kwargs = body.get("chat_template_kwargs") or {}
++        got = simulate(chat, body["messages"], body.get("tools"), gen=True, enable_thinking=kwargs.get("enable_thinking"),
++                       reasoning_effort=body.get("reasoning_effort"), tool_choice=body.get("tool_choice"))
++        results.append(_ik_check("golden policy " + case["name"], got, case["jinja"]))
++    return results
++
++
++def verify(template_text, chat, bos="", eos=""):  # noqa: F811
++    if not _is_inkling(chat):
++        return _ik_generic["verify"](template_text, chat, bos, eos)
++    INKLING_MODE["template"] = True
++    try:
++        results = _ik_verify_template(template_text, chat, bos, eos)
++    finally:
++        INKLING_MODE["template"] = False
++    return results + _ik_verify_policy(template_text, chat, bos, eos)
++
++
+ if __name__ == "__main__":  # last: main() must see the inkling overrides above
+     main()

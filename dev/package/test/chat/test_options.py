@@ -66,6 +66,7 @@ for name, extra, want in [
     ("null options", {"temperature": None, "top_p": None, "top_k": None, "seed": None, "tool_choice": None}, (1.0, 1.0, 0, 0, None)),
     ("default values of unsupported fields", {"n": 1, "stop": None, "logprobs": False, "frequency_penalty": 0, "presence_penalty": 0, "repetition_penalty": 1, "min_p": 0, "response_format": None, "chat_template_kwargs": None}, (1.0, 1.0, 0, 0, None)),
     ("template kwargs object", {"chat_template_kwargs": {"enable_thinking": False}}, (1.0, 1.0, 0, 0, None)),
+    ("template kwargs unknown key is ignored", {"chat_template_kwargs": {"foo": 1, "preserve_thinking": True}}, (1.0, 1.0, 0, 0, None)),
     ("unknown extension fields", {"user": "u", "metadata": {"a": 1}, "store": False, "parallel_tool_calls": True}, (1.0, 1.0, 0, 0, None)),
 ]:
     status, got = record(extra)
@@ -76,7 +77,7 @@ for name, extra in [
     ("zero top_p", {"top_p": 0}), ("top_p above one", {"top_p": 1.5}), ("negative top_k", {"top_k": -1}), ("fractional top_k", {"top_k": 1.5}), ("huge top_k", {"top_k": 3000000000}),
     ("fractional seed", {"seed": 1.5}), ("string seed", {"seed": "7"}), ("n above one", {"n": 2}), ("stop", {"stop": ["x"]}), ("logprobs", {"logprobs": True}),
     ("penalty", {"presence_penalty": 0.5}), ("repetition penalty", {"repetition_penalty": 1.1}), ("min_p", {"min_p": 0.1}), ("response_format", {"response_format": {"type": "json_object"}}),
-    ("template kwargs string", {"chat_template_kwargs": "x"}), ("template kwargs unknown key", {"chat_template_kwargs": {"foo": 1}}), ("logit_bias", {"logit_bias": {"1": 5}}),
+    ("template kwargs string", {"chat_template_kwargs": "x"}), ("logit_bias", {"logit_bias": {"1": 5}}),
 ]:
     status, got = record(extra)
     check(f"rejects {name}", status == 400, f"status {status} {got if status != 400 else ''}")

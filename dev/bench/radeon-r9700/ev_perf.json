@@ -7,7 +7,7 @@
    "differs": [
     "not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache",
     "not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot)",
-    "Loom rows: one serve session of ab_session.py (decode short, decode 32k, 4 streams); decode 2k, 8k and the prefill rows were not re-measured with perf.py for this build"
+    "Loom rows were measured on the build before the chat fixes (prefix cache and chat template changes); the perf guard of those changes showed decode unchanged and prefill within noise"
    ],
    "name": "llama.cpp",
    "version": "llama.cpp-cpu/418fe97+PR32704"
@@ -15,20 +15,24 @@
   "session": {
    "aggregate": "median",
    "commands": [
-    "loom-serve --device=amdgpu://<URI>?completion_spin_ns=4294967295 --model=<preset dir> --preset=chat-r9700 --pool_backing=fixed --workers=8",
-    "ab_session.py URL TAG dshort,d32k,c4 3 --model thinkingmachines/Inkling-2-Mini  (one fresh server session, 3 requests per metric, median; the merged build on hrx-loom 0.3.0)",
+    "loom-serve --device='amdgpu://<URI>?completion_spin_ns=4294967295' --model=<preset dir> --preset=chat-r9700 --pool_backing=fixed --workers=8",
+    "perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini",
+    "perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini --long",
+    "c4_steady.py URL 4 --model thinkingmachines/Inkling-2-Mini --label loom-baseline",
     "perf.py URL llama-cpu-baseline --kind llama --repeats 3 [--long]  (llama-server -ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja)"
    ],
-   "date": "2026-11-22",
+   "date": "2026-11-23",
    "metrics": {
     "decode": {
      "baseline": 14.9,
      "baseline_runs": [
       14.86
      ],
-     "loom": 94.9,
+     "loom": 95.1,
      "loom_runs": [
-      94.86
+      95.43,
+      95.09,
+      95.14
      ]
     },
     "decode_2k": {
@@ -36,13 +40,20 @@
      "baseline_runs": [
       11.26
      ],
-     "loom": null
+     "loom": 87.7,
+     "loom_runs": [
+      87.7,
+      87.44,
+      87.75
+     ]
     },
     "decode_32k": {
      "baseline": null,
-     "loom": 75.4,
+     "loom": 74.8,
      "loom_runs": [
-      75.38
+      74.79,
+      74.3,
+      74.81
      ]
     },
     "prefill_16k": {
@@ -50,46 +61,71 @@
      "baseline_runs": [
       44.6
      ],
-     "loom": null
+     "loom": 2972.2,
+     "loom_runs": [
+      2972.2,
+      2969.2,
+      2984.7
+     ]
     },
     "prefill_1k": {
      "baseline": 57.6,
      "baseline_runs": [
       57.6
      ],
-     "loom": null
+     "loom": 2725.0,
+     "loom_runs": [
+      2725.0,
+      2717.7,
+      2725.9
+     ]
     },
     "prefill_2k": {
      "baseline": 53.6,
      "baseline_runs": [
       53.6
      ],
-     "loom": null
+     "loom": 3196.5,
+     "loom_runs": [
+      3196.5,
+      3190.0,
+      3200.4
+     ]
+    },
+    "prefill_32k": {
+     "baseline": null,
+     "loom": 2338.6,
+     "loom_runs": [
+      2338.6,
+      2337.6,
+      2345.2
+     ]
     },
     "prefill_8k": {
      "baseline": 48.7,
      "baseline_runs": [
       48.7
      ],
-     "loom": null
+     "loom": 3297.2,
+     "loom_runs": [
+      3297.2,
+      3295.1,
+      3307.5
+     ]
     },
     "streams4": {
      "baseline": null,
-     "loom": 213.2,
+     "loom": 225.3,
      "loom_runs": [
-      213.41,
-      211.04,
-      213.22
+      225.0,
+      227.8,
+      225.3
      ]
     }
    },
    "programs_sha256": "912bc5e135ade06ca8afeac48422fa75079fe62bb1cd530c612b165c1bc773de",
    "runs": {
-    "decode_prefill": 1,
-    "samples": {
-     "decode": 3,
-     "decode_32k": 3
-    },
+    "decode_prefill": 3,
     "streams4": 3
    },
    "source": {

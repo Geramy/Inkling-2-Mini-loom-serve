@@ -8,6 +8,8 @@ config.decl @inkling.capture_id : %value: index where [range(%value, 0, 1024)]
 
 kernel.decl @inkling_prep_spans() launch(%metadata: buffer, %origins: buffer, %span_table: buffer, %token_map: buffer)
 
+kernel.decl @inkling_fork_state() launch(%span_table: buffer, %arena: buffer)
+
 kernel.decl @inkling_capture_rows() launch(%src_width: index, %col: index, %half: index, %metadata: buffer, %src: buffer, %residual: buffer)
 
 target.decl @inkling_execution
@@ -88,6 +90,7 @@ command.def public target(@inkling_execution) @inkling_model() launch(%parameter
   %y = buffer.alloca<global> align(256) %b_y : buffer
   command.serial {
     kernel.launch @inkling_prep_spans(%metadata, %origins, %span_table, %token_map) : (buffer, buffer, buffer, buffer)
+    kernel.launch @inkling_fork_state(%span_table, %arena) : (buffer, buffer)
     command.launch @inkling_hook_embed(%parameters, %metadata, %tokens, %embd, %cur) : (buffer, buffer, buffer, buffer, buffer)
     %capture = config.get @inkling.capture_id : index
     command.launch @inkling_hook_debug[%capture](%parameters, %metadata, %cur, %residual) : [index](buffer, buffer, buffer, buffer)

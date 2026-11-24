@@ -95,3 +95,66 @@ kernel.def target(@target) @inkling_prep_spans() {
   }
   kernel.return
 }
+
+// The first span after a fork reads the anchor slot but the attention kernels (ring, conv state) use the write slot only: copy the recurrent region of every such span from its read slot to its write slot.
+// Grid: x = 1024 chunks of 41896 words (the region is 42,901,504 words), y = span.
+kernel.def target(@target) @inkling_fork_state() {
+  %spans = config.get @inkling.spans : index
+  %c1 = index.constant 1 : index
+  %c1024 = index.constant 1024 : index
+  %c256 = index.constant 256 : index
+  kernel.launch.config workgroups(%c1024, %spans, %c1) workgroup_size(%c256, %c1, %c1) : index
+} launch(%span_table: buffer, %arena: buffer) {
+  %spans = config.get @inkling.spans : index
+  %origin = index.constant 0 : offset
+  %c16 = index.constant 16 : offset
+  %c0 = index.constant 0 : index
+  %c256 = index.constant 256 : index
+  %chunk_bytes = index.constant 167584 : offset
+  %words = index.constant 41896 : index
+  %c32 = scalar.constant 32 : i64
+  %chunk0 = kernel.workgroup.id<x> : index
+  %chunk = index.assume %chunk0 [range(%chunk0, 0, 1023)] : index
+  %span = kernel.workgroup.id<y> : index
+  %item = kernel.workitem.id<x> : index
+  %header = buffer.view %span_table[%origin] : buffer -> view<4xi32>
+  %table = buffer.view %span_table[%c16] : buffer -> view<[%spans]x8xi32>
+  %live_spans = view.load %header[0] : view<4xi32> -> i32
+  %count = index.cast %live_spans : i32 to index
+  %live = index.cmp ult, %span, %count : index
+  scf.if %live {
+    %bounded = index.assume %span [range(%span, 0, 2147483646), lt(%span, %spans)] : index
+    %read_lo = view.load %table[%bounded, 2] : view<[%spans]x8xi32> -> i32
+    %read_hi = view.load %table[%bounded, 3] : view<[%spans]x8xi32> -> i32
+    %write_lo = view.load %table[%bounded, 4] : view<[%spans]x8xi32> -> i32
+    %write_hi = view.load %table[%bounded, 5] : view<[%spans]x8xi32> -> i32
+    %lo_differs = scalar.cmpi ne, %read_lo, %write_lo : i32
+    %hi_differs = scalar.cmpi ne, %read_hi, %write_hi : i32
+    %differs = scalar.ori %lo_differs, %hi_differs : i1
+    scf.if %differs {
+      %rl = scalar.extui %read_lo : i32 to i64
+      %rh = scalar.extui %read_hi : i32 to i64
+      %rh_shifted = scalar.shli %rh, %c32 : i64
+      %read64 = scalar.ori %rh_shifted, %rl : i64
+      %wl = scalar.extui %write_lo : i32 to i64
+      %wh = scalar.extui %write_hi : i32 to i64
+      %wh_shifted = scalar.shli %wh, %c32 : i64
+      %write64 = scalar.ori %wh_shifted, %wl : i64
+      %read_ok = scalar.assume %read64 [range(%read64, 0, 9223372036854775807)] : i64
+      %write_ok = scalar.assume %write64 [range(%write64, 0, 9223372036854775807)] : i64
+      %read_base = index.cast %read_ok : i64 to offset
+      %write_base = index.cast %write_ok : i64 to offset
+      %inside = index.scale %chunk, %chunk_bytes : index, offset -> offset
+      %src_at = index.add %read_base, %inside : offset
+      %dst_at = index.add %write_base, %inside : offset
+      %src = buffer.view %arena[%src_at] : buffer -> view<41896xi32>
+      %dst = buffer.view %arena[%dst_at] : buffer -> view<41896xi32>
+      scf.for %j = [%item to %words step %c256] {
+        %at = index.assume %j [range(%j, 0, 41895)] : index
+        %value = view.load %src[%at] : view<41896xi32> -> i32
+        view.store %value, %dst[%at] : i32, view<41896xi32>
+      }
+    }
+  }
+  kernel.return
+}

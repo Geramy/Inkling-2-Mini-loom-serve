@@ -37,9 +37,10 @@ CHECKPOINT_DIR = "Mainline_Support"
 STRUCTURE = ["<|message_user|>", "<|message_model|>", "<|message_system|>", "<|message_tool|>", "<|content_text|>", "<|content_image|>", "<|content_thinking|>", "<|end_message|>", "<|content_tool_error|>", "<|content_xml|>", "<|content_invoke_tool_json|>", "<|content_invoke_tool_text|>"]
 
 PRESET_CONTEXT = {"chat": 131072, "chat-r9700": 131072, "chat-q8": 32768, "chat-q8-r9700": 32768}
-TRANSIENT_BYTES = {"chat": 8000000000, "chat-r9700": 8000000000, "chat-q8": 3600000000, "chat-q8-r9700": 3600000000}
+TRANSIENT_BYTES = {"chat": 10800000000, "chat-r9700": 10800000000, "chat-q8": 6400000000, "chat-q8-r9700": 6400000000}
 PREFILL_CAPACITY = {"chat": 2048, "chat-r9700": 2048, "chat-q8": 512, "chat-q8-r9700": 512}
-DELIBERATE = ("execution.context_capacity", "execution.prefill_capacity", "memory.transient_bytes", "memory.workload")
+PREFIX_CACHE_CAPACITY = {"chat": 16, "chat-r9700": 16, "chat-q8": 16, "chat-q8-r9700": 16}
+DELIBERATE = ("execution.context_capacity", "execution.prefill_capacity", "execution.prefix_cache_capacity", "memory.transient_bytes", "memory.workload")
 
 PRESETS = {
     "chat": ("interactive-q4", "ud-q4-k-xl"),
@@ -108,8 +109,9 @@ def build_card(old):
         assert p["variant"] == variant and p["service"] == "chat"
         p["execution"]["context_capacity"] = PRESET_CONTEXT[new]
         p["execution"]["prefill_capacity"] = PREFILL_CAPACITY[new]
+        p["execution"]["prefix_cache_capacity"] = PREFIX_CACHE_CAPACITY[new]
         p["memory"]["transient_bytes"] = TRANSIENT_BYTES[new]
-        p["memory"]["workload"] = f"4 rows, {PRESET_CONTEXT[new]} context, {PREFILL_CAPACITY[new]} prefill tokens, 4 checkpoints; measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
+        p["memory"]["workload"] = f"4 rows, {PRESET_CONTEXT[new]} context, {PREFILL_CAPACITY[new]} prefill tokens, 4 checkpoints, {PREFIX_CACHE_CAPACITY[new]} prefix cache endpoints (0.17 GB each); measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
         card["presets"][new] = p
     return card
 
@@ -130,9 +132,10 @@ def verify(old, card):
         a, b = copy.deepcopy(old["presets"][olds]), copy.deepcopy(card["presets"][new_name])
         assert b["execution"].pop("context_capacity") == PRESET_CONTEXT[new_name]
         assert b["execution"].pop("prefill_capacity") == PREFILL_CAPACITY[new_name]
+        assert b["execution"].pop("prefix_cache_capacity") == PREFIX_CACHE_CAPACITY[new_name]
         assert b["memory"].pop("transient_bytes") == TRANSIENT_BYTES[new_name]
         b["memory"].pop("workload")
-        a["execution"].pop("context_capacity"); a["execution"].pop("prefill_capacity"); a["memory"].pop("transient_bytes"); a["memory"].pop("workload")
+        a["execution"].pop("context_capacity"); a["execution"].pop("prefill_capacity"); a["execution"].pop("prefix_cache_capacity"); a["memory"].pop("transient_bytes"); a["memory"].pop("workload")
         assert a == b, new_name
     print("verify: chat service config, variants and programs equal package/card.json; presets equal it except " + ", ".join(DELIBERATE))
 

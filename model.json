@@ -160,12 +160,12 @@
     "checkpoint_capacity": 4,
     "max_tokens": 4096,
     "session_cache_capacity": 0,
-    "prefix_cache_capacity": 0
+    "prefix_cache_capacity": 16
    },
    "memory": {
     "weights_bytes": 17617780736,
-    "transient_bytes": 8000000000,
-    "workload": "4 rows, 131072 context, 2048 prefill tokens, 4 checkpoints; measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
+    "transient_bytes": 10800000000,
+    "workload": "4 rows, 131072 context, 2048 prefill tokens, 4 checkpoints, 16 prefix cache endpoints (0.17 GB each); measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
    }
   },
   "chat-r9700": {
@@ -179,12 +179,12 @@
     "checkpoint_capacity": 4,
     "max_tokens": 4096,
     "session_cache_capacity": 0,
-    "prefix_cache_capacity": 0
+    "prefix_cache_capacity": 16
    },
    "memory": {
     "weights_bytes": 17617780736,
-    "transient_bytes": 8000000000,
-    "workload": "4 rows, 131072 context, 2048 prefill tokens, 4 checkpoints; measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
+    "transient_bytes": 10800000000,
+    "workload": "4 rows, 131072 context, 2048 prefill tokens, 4 checkpoints, 16 prefix cache endpoints (0.17 GB each); measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
    }
   },
   "chat-q8": {
@@ -198,12 +198,12 @@
     "checkpoint_capacity": 4,
     "max_tokens": 4096,
     "session_cache_capacity": 0,
-    "prefix_cache_capacity": 0
+    "prefix_cache_capacity": 16
    },
    "memory": {
     "weights_bytes": 22855473152,
-    "transient_bytes": 3600000000,
-    "workload": "4 rows, 32768 context, 512 prefill tokens, 4 checkpoints; measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
+    "transient_bytes": 6400000000,
+    "workload": "4 rows, 32768 context, 512 prefill tokens, 4 checkpoints, 16 prefix cache endpoints (0.17 GB each); measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
    }
   },
   "chat-q8-r9700": {
@@ -217,12 +217,12 @@
     "checkpoint_capacity": 4,
     "max_tokens": 4096,
     "session_cache_capacity": 0,
-    "prefix_cache_capacity": 0
+    "prefix_cache_capacity": 16
    },
    "memory": {
     "weights_bytes": 22855473152,
-    "transient_bytes": 3600000000,
-    "workload": "4 rows, 32768 context, 512 prefill tokens, 4 checkpoints; measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
+    "transient_bytes": 6400000000,
+    "workload": "4 rows, 32768 context, 512 prefill tokens, 4 checkpoints, 16 prefix cache endpoints (0.17 GB each); measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
    }
   }
  },

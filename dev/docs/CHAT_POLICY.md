@@ -115,3 +115,7 @@ scripts/chat_golden.py 18400 oracle/chat_template.jinja golden.json   # needs ll
 - A client that does not echo `reasoning_content` always replays; the prefix cache (`prefix_cache_capacity`) could soften this and is not enabled here.
 - `max_tokens` is native; it counts the terminal token and cannot be tied to the effort.
 - Rejected on purpose: silent acceptance of penalties, `stop`, `n`, `logprobs`, `response_format`, `min_p` with non-neutral values; guessing tool names from IDs; trimming message content (the template does not).
+
+## 8. Lane CHATFIX changes (2026-11-24; details and evidence in docs/OPT_CHATFIX.md)
+
+Section 2 "Differences from the template" and the tool-name text above describe the base. The chat policy now differs from the template in these further ways, all deliberate: a `tool` message without `name` is accepted and rendered without a name; role `developer` is a `system` message; an `assistant` message with tool calls ignores its `name`; the assistant `reasoning` string is read when `reasoning_content` is absent; unknown `chat_template_kwargs` keys are ignored; `tool_choice` `none` leaves the tool declaration out of the prompt. The prefix cache is enabled (`prefix_cache_capacity` 16); the sentence in section 7 about it not being enabled no longer holds.

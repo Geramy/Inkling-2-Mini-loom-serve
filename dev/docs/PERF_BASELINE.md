@@ -1,26 +1,46 @@
-# Performance, Q4_K_XL, wave 2 build on hrx-loom 0.3.0 (agent integ3, 2026-11-22, bead llama-cpp-tg3.28)
+# Performance, Q4_K_XL, wave 2 build on hrx-loom 0.3.0, full skills table (agent integ3, 2026-11-24, bead llama-cpp-tg3.28)
 
-Build: `package/` = wave 1 (`package_T10b`) + D2 (attention front end, grouped projection GEMV) + D6 (experts decode pipelining) + W64 (wave64 down kernel, 8060S only) + D3 (controllers, router), merged and measured by M30 (`docs/OPT_M30.md`, evidence `bench/M30/`, `bench/M30/ab_log_M30.jsonl`). Runtime: hrx-loom 0.3.0. Presets `chat-r9700` (gfx1201) and `chat` (gfx1151), context 131072, rows 4, prefill capacity 2048.
+Build: `package/` = wave 1 (`package_T10b`) + D2 (attention front end, grouped projection GEMV) + D6 (experts decode pipelining) + W64 (wave64 down kernel, 8060S only) + D3 (controllers, router), merged by M30 (`docs/OPT_M30.md`, `bench/M30/`). Runtime hrx-loom 0.3.0. Presets `chat-r9700` (gfx1201) and `chat` (gfx1151), context 131072, rows 4, prefill capacity 2048.
 
-Method: one fresh server per GPU under the exclusive lock, `scripts/ab_session.py` (decode short, 8k, 32k, prefill 2k, 4 streams; 3 requests per metric, median). This is ONE session per GPU. The wave 1 numbers below it are medians of 3 sessions of `perf_session.sh` (`perf.py`). Decode rows agree between the tools; prefill and 4-stream rows do not (different request shapes), so the wave 1 reference for those rows is the same tool (`ab_session.py`, build T10b on 0.2.0, lane docs).
+Measured with `perf_session.sh <gpu> <n> spin full` (3 fresh servers per GPU, one at a time under `flock -x`, `perf.py` rows, `c4_steady.py`, decode at 8k), the same method and tools as the wave 1 table below. Medians of 3 sessions. The measured programs are the M30 build; the published build adds the chat fixes of lane CHATFIX (prefix cache 16, tolerant tool policy, fork-state fix), whose perf guard showed decode unchanged (94.60 to 94.92 against 94.72 / 94.84 tok/s) and prefill 2k within the session drift (about 2 percent); the full table was not re-measured on the CHATFIX build.
 
-## Wave 2 results, tok/s
+## R9700 (gfx1201, chat-r9700), tok/s
 
-| Row | R9700 wave 2 | R9700 wave 1 (published) | Change | 8060S wave 2 | 8060S wave 1 (published) | Change |
-|---|---|---|---|---|---|---|
-| decode, short prompt | 94.86 | 90.2 | +5.2 % | 42.80 | 39.7 | +7.8 % |
-| decode, 8k context | 84.77 | 80.3 | +5.6 % | 37.81 | 34.9 | +8.3 % |
-| decode, 32k context | 75.38 | 71.3 | +5.7 % | 32.44 | 29.7 | +9.2 % |
-| prefill 2k (`ab_session.py` row) | 3704 | 3556 to 3561 (same tool) | +4.0 % | 1221 | 1116 to 1191 (same tool) | about +3 % |
-| 4 streams, aggregate decode | 213.2 | 205.2 to 206.3 (same tool) | +3.7 % | 88.06 | 82.2 to 83.9 (same tool) | +5.4 % |
+| Row | Median | Raw (sessions 1, 2, 3) | Wave 1 | Change | M30 single session (`ab_session.py`) |
+|---|---|---|---|---|---|
+| decode, short | 95.1 | 95.43, 95.09, 95.14 | 90.2 | +5.4 % | 94.86 |
+| decode, 2k | 87.7 | 87.70, 87.44, 87.75 | 83.2 | +5.4 % | |
+| decode, 8k (extra) | 84.5 | 84.46, 84.13, 84.63 | 80.3 | +5.2 % | 84.77 |
+| decode, 32k | 74.8 | 74.79, 74.30, 74.81 | 71.3 | +4.9 % | 75.38 |
+| prefill 1k (1258 tokens) | 2725.0 | 2725.0, 2717.7, 2725.9 | 2576.3 | +5.8 % | |
+| prefill 2k (2454) | 3196.5 | 3196.5, 3190.0, 3200.4 | 2996.0 | +6.7 % | 3704 (other tool) |
+| prefill 8k (9083) | 3297.2 | 3297.2, 3295.1, 3307.5 | 3091.5 | +6.7 % | |
+| prefill 16k (18436) | 2972.2 | 2972.2, 2969.2, 2984.7 | 2800.9 | +6.1 % | |
+| prefill 32k (37007) | 2338.6 | 2338.6, 2337.6, 2345.2 | 2242.0 | +4.3 % | |
+| 4 streams, aggregate | 225.3 | 225.0, 227.8, 225.3 | 218.9 | +2.9 % | 213.2 (other tool) |
 
-Distance to the roofline ceiling (Q4_K_XL file, floors 154.6 and 57.3 tok/s at short context): R9700 94.86 / 154.6 = 0.61, 8060S 42.80 / 57.3 = 0.75 (wave 1: 0.58 and 0.69). The remaining gap is 4.4 ms (R9700) and 6.0 ms (8060S) per token.
+## 8060S (gfx1151, chat), tok/s
 
-Measured at kernel level per lane (0.2.0, `docs/OPT_D2.md`, `OPT_D6.md`, `OPT_W64.md`, `OPT_D3.md`) and as one merged session per GPU here. Not measured: per-lane end-to-end gains on 0.3.0, an ABBA of the merged build, the wave 1 build on 0.2.0 in the same session (owner order). On the R9700 the wave 1 build on 0.3.0 reads 87.45 (decode short), 3 percent under the published 0.2.0 number; the cause (0.3.0 or session) is not separated. The 8060S shows no such change.
+| Row | Median | Raw (sessions 1, 2, 3) | Wave 1 | Change | M30 single session (`ab_session.py`) |
+|---|---|---|---|---|---|
+| decode, short | 42.6 | 42.82, 42.65, 42.49 | 39.7 | +7.3 % | 42.80 |
+| decode, 2k | 39.4 | 39.38, 39.40, 39.00 | 36.7 | +7.4 % | |
+| decode, 8k (extra) | 37.6 | 37.57, 37.64, 37.34 | 34.9 | +7.7 % | 37.81 |
+| decode, 32k | 32.3 | 32.33, 32.32, 32.05 | 29.7 | +8.8 % | 32.44 |
+| prefill 1k (1258 tokens) | 937.1 | 964.1, 937.1, 914.9 | 893.7 | +4.9 % | |
+| prefill 2k (2454) | 1094.5 | 1114.6, 1094.5, 1066.3 | 1033.1 | +5.9 % | 1221 (other tool) |
+| prefill 8k (9083) | 1122.6 | 1140.6, 1122.6, 1092.0 | 1050.7 | +6.8 % | |
+| prefill 16k (18436) | 1040.2 | 1050.6, 1040.2, 1012.2 | 973.1 | +6.9 % | |
+| prefill 32k (37007) | 867.2 | 885.5, 867.2, 847.3 | 811.8 | +6.8 % | |
+| 4 streams, aggregate | 95.7 | 95.7, 95.8, 94.7 | 89.0 | +7.5 % | 88.06 |
 
-Not re-measured for wave 2 (wave 1 values below stay valid only for the wave 1 build): decode 2k, prefill 1k, 8k, 16k and 32k with `perf.py`, time to first token, cold start. The card (`bench/<gpu>/ev_perf.json`) therefore holds decode short, decode 32k and 4 streams from this session (`scripts/perf_log_from_ab.py` turns the `ab_session.py` row into the `perf.py` log format, then `scripts/perf_evidence.sh`); the other rows are empty and the previous card evidence is kept as `ev_perf_wave1.json`.
+The fresh numbers differ from the M30 single-session numbers: decode within 0.6 percent (R9700 short 95.1 against 94.86; 8060S 42.6 against 42.80), 4 streams +5.7 percent on the R9700 (225.3 against 213.2) and +8.7 percent on the 8060S (95.7 against 88.06). Prefill and 4-stream rows of the M30 table come from `ab_session.py`, which measures differently (see the wave 1 notes), so only the same-tool rows of this table are compared with wave 1. Spreads: decode 0.2 to 0.7 %, prefill up to 3.7 % (8060S), 4 streams up to 1.2 %.
 
-Greedy text of the merged build equals the wave 1 build (prompts A, B, C and documents of 8k and 32k tokens, both GPUs). Kernel tests 33 of 33 on both GPUs. Gates at dev level (M30): consistency, agent, golden and compare pass (R9700 compare dev 7 full, max gap 0.582; 8060S 9 full, max gap 0.296), sampling fails by design as in wave 1. Context admission of 130,991 tokens completes in 174 s (R9700) and 591 s (8060S) after the gate run.
+Decode against the ceiling (154.3 and 57.2 tok/s at short context): R9700 0.62, 8060S 0.74 (wave 1: 0.58, 0.69).
+
+Cold start (`coldstart.jsonl`, 3 sessions): server start to ready 2.05 to 2.54 s (R9700) and 2.55 s (8060S); first request (weights load) 3.22 s and 0.77 to 0.80 s; second request 0.12 s and 0.27 s. Time to first token at 8k (9083 tokens): 2.82 s (R9700), 8.1 to 8.3 s (8060S). Kernel cache warm.
+
+Greedy text of the M30 build equals wave 1 (A, B, C, 8k, 32k, both GPUs). Kernel tests 33 of 33. Dev gates (M30 build): consistency, agent, golden and compare pass; sampling fails by design. Gates of the CHATFIX build: `docs/OPT_CHATFIX.md`.
 
 ---
 

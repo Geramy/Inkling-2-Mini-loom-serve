@@ -14,7 +14,7 @@ PASS  present llm_config.json
 PASS  present weights.loom
 PASS  present tokenizer.json
 PASS  every .loom file is named by model.json
-tree: 80 files, 13149326 bytes (no weights)
+tree: 80 files, 13162785 bytes (no weights)
 == b) r9700: fetch preset chat-r9700 into an empty directory
 PASS  loom-fetch chat-r9700
 fetched: 75 files; loom files: 69; has lib/pr1: no
@@ -50,4 +50,3 @@ device ['AMD Radeon 8060S Graphics']
 reply 64 'Hello! How can I help you today?'
 PASS  quick start request
 publish_check: PASS
-0
