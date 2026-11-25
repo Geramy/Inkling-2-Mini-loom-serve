@@ -1,0 +1,74 @@
+From 8f4f6b560794bddcab660568cb4d543dc3656d4c Mon Sep 17 00:00:00 2001
+From: Geramy Loveless <geramy.loveless@amd.com>
+Date: Tue, 24 Nov 2026 12:05:10 -0800
+Subject: [PATCH] [Loom] Default the tool call type to function in chat history
+
+An assistant tool_calls entry in request history without a type failed with
+HTTP 400 "assistant tool_calls must be functions". Function is the only
+defined type, and some agent clients leave the field out.
+
+A missing or null type now means function. Any other value, including an
+empty string or a non-string, is still rejected.
+
+Tested with tool_policy_test, source_chat_test, chat_policy_test and
+chat_test (CMake, clang).
+---
+ loom/src/loom/serve/service/text/chat.c       |  6 ++++--
+ .../serve/service/text/tool_policy_test.py    | 20 +++++++++++++++++++
+ 2 files changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/loom/src/loom/serve/service/text/chat.c b/loom/src/loom/serve/service/text/chat.c
+index b1932973..782284d7 100644
+--- a/loom/src/loom/serve/service/text/chat.c
++++ b/loom/src/loom/serve/service/text/chat.c
+@@ -1198,12 +1198,14 @@ static iree_status_t loom_serve_text_chat_history_tool(
+   }
+   loom_serve_text_chat_field_t fields[] = {
+       {"id", LOOM_SERVE_TEXT_CHAT_STRING | LOOM_SERVE_TEXT_CHAT_NULL},
+-      {"type", LOOM_SERVE_TEXT_CHAT_STRING},
++      {"type", LOOM_SERVE_TEXT_CHAT_STRING | LOOM_SERVE_TEXT_CHAT_NULL},
+       {"function", LOOM_SERVE_TEXT_CHAT_OBJECT}};
+   IREE_RETURN_IF_ERROR(loom_serve_text_chat_request_fields(
+       value, IREE_ARRAYSIZE(fields), fields));
+   IREE_RETURN_IF_ERROR(loom_serve_text_chat_required(&fields[2]));
+-  if (!iree_string_view_equal(fields[1].value, IREE_SV("function"))) {
++  // A missing or null type defaults to function, the only defined type.
++  if (fields[1].value.data &&
++      !iree_string_view_equal(fields[1].value, IREE_SV("function"))) {
+     return iree_make_status(IREE_STATUS_INVALID_ARGUMENT,
+                             "assistant tool_calls must be functions");
+   }
+diff --git a/loom/src/loom/serve/service/text/tool_policy_test.py b/loom/src/loom/serve/service/text/tool_policy_test.py
+index 41db2ce0..8b3b5677 100644
+--- a/loom/src/loom/serve/service/text/tool_policy_test.py
++++ b/loom/src/loom/serve/service/text/tool_policy_test.py
+@@ -341,6 +341,26 @@ class ToolPolicyTest(unittest.TestCase):
+                 self.assertIn('read: {"q":"styles.css"}', value["prompt"])
+                 self.assertIn("missing required property path", value["prompt"])
+ 
++    def test_history_call_type_defaults_to_function(self):
++        def history(**fields):
++            call = {"id": "call_1_0", "function": self.call()["function"], **fields}
++            return [
++                {"role": "assistant", "content": None, "tool_calls": [call]},
++                {"role": "user", "content": "hello"},
++            ]
++
++        for fields in ({}, {"type": None}, {"type": "function"}):
++            with self.subTest(fields=fields):
++                result = self.execute("[]", messages=history(**fields))
++                self.assertEqual(result.returncode, 0, result.stderr)
++                self.assertIn('read: {"path":"a"}', json.loads(result.stdout)["prompt"])
++        for fields in ({"type": "custom"}, {"type": ""}, {"type": 7}):
++            with self.subTest(fields=fields):
++                result = self.execute("[]", messages=history(**fields))
++                self.assertNotEqual(result.returncode, 0)
++                self.assertEqual(result.stdout, "")
++                self.assertIn("INVALID_ARGUMENT", result.stderr)
++
+     def test_history_and_generated_calls_share_decoded_function_fields(self):
+         call = {"id": "call_1_0", **self.call(arguments="{}")}
+         call["function"]["name"] = "r\\u0065ad"
+-- 
+2.56.1.windows.1
+

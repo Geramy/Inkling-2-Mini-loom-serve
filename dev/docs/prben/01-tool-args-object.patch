@@ -1,0 +1,122 @@
+From 6b1742103e9cff037a85968066b90df5697eccc5 Mon Sep 17 00:00:00 2001
+From: Geramy Loveless <geramy.loveless@amd.com>
+Date: Tue, 24 Nov 2026 12:03:05 -0800
+Subject: [PATCH] [Loom] Accept JSON object tool call arguments in chat history
+
+Assistant tool_calls[].function.arguments in request history had to be a
+JSON string. The OpenAI SDK sends a string, but llama.cpp, vLLM and several
+agent clients send the arguments as a JSON object, and these requests failed
+with HTTP 400 "chat field 'arguments' expects JSON type string".
+
+History now accepts a string or an object. An object reaches the source
+policy as its original JSON text, with no re-encoding. Tool calls that the
+model makes still need a string, and other types (number, array, null,
+boolean) are still rejected.
+
+Tested with tool_policy_test, source_chat_test, chat_policy_test and
+chat_test (CMake, clang).
+---
+ loom/src/loom/serve/service/text/chat.c       | 25 +++++++++++++------
+ .../serve/service/text/tool_policy_test.py    | 25 +++++++++++++++++++
+ 2 files changed, 42 insertions(+), 8 deletions(-)
+
+diff --git a/loom/src/loom/serve/service/text/chat.c b/loom/src/loom/serve/service/text/chat.c
+index b1932973..2dcba3d6 100644
+--- a/loom/src/loom/serve/service/text/chat.c
++++ b/loom/src/loom/serve/service/text/chat.c
+@@ -1081,14 +1081,17 @@ iree_status_t loom_serve_text_chat_prepare_input(
+ 
+ // Function records have the same decoded name/argument semantics in client
+ // history and generated output. The scratch owner retains both through the
+-// synchronous source formatter call.
++// synchronous source formatter call. Client history may also give the
++// arguments as a JSON object, which reaches source as its original text.
+ static iree_status_t loom_serve_text_chat_function_decode(
+     iree_string_view_t value, loom_serve_text_chat_field_flags_t flags,
+-    iree_string_builder_t* scratch, iree_string_view_t* out_name,
+-    iree_string_view_t* out_arguments) {
++    bool allow_object_arguments, iree_string_builder_t* scratch,
++    iree_string_view_t* out_name, iree_string_view_t* out_arguments) {
+   loom_serve_text_chat_field_t fields[] = {
+       {"name", LOOM_SERVE_TEXT_CHAT_STRING},
+-      {"arguments", LOOM_SERVE_TEXT_CHAT_STRING}};
++      {"arguments",
++       LOOM_SERVE_TEXT_CHAT_STRING |
++           (allow_object_arguments ? LOOM_SERVE_TEXT_CHAT_OBJECT : 0)}};
+   IREE_RETURN_IF_ERROR(loom_serve_text_chat_fields_read(
+       value, IREE_ARRAYSIZE(fields), fields, flags));
+   IREE_RETURN_IF_ERROR(loom_serve_text_chat_required(&fields[0]));
+@@ -1097,8 +1100,13 @@ static iree_status_t loom_serve_text_chat_function_decode(
+   IREE_RETURN_IF_ERROR(
+       loom_serve_text_chat_append_decoded(scratch, fields[0].value));
+   const iree_host_size_t name_length = iree_string_builder_size(scratch);
+-  IREE_RETURN_IF_ERROR(
+-      loom_serve_text_chat_append_decoded(scratch, fields[1].value));
++  if (fields[1].type == IREE_JSON_VALUE_TYPE_OBJECT) {
++    IREE_RETURN_IF_ERROR(
++        iree_string_builder_append_string(scratch, fields[1].value));
++  } else {
++    IREE_RETURN_IF_ERROR(
++        loom_serve_text_chat_append_decoded(scratch, fields[1].value));
++  }
+   const iree_string_view_t decoded = iree_string_builder_view(scratch);
+   *out_name = iree_string_view_substr(decoded, 0, name_length);
+   *out_arguments =
+@@ -1210,7 +1218,7 @@ static iree_status_t loom_serve_text_chat_history_tool(
+   iree_string_view_t name, arguments;
+   IREE_RETURN_IF_ERROR(loom_serve_text_chat_function_decode(
+       fields[2].value, LOOM_SERVE_TEXT_CHAT_FIELDS_IGNORE_UNKNOWN,
+-      &history->arguments, &name, &arguments));
++      /*allow_object_arguments=*/true, &history->arguments, &name, &arguments));
+   return loom_serve_text_chat_function_render(history->chat->policy, name,
+                                               arguments, index, &history->calls,
+                                               history->chat->host_allocator);
+@@ -1661,7 +1669,8 @@ static iree_status_t loom_serve_text_chat_completion_tool(
+   }
+   iree_string_view_t name, arguments;
+   IREE_RETURN_IF_ERROR(loom_serve_text_chat_function_decode(
+-      call[1].value, 0, &tools->scratch->arguments, &name, &arguments));
++      call[1].value, 0, /*allow_object_arguments=*/false,
++      &tools->scratch->arguments, &name, &arguments));
+   IREE_RETURN_IF_ERROR(loom_serve_text_tool_calls_append(
+       tools->calls, tools->request_id, name, arguments));
+   const loom_serve_text_tool_call_t decoded_call =
+diff --git a/loom/src/loom/serve/service/text/tool_policy_test.py b/loom/src/loom/serve/service/text/tool_policy_test.py
+index 41db2ce0..b7ce78d0 100644
+--- a/loom/src/loom/serve/service/text/tool_policy_test.py
++++ b/loom/src/loom/serve/service/text/tool_policy_test.py
+@@ -341,6 +341,31 @@ class ToolPolicyTest(unittest.TestCase):
+                 self.assertIn('read: {"q":"styles.css"}', value["prompt"])
+                 self.assertIn("missing required property path", value["prompt"])
+ 
++    def test_history_arguments_accept_a_json_object(self):
++        arguments = {"path": "a b", "nested": {"keep": [1, 2]}}
++        text = json.dumps(arguments)
++
++        def history(value):
++            call = {"id": "call_1_0", **self.call(arguments=value)}
++            return [
++                {"role": "assistant", "content": None, "tool_calls": [call]},
++                {"role": "user", "content": "hello"},
++            ]
++
++        as_string = self.execute("[]", messages=history(text))
++        as_object = self.execute("[]", messages=history(arguments))
++        self.assertEqual(as_string.returncode, 0, as_string.stderr)
++        self.assertEqual(as_object.returncode, 0, as_object.stderr)
++        prompt = json.loads(as_object.stdout)["prompt"]
++        self.assertIn("read: " + text + "\n", prompt)
++        self.assertEqual(prompt, json.loads(as_string.stdout)["prompt"])
++        for value in (7, [], None, True):
++            with self.subTest(value=value):
++                result = self.execute("[]", messages=history(value))
++                self.assertNotEqual(result.returncode, 0)
++                self.assertEqual(result.stdout, "")
++                self.assertIn("chat field 'arguments' expects", result.stderr)
++
+     def test_history_and_generated_calls_share_decoded_function_fields(self):
+         call = {"id": "call_1_0", **self.call(arguments="{}")}
+         call["function"]["name"] = "r\\u0065ad"
+-- 
+2.56.1.windows.1
+

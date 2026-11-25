@@ -1,0 +1,281 @@
+From 4bd399d53d489b002adb6427cf40d58dc6d4bfa6 Mon Sep 17 00:00:00 2001
+From: Geramy Loveless <geramy.loveless@amd.com>
+Date: Tue, 24 Nov 2026 12:41:27 -0800
+Subject: [PATCH] [Loom] Give tool messages the function name of their call
+
+The OpenAI chat protocol identifies the call a tool message answers with
+tool_call_id, and the name field is optional. Chat templates, for example
+the llama.cpp minja render of an Inkling template, print the function name
+in the tool message header. A text policy sees one message at a time and a
+64-bit state, so it could not look the name up and had to print a header
+without it.
+
+The service now remembers the id and function name of every assistant tool
+call in the request history. A tool message that has a tool_call_id and no
+name key reaches chat_message with the name of the latest earlier call with
+that id, added to the raw message JSON as if the client had sent it. A
+message with a name key (null included), an unknown id, or no id reaches
+the policy unchanged. The chat_message signature does not change.
+
+Tested with tool_policy_test, source_chat_test, chat_policy_test and
+chat_test (CMake, clang).
+---
+ loom/src/loom/serve/service/text/chat.c       | 107 +++++++++++++++++-
+ .../serve/service/text/tool_policy_test.py    |  76 ++++++++++++-
+ 2 files changed, 177 insertions(+), 6 deletions(-)
+
+diff --git a/loom/src/loom/serve/service/text/chat.c b/loom/src/loom/serve/service/text/chat.c
+index b1932973..8ef88a10 100644
+--- a/loom/src/loom/serve/service/text/chat.c
++++ b/loom/src/loom/serve/service/text/chat.c
+@@ -1181,10 +1181,92 @@ typedef struct loom_serve_text_chat_history_t {
+   iree_string_builder_t reasoning;
+   // Canonical tool calls for one message.
+   iree_string_builder_t calls;
++  // Decoded id and function name of every earlier assistant tool call, as
++  // records of two sizes followed by the id and name bytes.
++  iree_string_builder_t call_names;
++  // Decoded tool_call_id for one message.
++  iree_string_builder_t call_id;
++  // One tool message with its resolved function name added.
++  iree_string_builder_t named_message;
+   // Source-owned rendering state, with no native interpretation.
+   int64_t state;
+ } loom_serve_text_chat_history_t;
+ 
++static iree_status_t loom_serve_text_chat_call_name_record(
++    loom_serve_text_chat_history_t* history, iree_string_view_t raw_id,
++    iree_string_view_t name) {
++  iree_string_builder_reset(&history->call_id);
++  IREE_RETURN_IF_ERROR(
++      loom_serve_text_chat_append_decoded(&history->call_id, raw_id));
++  const iree_string_view_t id = iree_string_builder_view(&history->call_id);
++  const iree_host_size_t sizes[2] = {id.size, name.size};
++  IREE_RETURN_IF_ERROR(iree_string_builder_append_string(
++      &history->call_names,
++      iree_make_string_view((const char*)sizes, sizeof(sizes))));
++  IREE_RETURN_IF_ERROR(
++      iree_string_builder_append_string(&history->call_names, id));
++  return iree_string_builder_append_string(&history->call_names, name);
++}
++
++// Finds the function name of the latest earlier call with this id.
++static bool loom_serve_text_chat_call_name_find(
++    const loom_serve_text_chat_history_t* history, iree_string_view_t id,
++    iree_string_view_t* out_name) {
++  const iree_string_view_t records =
++      iree_string_builder_view(&history->call_names);
++  bool found = false;
++  iree_host_size_t offset = 0;
++  while (offset < records.size) {
++    iree_host_size_t sizes[2];
++    memcpy(sizes, records.data + offset, sizeof(sizes));
++    offset += sizeof(sizes);
++    if (iree_string_view_equal(
++            id, iree_make_string_view(records.data + offset, sizes[0]))) {
++      *out_name =
++          iree_make_string_view(records.data + offset + sizes[0], sizes[1]);
++      found = true;
++    }
++    offset += sizes[0] + sizes[1];
++  }
++  return found;
++}
++
++// A tool message that has only tool_call_id reaches source as if the client
++// had also sent the function name of the call it answers. A message that has
++// a name key, even a null one, and a call id that is unknown pass unchanged.
++static iree_status_t loom_serve_text_chat_tool_message(
++    loom_serve_text_chat_history_t* history, iree_string_view_t message,
++    iree_string_view_t raw_id, iree_string_view_t* out_message) {
++  loom_serve_text_chat_field_t name[] = {
++      {"name", LOOM_SERVE_TEXT_CHAT_STRING | LOOM_SERVE_TEXT_CHAT_NULL}};
++  IREE_RETURN_IF_ERROR(loom_serve_text_chat_fields_read(
++      message, IREE_ARRAYSIZE(name), name,
++      LOOM_SERVE_TEXT_CHAT_FIELDS_IGNORE_UNKNOWN));
++  if (name[0].value.data) {
++    return iree_ok_status();
++  }
++  iree_string_builder_reset(&history->call_id);
++  IREE_RETURN_IF_ERROR(
++      loom_serve_text_chat_append_decoded(&history->call_id, raw_id));
++  iree_string_view_t function_name;
++  if (!loom_serve_text_chat_call_name_find(
++          history, iree_string_builder_view(&history->call_id),
++          &function_name)) {
++    return iree_ok_status();
++  }
++  iree_string_builder_reset(&history->named_message);
++  IREE_RETURN_IF_ERROR(iree_string_builder_append_cstring(
++      &history->named_message, "{\"name\":"));
++  IREE_RETURN_IF_ERROR(
++      loom_serve_text_chat_quote(&history->named_message, function_name));
++  IREE_RETURN_IF_ERROR(
++      iree_string_builder_append_cstring(&history->named_message, ","));
++  IREE_RETURN_IF_ERROR(iree_string_builder_append_string(
++      &history->named_message, iree_string_view_remove_prefix(message, 1)));
++  *out_message = iree_string_builder_view(&history->named_message);
++  return iree_ok_status();
++}
++
+ static iree_status_t loom_serve_text_chat_history_tool(
+     void* user_data, iree_host_size_t index, iree_json_value_type_t type,
+     iree_string_view_t value) {
+@@ -1211,9 +1293,14 @@ static iree_status_t loom_serve_text_chat_history_tool(
+   IREE_RETURN_IF_ERROR(loom_serve_text_chat_function_decode(
+       fields[2].value, LOOM_SERVE_TEXT_CHAT_FIELDS_IGNORE_UNKNOWN,
+       &history->arguments, &name, &arguments));
+-  return loom_serve_text_chat_function_render(history->chat->policy, name,
+-                                              arguments, index, &history->calls,
+-                                              history->chat->host_allocator);
++  IREE_RETURN_IF_ERROR(loom_serve_text_chat_function_render(
++      history->chat->policy, name, arguments, index, &history->calls,
++      history->chat->host_allocator));
++  if (fields[0].value.data) {
++    IREE_RETURN_IF_ERROR(
++        loom_serve_text_chat_call_name_record(history, fields[0].value, name));
++  }
++  return iree_ok_status();
+ }
+ 
+ static iree_status_t loom_serve_text_chat_history_message(
+@@ -1248,8 +1335,14 @@ static iree_status_t loom_serve_text_chat_history_message(
+     IREE_RETURN_IF_ERROR(iree_json_enumerate_array_typed(
+         fields[3].value, loom_serve_text_chat_history_tool, history));
+   }
++  iree_string_view_t message = value;
++  if (fields[4].value.data &&
++      iree_string_view_equal(fields[0].value, IREE_SV("tool"))) {
++    IREE_RETURN_IF_ERROR(loom_serve_text_chat_tool_message(
++        history, value, fields[4].value, &message));
++  }
+   const iree_string_view_t inputs[] = {
+-      value,
++      message,
+       fields[0].value,
+       iree_string_builder_view(&history->scratch),
+       iree_string_builder_view(&history->content_records),
+@@ -1442,6 +1535,9 @@ iree_status_t loom_serve_text_chat_initialize(
+   iree_string_builder_initialize(host_allocator, &history.arguments);
+   iree_string_builder_initialize(host_allocator, &history.reasoning);
+   iree_string_builder_initialize(host_allocator, &history.calls);
++  iree_string_builder_initialize(host_allocator, &history.call_names);
++  iree_string_builder_initialize(host_allocator, &history.call_id);
++  iree_string_builder_initialize(host_allocator, &history.named_message);
+   IREE_TRACE_ZONE_BEGIN_NAMED(z_render, "loom_serve_text_chat_request_render");
+   iree_status_t status = loom_serve_text_chat_request_render(body, &history);
+   IREE_TRACE_ZONE_END(z_render);
+@@ -1451,6 +1547,9 @@ iree_status_t loom_serve_text_chat_initialize(
+     status = loom_serve_text_chat_resolve_options(out_chat, body, request_id);
+     IREE_TRACE_ZONE_END(z_options);
+   }
++  iree_string_builder_deinitialize(&history.named_message);
++  iree_string_builder_deinitialize(&history.call_id);
++  iree_string_builder_deinitialize(&history.call_names);
+   iree_string_builder_deinitialize(&history.calls);
+   iree_string_builder_deinitialize(&history.reasoning);
+   iree_string_builder_deinitialize(&history.arguments);
+diff --git a/loom/src/loom/serve/service/text/tool_policy_test.py b/loom/src/loom/serve/service/text/tool_policy_test.py
+index 41db2ce0..3e06566b 100644
+--- a/loom/src/loom/serve/service/text/tool_policy_test.py
++++ b/loom/src/loom/serve/service/text/tool_policy_test.py
+@@ -19,7 +19,14 @@ CONTROL = Path(sys.argv.pop(1)).resolve()
+ 
+ class ToolPolicyTest(unittest.TestCase):
+     def execute(
+-        self, calls, stream=True, messages=None, tools=None, checker_args=(), **options
++        self,
++        calls,
++        stream=True,
++        messages=None,
++        tools=None,
++        checker_args=(),
++        control=CONTROL,
++        **options,
+     ):
+         with tempfile.TemporaryDirectory() as temporary:
+             directory = Path(temporary)
+@@ -76,7 +83,7 @@ class ToolPolicyTest(unittest.TestCase):
+             return subprocess.run(
+                 [
+                     str(CHECKER),
+-                    f"--control={CONTROL}",
++                    f"--control={control}",
+                     f"--tokenizer={tokenizer}",
+                     f"--request={request}",
+                     f"--response={response}",
+@@ -341,6 +348,71 @@ class ToolPolicyTest(unittest.TestCase):
+                 self.assertIn('read: {"q":"styles.css"}', value["prompt"])
+                 self.assertIn("missing required property path", value["prompt"])
+ 
++    def test_tool_message_reaches_source_with_the_name_of_its_call(self):
++        source = CONTROL.read_text(encoding="utf-8")
++        needle = "%text = func.call @join(%prefix, %content)"
++        self.assertIn(needle, source)
++        with tempfile.TemporaryDirectory() as temporary:
++            # This copy renders the raw message JSON instead of its content.
++            control = Path(temporary) / "raw_chat.loom"
++            control.write_text(
++                source.replace(needle, "%text = func.call @join(%prefix, %raw)"),
++                encoding="utf-8",
++            )
++
++            def call(call_id, name):
++                return {
++                    "id": call_id,
++                    "type": "function",
++                    "function": {"name": name, "arguments": "{}"},
++                }
++
++            def render(*tool_messages, calls=()):
++                messages = [
++                    {"role": "assistant", "content": None, "tool_calls": list(calls)},
++                    *tool_messages,
++                    {"role": "user", "content": "hello"},
++                ]
++                result = self.execute("[]", messages=messages, control=control)
++                self.assertEqual(result.returncode, 0, result.stderr)
++                return json.loads(result.stdout)["prompt"]
++
++            def tool(call_id, **fields):
++                return {
++                    "role": "tool",
++                    "tool_call_id": call_id,
++                    "content": "ok",
++                    **fields,
++                }
++
++            def named(message, name):
++                return '{"name":' + json.dumps(name) + "," + json.dumps(message)[1:]
++
++            message = tool("call_2")
++            prompt = render(
++                tool("call_1"),
++                message,
++                calls=[call("call_1", "read"), call("call_2", 'li"st')],
++            )
++            self.assertIn(named(tool("call_1"), "read"), prompt)
++            self.assertIn(named(message, 'li"st'), prompt)
++            # The latest earlier call with an id supplies the name.
++            repeated = [call("call_1", "read"), call("call_1", "list")]
++            self.assertIn(
++                named(tool("call_1"), "list"), render(tool("call_1"), calls=repeated)
++            )
++            # A client name, a null name, an unknown id and a missing id stay as sent.
++            for message in (
++                tool("call_1", name="other"),
++                tool("call_1", name=None),
++                tool("call_9"),
++                {"role": "tool", "content": "ok"},
++            ):
++                with self.subTest(message=message):
++                    prompt = render(message, calls=[call("call_1", "read")])
++                    self.assertIn(json.dumps(message), prompt)
++                    self.assertNotIn('{"name":"read"', prompt)
++
+     def test_history_and_generated_calls_share_decoded_function_fields(self):
+         call = {"id": "call_1_0", **self.call(arguments="{}")}
+         call["function"]["name"] = "r\\u0065ad"
+-- 
+2.56.1.windows.1
+
