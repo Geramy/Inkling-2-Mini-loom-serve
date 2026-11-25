@@ -1,4 +1,0 @@
-PASS gfx1151  inkling_gemm_f32:f32_small_rows_n20          nmse=9.85e-14 pad_untouched=True 
-PASS gfx1151  inkling_gemm_f32:f32_ctrl_down_4608_n12      nmse=1.32e-13 pad_untouched=True 
-PASS gfx1151  inkling_gemm_f32:f32_ctrl_gain_k64_n12       nmse=6.00e-15 pad_untouched=True 
-3 cases, 0 failed

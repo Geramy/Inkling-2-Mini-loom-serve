@@ -1,4 +1,0 @@
-// Target profiles that select the matrix-op providers of dense_wmma.loom. The model composition (config.loom) defines the same two lines.
-amdgpu.target<gfx11-generic> @inkling_dense_gfx11
-
-amdgpu.target<gfx12-generic> @inkling_dense_gfx12

@@ -1,6 +1,0 @@
-{"label": "loom-baseline-bare", "kind": "loom", "time": "2026-11-21 15:36:13", "thinking": "off", "warmup_decode_tps": 85.86, "completion_tokens": {"decode_tps": [300], "decode_tps_2k": [256]}, "decode_tps": 86.02, "prefill": [{"prompt_tokens": 1258, "prefill_tps": 1998.8, "min": 1996.1, "max": 2000.6, "n": 5}, {"prompt_tokens": 2454, "prefill_tps": 2070.7, "min": 2070.3, "max": 2073.4, "n": 5}], "decode_tps_2k": 79.79}
-{"session_end": "bare-1"}
-{"label": "loom-baseline-bare", "kind": "loom", "time": "2026-11-21 15:39:38", "thinking": "off", "warmup_decode_tps": 85.71, "completion_tokens": {"decode_tps": [300], "decode_tps_2k": [256]}, "decode_tps": 85.85, "prefill": [{"prompt_tokens": 1258, "prefill_tps": 1995.5, "min": 1993.4, "max": 1996.7, "n": 5}, {"prompt_tokens": 2454, "prefill_tps": 2067.2, "min": 2064.7, "max": 2069.4, "n": 5}], "decode_tps_2k": 79.14}
-{"session_end": "bare-2"}
-{"label": "loom-baseline-bare", "kind": "loom", "time": "2026-11-21 15:41:32", "thinking": "off", "warmup_decode_tps": 85.92, "completion_tokens": {"decode_tps": [300], "decode_tps_2k": [256]}, "decode_tps": 86.08, "prefill": [{"prompt_tokens": 1258, "prefill_tps": 1993.5, "min": 1991.1, "max": 1994.7, "n": 5}, {"prompt_tokens": 2454, "prefill_tps": 2064.4, "min": 2063.4, "max": 2066.2, "n": 5}], "decode_tps_2k": 79.86}
-{"session_end": "bare-3"}

@@ -1,1 +1,0 @@
-amdgpu.target<gfx11-generic> @inkling_wave64 {subgroup_size = 64}

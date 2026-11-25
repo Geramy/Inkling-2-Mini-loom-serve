@@ -1,8 +1,0 @@
-{
-  "default": {"inkling.mix.ctrl_chunk": 128, "inkling.mix.ctrl_tokens": 1},
-  "default_prefill": {"inkling.mix.ctrl_chunk": 128, "inkling.mix.ctrl_tokens": 16},
-  "gfx1201": {"inkling.mix.ctrl_chunk": 256, "inkling.mix.ctrl_tokens": 1},
-  "gfx1201_prefill": {"inkling.mix.ctrl_chunk": 128, "inkling.mix.ctrl_tokens": 16},
-  "gfx1151": {"inkling.mix.ctrl_chunk": 256, "inkling.mix.ctrl_tokens": 1},
-  "gfx1151_prefill": {"inkling.mix.ctrl_chunk": 128, "inkling.mix.ctrl_tokens": 16}
-}

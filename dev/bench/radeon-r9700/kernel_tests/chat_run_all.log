@@ -1,8 +1,0 @@
-== gfx1201 plain: python test_template.py 18440
-pass lines: 84
-== gfx1201 echo: python test_template.py 18440 --echo
-pass lines: 84
-== gfx1201 script: python test_output.py 18440
-pass lines: 29
-== gfx1201 policy: python test_options.py 18440
-pass lines: 37

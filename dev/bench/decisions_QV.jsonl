@@ -1,1 +1,0 @@
-{"lane":"QV","step":1,"decision":"stop","candidates":{"UD-Q4_K_M":1.6,"UD-IQ4_XS":6.5,"UD-Q3_K_XL":13.4},"unit":"percent decode ceiling gain vs UD-Q4_K_XL","note":"Q3_K_XL KLD 0.0174 vs 0.0107, needs 5 new kernel types"}

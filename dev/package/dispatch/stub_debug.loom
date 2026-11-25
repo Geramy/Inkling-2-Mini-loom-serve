@@ -1,3 +1,0 @@
-command.def public @inkling_hook_debug(%id: index) launch(%parameters: buffer, %metadata: buffer, %x0: buffer, %residual: buffer) {
-  command.return
-}

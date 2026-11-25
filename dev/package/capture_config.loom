@@ -1,7 +1,0 @@
-config.def @inkling.capture_id = 0 : index
-
-config.def @inkling.capture_visit = 0 : index
-
-config.def @inkling.capture_occurrence = 0 : index
-
-config.def @inkling.capture_width = 2304 : index

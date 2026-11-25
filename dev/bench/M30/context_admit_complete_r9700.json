@@ -1,7 +1,0 @@
-{
- "admitted": true,
- "completed": true,
- "tokens": 130991,
- "context": 131072,
- "detail": "COMPLETED 130991 tokens of a 131072-token context in 174s"
-}

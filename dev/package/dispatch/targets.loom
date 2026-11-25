@@ -1,4 +1,0 @@
-// Architecture families for per-arch providers (docs/TUNE_ROUTE.md). The live device selects the matching template.def provider.
-amdgpu.target<gfx11-generic> @inkling_rdna3
-
-amdgpu.target<gfx12-generic> @inkling_rdna4

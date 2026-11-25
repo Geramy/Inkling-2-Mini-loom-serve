@@ -1,2 +1,0 @@
-{"label": "loom-baseline-blocking", "kind": "loom", "time": "2026-11-21 15:40:35", "thinking": "off", "warmup_decode_tps": 84.98, "completion_tokens": {"decode_tps": [300], "decode_tps_2k": [256]}, "decode_tps": 85.19, "prefill": [{"prompt_tokens": 1257, "prefill_tps": 1987.2, "min": 1986.3, "max": 1988.4, "n": 5}, {"prompt_tokens": 2453, "prefill_tps": 2058.9, "min": 2058.6, "max": 2061.5, "n": 5}], "decode_tps_2k": 78.92}
-{"session_end": "blocking-1"}

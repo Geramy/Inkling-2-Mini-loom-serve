@@ -1,5 +1,0 @@
-#!/bin/sh
-# No-op flock for tests that run under one outer lock taken by ktest_adapter.py (flock [options] FILE command...).
-while [ "${1#-}" != "$1" ]; do shift; done
-shift
-exec "$@"

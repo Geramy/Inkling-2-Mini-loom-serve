@@ -1,7 +1,0 @@
-func.def public @encode_media_plan(%plan: buffer, %inputs: buffer, %media_plan: buffer, %media_begin: index, %media_end: index, %count: index, %first: index, %metadata: buffer, %tokens: buffer, %packet_begin: index) {
-  func.return
-}
-
-func.def public @publish_media_positions(%plan: buffer, %media_plan: buffer, %count: index, %progress: buffer) {
-  func.return
-}

@@ -1,8 +1,0 @@
-{"lane":"D2","candidate":"C1 grouped GEMV (inkling_gemv_attn_group) + C2 post launch (merge+kv_append+conv_commit)","arm":"g2","gpu":"r9700","oracle":"T10b base, preset chat prefill_capacity 2048","abba":{"A":[89.49,90.21],"B":[91.93,92.01]},"row":"dshort","delta_pct":2.4,"decision":"keep"}
-{"lane":"D2","candidate":"g2","gpu":"r9700","row":"d8k","abba":{"A":[79.74,81.03],"B":[81.56,81.84]},"delta_pct":1.6,"decision":"keep"}
-{"lane":"D2","candidate":"g2","gpu":"r9700","row":"pf2k","abba":{"A":[3561.4,3555.5],"B":[3560.3,3541.6]},"delta_pct":-0.2,"decision":"guard ok (noise)"}
-{"lane":"D2","candidate":"g2","gpu":"r9700","row":"c4","abba":{"A":[206.3,205.2],"B":[210.2,209.1]},"delta_pct":1.9,"decision":"keep"}
-{"lane":"D2","candidate":"g2","gpu":"strix","row":"dshort","abba":{"A":[38.98,39.62],"B":[40.78,41.04]},"delta_pct":4.1,"decision":"keep"}
-{"lane":"D2","candidate":"g2","gpu":"strix","row":"d8k","abba":{"A":[34.28,35.06],"B":[35.81,35.92]},"delta_pct":3.5,"decision":"keep"}
-{"lane":"D2","candidate":"g2","gpu":"strix","row":"pf2k","abba":{"A":[1156.9,1190.8],"B":[1185.1,1190.7]},"delta_pct":0.1,"decision":"guard ok (session noise 3%)"}
-{"lane":"D2","candidate":"g2","gpu":"strix","row":"c4","abba":{"A":[82.16,83.86],"B":[84.32,84.95]},"delta_pct":1.9,"decision":"keep"}
