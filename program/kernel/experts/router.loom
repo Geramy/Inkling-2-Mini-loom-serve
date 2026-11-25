@@ -278,6 +278,75 @@ kernel.def export("inkling_router_select") @inkling_router_select(%n: index) {
   kernel.return
 }
 
+// One token: its eight experts are distinct, so every record holds one route and the record index is the rank of the expert among the eight.
+func.def public inline @inkling_experts_route_one(%tile: index, %ids: buffer, %tasks: buffer) {
+  %c0 = index.constant 0 : index
+  %c2 = index.constant 2 : index
+  %c4 = index.constant 4 : index
+  %c7 = index.constant 7 : index
+  %c8 = index.constant 8 : index
+  %c32 = index.constant 32 : index
+  %origin = index.constant 0 : offset
+  %records_origin = index.constant 16 : offset
+  %tid = kernel.workitem.id<x> : index
+  %slot = index.cmp ult, %tid, %c8 : index
+  scf.if %slot {
+    %tile_wide = index.max %tile, %c32 : index
+    %stride = index.add %tile_wide, %c2 : index
+    %table = buffer.view %tasks[%records_origin] : buffer -> view<8x[%stride]xi32>
+    %header = buffer.view %tasks[%origin] : buffer -> view<1xi32>
+    %idv = buffer.view %ids[%origin] : buffer -> view<8xi32>
+    %mine = view.load %idv[%tid] : view<8xi32> -> i32
+    %lo = vector.load %idv[%c0] : view<8xi32> -> vector<4xi32>
+    %hi = vector.load %idv[%c4] : view<8xi32> -> vector<4xi32>
+    %zero = scalar.constant 0 : i32
+    %one = scalar.constant 1 : i32
+    %r0 = vector.extract %lo[0] : vector<4xi32> -> i32
+    %r1 = vector.extract %lo[1] : vector<4xi32> -> i32
+    %r2 = vector.extract %lo[2] : vector<4xi32> -> i32
+    %r3 = vector.extract %lo[3] : vector<4xi32> -> i32
+    %r4 = vector.extract %hi[0] : vector<4xi32> -> i32
+    %r5 = vector.extract %hi[1] : vector<4xi32> -> i32
+    %r6 = vector.extract %hi[2] : vector<4xi32> -> i32
+    %r7 = vector.extract %hi[3] : vector<4xi32> -> i32
+    %b0 = scalar.cmpi slt, %r0, %mine : i32
+    %b1 = scalar.cmpi slt, %r1, %mine : i32
+    %b2 = scalar.cmpi slt, %r2, %mine : i32
+    %b3 = scalar.cmpi slt, %r3, %mine : i32
+    %b4 = scalar.cmpi slt, %r4, %mine : i32
+    %b5 = scalar.cmpi slt, %r5, %mine : i32
+    %b6 = scalar.cmpi slt, %r6, %mine : i32
+    %b7 = scalar.cmpi slt, %r7, %mine : i32
+    %a0 = scf.select %b0, %one, %zero : i32
+    %a1 = scf.select %b1, %one, %zero : i32
+    %a2 = scf.select %b2, %one, %zero : i32
+    %a3 = scf.select %b3, %one, %zero : i32
+    %a4 = scf.select %b4, %one, %zero : i32
+    %a5 = scf.select %b5, %one, %zero : i32
+    %a6 = scf.select %b6, %one, %zero : i32
+    %a7 = scf.select %b7, %one, %zero : i32
+    %s01 = scalar.addi %a0, %a1 : i32
+    %s23 = scalar.addi %a2, %a3 : i32
+    %s45 = scalar.addi %a4, %a5 : i32
+    %s67 = scalar.addi %a6, %a7 : i32
+    %s03 = scalar.addi %s01, %s23 : i32
+    %s47 = scalar.addi %s45, %s67 : i32
+    %rank32 = scalar.addi %s03, %s47 : i32
+    %rank_raw = index.cast %rank32 : i32 to index
+    %rank = index.assume %rank_raw [range(%rank_raw, 0, 7)] : index
+    %route = index.cast %tid : index to i32
+    view.store %mine, %table[%rank, 0] : i32, view<8x[%stride]xi32>
+    view.store %one, %table[%rank, 1] : i32, view<8x[%stride]xi32>
+    view.store %route, %table[%rank, 2] : i32, view<8x[%stride]xi32>
+    %is0 = index.cmp eq, %tid, %c0 : index
+    scf.if %is0 {
+      %eight = scalar.constant 8 : i32
+      view.store %eight, %header[0] : i32, view<1xi32>
+    }
+  }
+  func.return
+}
+
 // Decode (n <= 16): top 8 and the expert routes in one workgroup. The waves select the tokens, a barrier, then the route table.
 kernel.def export("inkling_router_decode") @inkling_router_decode() {
   %c1 = index.constant 1 : index
@@ -291,6 +360,12 @@ kernel.def export("inkling_router_decode") @inkling_router_decode() {
     func.call @inkling_router_select_one(%n, %token, %lane, %logits, %bias, %ids, %wts) : (index, index, index, buffer, buffer, buffer, buffer)
   }
   kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
-  func.call @inkling_experts_route_groups(%n, %tile, %ids, %tasks) : (index, index, buffer, buffer)
+  %c1 = index.constant 1 : index
+  %one_token = index.cmp eq, %n, %c1 : index
+  scf.if %one_token {
+    func.call @inkling_experts_route_one(%tile, %ids, %tasks) : (index, buffer, buffer)
+  } else {
+    func.call @inkling_experts_route_groups(%n, %tile, %ids, %tasks) : (index, index, buffer, buffer)
+  }
   kernel.return
 }

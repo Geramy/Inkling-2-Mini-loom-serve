@@ -66,15 +66,15 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 | metric | llama.cpp | Loom | margin vs best llama.cpp | roofline | Loom % of roofline |
 |---|---|---|---|---|---|
-| decode tok/s, short prompt | 14.9 | 42.6 | +186 % | 57.2 | 74 % |
-| decode tok/s, 2k context | 11.3 | 39.4 | +249 % | 54.1 | 73 % |
-| decode tok/s, 32k context | — | 32.3 | — | 43.9 | 74 % |
-| prefill tok/s, 1k document | 57.6 | 937.1 | +1527 % | 4792.4 | 20 % |
+| decode tok/s, short prompt | 14.9 | 44.8 | +201 % | 57.2 | 78 % |
+| decode tok/s, 2k context | 11.3 | 42.1 | +273 % | 54.1 | 78 % |
+| decode tok/s, 32k context | — | 35.3 | — | 43.9 | 80 % |
+| prefill tok/s, 1k document | 57.6 | 934.1 | +1522 % | 4792.4 | 19 % |
 | prefill tok/s, 2k document | 53.6 | 1094.5 | +1942 % | 4701.2 | 23 % |
-| prefill tok/s, 8k document | 48.7 | 1122.6 | +2205 % | 4511.8 | 25 % |
-| prefill tok/s, 16k document | 44.6 | 1040.2 | +2232 % | 4329.3 | 24 % |
-| prefill tok/s, 32k document | — | 867.2 | — | 4014.1 | 22 % |
-| 4 streams, aggregate decode tok/s | — | 95.7 | — | 217.8 | 44 % |
+| prefill tok/s, 8k document | 48.7 | 1156.5 | +2275 % | 4511.8 | 26 % |
+| prefill tok/s, 16k document | 44.6 | 1111.9 | +2393 % | 4329.3 | 26 % |
+| prefill tok/s, 32k document | — | 996.6 | — | 4014.1 | 25 % |
+| 4 streams, aggregate decode tok/s | — | 96.8 | — | 217.8 | 44 % |
 | speculative decoding, drafted tokens accepted | n/a | n/a | n/a | n/a | n/a |
 
 **Methodology**
@@ -85,10 +85,10 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 - 4 streams: both engines loaded with drafting off, 4 parallel requests, aggregate tokens per second.
 - Rows: decode = short-context decode; decode_2k / decode_32k = decode after a ~2k / ~32k-token context; prefill_Nk = prompt processing of an N k-token prompt; streams4 = 4-stream aggregate decode. A margin within +-3 % (the measured same-runner noise) is a tie.
 - llama.cpp ROCm server arguments: `-ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja`.
-- Not supported / not measured: llama.cpp ROCm: not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache; llama.cpp ROCm: not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot); llama.cpp ROCm: 8060S Loom rows: 3 sessions before the chat fixes and the grid change (tune value stays 4, same code path); one session of the final build: decode 42.73, 39.3, 32.27 tok/s (short, 2k, 32k).
+- Not supported / not measured: llama.cpp ROCm: not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache; llama.cpp ROCm: not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot); llama.cpp ROCm: Loom rows: median of 3 serialized sessions of the final build (one GPU at a time, nothing else running).
 - Measured on AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04, a named machine (this GPU has no DevLab runner); both engines ran on it.
 - Margin vs best llama.cpp: (Loom / max(ROCm, Vulkan) - 1) × 100 %, using the available measured tokens/s for each row on this GPU. With only one valid backend, that backend is used; with neither, the margin is not measured. Raw backend values and their measurement sources are retained below and in the table.
-- Measured 2026-11-23; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown); source: named-machine run.
+- Measured 2026-11-24; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown); source: named-machine run.
 - Roofline: the hardware ceiling for this GGUF on AMD Ryzen AI Max+ 395 "Strix Halo" 8060S (gfx1151), measured read bandwidth at 230 GB/s and 44 TFLOP/s sustained at 85 W (spec 59), from loom-roofline `roofline.py` (loom-skills `618f89e`); the 4-stream ceiling of this mixture-of-experts model assumes the four streams route to the same experts (the bound a run may not exceed).
 - — not measured; n/a not applicable.
 
@@ -96,15 +96,15 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 | metric | llama.cpp | Loom | margin vs best llama.cpp | roofline | Loom % of roofline |
 |---|---|---|---|---|---|
-| decode tok/s, short prompt | 14.9 | 97.8 | +556 % | 154.3 | 63 % |
-| decode tok/s, 2k context | 11.3 | 90.0 | +696 % | 145.8 | 62 % |
-| decode tok/s, 32k context | — | 76.3 | — | 118.4 | 64 % |
-| prefill tok/s, 1k document | 57.6 | 2670.0 | +4535 % | 19306.3 | 14 % |
-| prefill tok/s, 2k document | 53.6 | 3132.1 | +5743 % | 20543.5 | 15 % |
-| prefill tok/s, 8k document | 48.7 | 3239.3 | +6552 % | 19715.8 | 16 % |
-| prefill tok/s, 16k document | 44.6 | 2932.0 | +6474 % | 18918.3 | 15 % |
-| prefill tok/s, 32k document | — | 2342.0 | — | 17540.9 | 13 % |
-| 4 streams, aggregate decode tok/s | — | 226.8 | — | 587.2 | 39 % |
+| decode tok/s, short prompt | 14.9 | 105.8 | +610 % | 154.3 | 69 % |
+| decode tok/s, 2k context | 11.3 | 97.5 | +763 % | 145.8 | 67 % |
+| decode tok/s, 32k context | — | 83.1 | — | 118.4 | 70 % |
+| prefill tok/s, 1k document | 57.6 | 2699.1 | +4586 % | 19306.3 | 14 % |
+| prefill tok/s, 2k document | 53.6 | 3209.6 | +5888 % | 20543.5 | 16 % |
+| prefill tok/s, 8k document | 48.7 | 3440.5 | +6965 % | 19715.8 | 17 % |
+| prefill tok/s, 16k document | 44.6 | 3311.9 | +7326 % | 18918.3 | 18 % |
+| prefill tok/s, 32k document | — | 2949.4 | — | 17540.9 | 17 % |
+| 4 streams, aggregate decode tok/s | — | 231.9 | — | 587.2 | 39 % |
 | speculative decoding, drafted tokens accepted | n/a | n/a | n/a | n/a | n/a |
 
 **Methodology**
@@ -115,7 +115,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 - 4 streams: both engines loaded with drafting off, 4 parallel requests, aggregate tokens per second.
 - Rows: decode = short-context decode; decode_2k / decode_32k = decode after a ~2k / ~32k-token context; prefill_Nk = prompt processing of an N k-token prompt; streams4 = 4-stream aggregate decode. A margin within +-3 % (the measured same-runner noise) is a tie.
 - llama.cpp ROCm server arguments: `-ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja`.
-- Not supported / not measured: llama.cpp ROCm: not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache; llama.cpp ROCm: not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot); llama.cpp ROCm: Loom rows: median of 3 sessions of the final build (grouped projection grid change and chat fixes included).
+- Not supported / not measured: llama.cpp ROCm: not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache; llama.cpp ROCm: not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot); llama.cpp ROCm: Loom rows: median of 3 serialized sessions of the final build (one GPU at a time, nothing else running).
 - Measured on AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04, a named machine (this GPU has no DevLab runner); both engines ran on it.
 - Margin vs best llama.cpp: (Loom / max(ROCm, Vulkan) - 1) × 100 %, using the available measured tokens/s for each row on this GPU. With only one valid backend, that backend is used; with neither, the margin is not measured. Raw backend values and their measurement sources are retained below and in the table.
 - Measured 2026-11-24; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown); source: named-machine run.
@@ -142,9 +142,9 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 | gate | description | Strix Halo | Radeon AI PRO R9700 |
 |---|---|---|---|
-| `kernel_tests` | Unit tests of the generated kernels against reference implementations | ✅ pass (33/33) ¹ | ✅ pass (33/33) ¹ |
-| `golden` | llama.cpp reference recorded on the same GGUF: greedy tokens and top-5 log-probs, short prompts and 1k-32k documents | ✅ pass ² | ✅ pass ² |
-| `compare` | Greedy output vs the llama.cpp reference, token by token; every divergence is a near-tie | ✅ pass ² | ✅ pass ² |
+| `kernel_tests` | Unit tests of the generated kernels against reference implementations | ✅ pass (34/34) ¹ | ✅ pass (34/34) ¹ |
+| `golden` | llama.cpp reference recorded on the same GGUF: greedy tokens and top-5 log-probs, short prompts and 1k-32k documents | ✅ pass (from d08221b, not re-run on this build) ² | ✅ pass (from d08221b, not re-run on this build) ² |
+| `compare` | Greedy output vs the llama.cpp reference, token by token; every divergence is a near-tie | ✅ pass (from d08221b, not re-run on this build) ² | ✅ pass (from d08221b, not re-run on this build) ² |
 | `vision` | Image input vs llama.cpp with the same projector: identical prompt tokens, replies equal up to near-ties | — not applicable | — not applicable |
 | `consistency` | Concurrent requests give the same output as the same requests run alone | ✅ pass ² | ✅ pass ² |
 | `spec` | Speculative decoding on gives exactly the output of speculative decoding off | — not applicable | — not applicable |
@@ -154,8 +154,8 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | `logits` | Host logits readback (llm.logits on): at T=0 every returned row's argmax is the device's token, the top-k matches llama.cpp, greedy text is unchanged | — not applicable | — not applicable |
 | `decision` | Decision answers (choice, score, noul probabilities) vs llama.cpp on the same prompts | — not applicable | — not applicable |
 
-- ¹ named-machine run, 2026-11-24; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown).
-- ² named-machine run, LEVEL=dev, 2026-11-24; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown).
+- ¹ named-machine run, 2026-11-25; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown).
+- ² named-machine run, LEVEL=dev, 2026-11-25; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown).
 - Gates are the loom-benchmark correctness gates (`gates.sh`); a gate without a recorded run shows no evidence.
 
 ## Files

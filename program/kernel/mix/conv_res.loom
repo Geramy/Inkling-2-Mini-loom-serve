@@ -73,23 +73,22 @@ func.def public inline @inkling_conv_find(%spans: buffer, %token: index) -> (ind
 }
 
 func.def public inline @inkling_conv_tap(%state: buffer, %a: buffer, %state_base: offset, %site: index, %first: index, %m: index, %c: index) -> (f32) {
+  %c2 = index.constant 2 : index
   %c3 = index.constant 3 : index
   %embd = index.constant 2304 : index
   %row_len = index.constant 6656 : index
   %zero = index.constant 0 : offset
   %hist = index.cmp ult, %m, %c3 : index
-  %v = scf.if %hist -> (f32) {
-    %r = index.madd %m, %row_len, %site : index
-    %e = index.add %r, %c : index
-    %x = func.call @inkling_conv_load(%state, %state_base, %e) : (buffer, offset, index) -> (f32)
-    scf.yield %x : f32
-  } else {
-    %j = index.sub %m, %c3 : index
-    %t = index.add %first, %j : index
-    %e = index.madd %t, %embd, %c : index
-    %x = func.call @inkling_conv_load(%a, %zero, %e) : (buffer, offset, index) -> (f32)
-    scf.yield %x : f32
-  }
+  %rm = index.min %m, %c2 : index
+  %r = index.madd %rm, %row_len, %site : index
+  %es = index.add %r, %c : index
+  %xs = func.call @inkling_conv_load(%state, %state_base, %es) : (buffer, offset, index) -> (f32)
+  %m3 = index.max %m, %c3 : index
+  %j = index.sub %m3, %c3 : index
+  %t = index.add %first, %j : index
+  %ea = index.madd %t, %embd, %c : index
+  %xa = func.call @inkling_conv_load(%a, %zero, %ea) : (buffer, offset, index) -> (f32)
+  %v = scf.select %hist, %xs, %xa : f32
   func.return %v : f32
 }
 
@@ -105,15 +104,12 @@ func.def public inline @inkling_conv_commit_row(%a: buffer, %old0: f32, %old1: f
   %h12 = scf.select %is1, %old1, %old2 : f32
   %is0 = index.cmp eq, %idx, %c0 : index
   %h = scf.select %is0, %old0, %h12 : f32
-  %v = scf.if %hist -> (f32) {
-    scf.yield %h : f32
-  } else {
-    %j = index.sub %idx, %c3 : index
-    %t = index.add %first, %j : index
-    %e = index.madd %t, %embd, %c : index
-    %x = func.call @inkling_conv_load(%a, %zero, %e) : (buffer, offset, index) -> (f32)
-    scf.yield %x : f32
-  }
+  %idx3 = index.max %idx, %c3 : index
+  %j = index.sub %idx3, %c3 : index
+  %t = index.add %first, %j : index
+  %e = index.madd %t, %embd, %c : index
+  %x = func.call @inkling_conv_load(%a, %zero, %e) : (buffer, offset, index) -> (f32)
+  %v = scf.select %hist, %h, %x : f32
   func.return %v : f32
 }
 
@@ -241,5 +237,80 @@ kernel.def export("inkling_conv_commit") @inkling_conv_commit(%span_cap: index) 
   %tid = kernel.workitem.id<x> : index
   %c = index.madd %group, %c256, %tid : index
   func.call @inkling_conv_commit_item(%spans, %state, %a, %site, %visit, %span, %c) : (buffer, buffer, buffer, index, index, index, index)
+  kernel.return
+}
+
+// Decode (spans of one token): the expert combine of the FFN site is folded in. The combined row is also written to %y for the state commit.
+kernel.def export("inkling_conv_res_combine") @inkling_conv_res_combine(%cap: index) {
+  %one = index.constant 1 : index
+  %groups = index.constant 9 : index
+  %threads = index.constant 256 : index
+  kernel.launch.config workgroups(%cap, %groups, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%cap_in: index, %site_in: index, %visit_in: index, %bank_on_in: index, %bank_origin_in: index, %spans: buffer, %state: buffer, %y: buffer, %conv_w: buffer, %cur: buffer, %bank: buffer, %dout: buffer, %wts: buffer) {
+  %site = index.assume %site_in [range(%site_in, 0, 6656)] : index
+  %visit = index.assume %visit_in [range(%visit_in, 0, 2147483647)] : index
+  %bank_origin = index.assume %bank_origin_in [range(%bank_origin_in, 0, 2147483647)] : index
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c2 = index.constant 2 : index
+  %c4 = index.constant 4 : index
+  %c8 = index.constant 8 : index
+  %c256 = index.constant 256 : index
+  %embd = index.constant 2304 : index
+  %origin = index.constant 0 : offset
+  %one_byte = index.constant 1 : offset
+  %inv_sqrt5 = scalar.constant 0.4472135954999579 : f32
+  %zero = scalar.constant 0.0 : f32
+  %token = kernel.workgroup.id<x> : index
+  %group = kernel.workgroup.id<y> : index
+  %tid = kernel.workitem.id<x> : index
+  %c = index.madd %group, %c256, %tid : index
+  %header = buffer.view %spans[%origin] : buffer -> view<4xi32>
+  %live_word = view.load %header[1] : view<4xi32> -> i32
+  %live = index.cast %live_word : i32 to index
+  %active = index.cmp ult, %token, %live : index
+  scf.if %active {
+    %first, %read = func.call @inkling_conv_find(%spans, %token) : (buffer, index) -> (index, offset)
+    %visit_bytes = index.scale %visit, %one_byte : index, offset -> offset
+    %state_base = index.add %read, %visit_bytes : offset
+    %w_view = buffer.view %conv_w[%origin] : buffer -> view<9216xf32>
+    %wi = index.mul %c, %c4 : index
+    %w4 = vector.load %w_view[%wi] : view<9216xf32> -> vector<4xf32>
+    %w0 = vector.extract %w4[0] : vector<4xf32> -> f32
+    %w1 = vector.extract %w4[1] : vector<4xf32> -> f32
+    %w2 = vector.extract %w4[2] : vector<4xf32> -> f32
+    %w3 = vector.extract %w4[3] : vector<4xf32> -> f32
+    %x0 = func.call @inkling_conv_tap(%state, %y, %state_base, %site, %first, %c0, %c) : (buffer, buffer, offset, index, index, index, index) -> (f32)
+    %x1 = func.call @inkling_conv_tap(%state, %y, %state_base, %site, %first, %c1, %c) : (buffer, buffer, offset, index, index, index, index) -> (f32)
+    %x2 = func.call @inkling_conv_tap(%state, %y, %state_base, %site, %first, %c2, %c) : (buffer, buffer, offset, index, index, index, index) -> (f32)
+    %routes = index.mul %cap_in, %c8 : index
+    %dv = buffer.view %dout[%origin] : buffer -> view<[%routes]x[%embd]xf32>
+    %wv = buffer.view %wts[%origin] : buffer -> view<[%routes]xf32>
+    %base = index.mul %token, %c8 : index
+    %x3 = scf.for %s = [%c0 to %c8 step %c1](%acc = %zero : f32) -> (f32) unroll schedule(linear) {
+      %route_raw = index.add %base, %s : index
+      %route = index.assume %route_raw [ge(%route_raw, 0), lt(%route_raw, %routes)] : index
+      %wt = view.load %wv[%route] : view<[%routes]xf32> -> f32
+      %d = view.load %dv[%route, %c] : view<[%routes]x[%embd]xf32> -> f32
+      %next = scalar.fmaf %wt, %d, %acc : f32
+      scf.yield %next : f32
+    }
+    %s0 = scalar.mulf %w0, %x0 : f32
+    %s1 = scalar.fmaf %w1, %x1, %s0 : f32
+    %s2 = scalar.fmaf %w2, %x2, %s1 : f32
+    %s3 = scalar.fmaf %w3, %x3, %s2 : f32
+    %sum = scalar.addf %s3, %x3 : f32
+    %yv = scalar.mulf %sum, %inv_sqrt5 : f32
+    %cur_elem = index.madd %token, %embd, %c : index
+    func.call @inkling_conv_store(%y, %origin, %cur_elem, %x3) : (buffer, offset, index, f32)
+    %residual = func.call @inkling_conv_load(%cur, %origin, %cur_elem) : (buffer, offset, index) -> (f32)
+    %result = scalar.addf %residual, %yv : f32
+    func.call @inkling_conv_store(%cur, %origin, %cur_elem, %result) : (buffer, offset, index, f32)
+    %bank_on = index.cmp ne, %bank_on_in, %c0 : index
+    scf.if %bank_on {
+      %be = index.add %bank_origin, %cur_elem : index
+      func.call @inkling_conv_store(%bank, %origin, %be, %result) : (buffer, offset, index, f32)
+    }
+  }
   kernel.return
 }

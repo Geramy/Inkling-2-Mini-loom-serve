@@ -1,5 +1,7 @@
 target.decl @inkling_execution
 
+kernel.decl @inkling_conv_res_combine(%cap: index) launch(%cap_in: index, %site_in: index, %visit_in: index, %bank_on_in: index, %bank_origin_in: index, %spans: buffer, %state: buffer, %y: buffer, %conv_w: buffer, %cur: buffer, %bank: buffer, %dout: buffer, %wts: buffer)
+
 kernel.decl @inkling_experts_combine(%n: index) launch(%n: index, %dout: buffer, %wts: buffer, %y: buffer)
 
 kernel.decl @inkling_experts_down(%n: index) launch(%n: index, %wtype: index, %act: buffer, %tasks: buffer, %w: buffer, %scales: buffer, %dout: buffer)
@@ -79,6 +81,24 @@ command.def public target(@inkling_execution) @inkling_hook_experts(%layer: inde
   %i64 = index.constant 64 : index
   %down_wave = template.apply<@inkling.tune.experts.down_wave>() : () -> (index)
   %down_w64 = index.cmp eq, %down_wave, %i64 : index
+  %i1 = index.constant 1 : index
+  %multi_rows = index.cmp ugt, %cap, %i1 : index
+  %i17 = index.constant 17 : index
+  %is17 = index.cmp eq, %layer, %i17 : index
+  %i2 = index.constant 2 : index
+  %first2 = index.cmp ult, %pass, %i2 : index
+  %bank_and = scalar.andi %is17, %first2 : i1
+  %pass2 = index.mul %pass, %i2 : index
+  %i2304 = index.constant 2304 : index
+  %cE = index.mul %cap, %i2304 : index
+  %set_base = index.mul %pass2, %cE : index
+  %bank_on = scf.select %bank_and, %i1, %i0 : index
+  %bank_origin = index.add %set_base, %cE : index
+  %i4352 = index.constant 4352 : index
+  %i79872 = index.constant 79872 : index
+  %convv0 = index.mul %visit, %i79872 : index
+  %i167772160 = index.constant 167772160 : index
+  %convv = index.add %convv0, %i167772160 : index
   %tasks = buffer.alloca<global> align(256) %tasks_total : buffer
   %act = buffer.alloca<global> align(256) %act_bytes : buffer
   %dout = buffer.alloca<global> align(256) %dout_bytes : buffer
@@ -137,7 +157,13 @@ command.def public target(@inkling_execution) @inkling_hook_experts(%layer: inde
   }
   }
   }
+  scf.if %multi_rows {
   kernel.launch @inkling_experts_combine[%cap](%cap, %dout, %ob, %y) : [index](index, buffer, buffer, buffer)
+  } else {
+  %w23 = command.parameter %parameters, "blk.{}.ffn_post_conv.weight"[%layer] : view<9216xf32>
+  %wb24 = command.parameter.base %w23 : view<9216xf32> -> buffer
+  kernel.launch @inkling_conv_res_combine[%cap](%cap, %i4352, %convv, %bank_on, %bank_origin, %span_table, %arena, %y, %wb24, %cur, %bank, %dout, %ob) : [index](index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  }
   command.return
 }
 

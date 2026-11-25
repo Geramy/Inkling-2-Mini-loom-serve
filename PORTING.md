@@ -154,22 +154,23 @@ Measured on the published route (median of 3 fresh servers per GPU, Q4_K_XL, `pe
 
 A request of 130972 tokens (the Q4 preset context) completes in 120 s on the R9700 and 343 s on the 8060S (183 s and 443 s before). The speed of the CPU reference is in the card (`README.md`, `REPORT.md`).
 
-Wave 2 (on hrx-loom 0.3.0) adds five decode changes. Each is in the files named in section 4.
+Wave 2 (on hrx-loom 0.3.0) adds six decode changes. Each is in the files named in section 4.
 
 - Attention front end: the q, k, v, gate and rel projections run as one grouped GEMV (shared input), and the attention prep, K/V append and conv commit are fused. The merge of split attention is one launch (about 336 launches less per token).
 - Experts, decode: the gate/up and down kernels are software pipelined (NVFP4 fast path). On the 8060S the down kernel is a wave64 kernel (`kernel/experts/down_w64.loom`, `lib/inkling/targets_w64.loom`); the R9700 does not use it.
 - Controllers and router: the message mix is folded into the controller launch, the router selects the top experts with subgroup ballots, and the router and routes run as one decode launch (about 144 launches less per token).
 - The tuned values are per-arch data as before; the results are bit-equal in the kernel tests and give the same greedy text as wave 1 (prompts A, B, C and documents of 8k and 32k tokens, both GPUs).
 - Grouped projection grid: the grouped attention projection GEMV has its own workgroup-per-unit tune value (7 on gfx1201, 4 on gfx1151), which cuts the tail of the launch on the R9700 (decode +2.3 to +2.8 percent; same arithmetic, bitwise equal outputs).
+- Small decode kernels without waits on branches: a value that leaves an `scf.if` makes the compiler wait for its load, so a loop that loads through `scf.if` issues one load, waits, then issues the next. In `mix_states`, the attention tile, the attention prep conv, the norms (width 2304), `conv_res` and the router (one-token direct route table) the branch now sits outside the loop or both sides load and a select picks one, with the same arithmetic order (bitwise equal results). The expert combine is folded into the post-FFN conv/residual kernel for one-token steps (`inkling_conv_res_combine`), and the attention tile prefill mode is not launched for one-token steps. A decode step has 786 launches instead of 882.
 
-Measured on the published route (median of 3 fresh servers per GPU, Q4_K_XL, `perf.py` rows, tok/s; wave 1 in brackets). The R9700 row is the final build. The 8060S row was measured before the chat fixes and the grouped-projection grid change below (its tune value stays 4, the code path is the same; one later session of the final build gave decode 42.73, 39.3, 32.27 tok/s):
+Measured on the published route (median of 3 serialized fresh servers per GPU, one GPU at a time, Q4_K_XL, `perf.py` rows, tok/s; wave 1 in brackets):
 
 | | decode short | decode 2k | decode 8k | decode 32k | prefill 1k | prefill 2k | prefill 8k | prefill 16k | prefill 32k | 4 streams |
 |---|---|---|---|---|---|---|---|---|---|---|
-| R9700 | 97.8 (90.2) | 90.0 (83.2) | 86.7 (80.3) | 76.3 (71.3) | 2670 (2576) | 3132 (2996) | 3239 (3092) | 2932 (2801) | 2342 (2242) | 226.8 (218.9) |
-| 8060S | 42.6 (39.7) | 39.4 (36.7) | 37.6 (34.9) | 32.3 (29.7) | 937 (894) | 1095 (1033) | 1123 (1051) | 1040 (973) | 867 (812) | 95.7 (89.0) |
+| R9700 | 105.8 (90.2) | 97.5 (83.2) | 93.8 (80.3) | 83.1 (71.3) | 2699 (2576) | 3210 (2996) | 3441 (3092) | 3312 (2801) | 2949 (2242) | 231.9 (218.9) |
+| 8060S | 44.8 (39.7) | 42.1 (36.7) | 40.3 (34.9) | 35.3 (29.7) | 934 (894) | 1095 (1033) | 1157 (1051) | 1112 (973) | 997 (812) | 96.8 (89.0) |
 
-That is 0.63 (R9700) and 0.74 (8060S) of the decode roofline at short context. Not verified for wave 2: the layer check of the capture route on hrx-loom 0.3.0, and a run of the wave 1 build on 0.3.0 against 0.2.0 in the same session on the R9700.
+That is 0.69 (R9700) and 0.78 (8060S) of the decode roofline at short context. Not verified for wave 2: the layer check of the capture route on hrx-loom 0.3.0, and a run of the wave 1 build on 0.3.0 against 0.2.0 in the same session on the R9700. The last gates that need a llama.cpp reference (golden, compare) were not re-run on the final build; the card marks them as taken from the previous build.
 
 ## 13. Chat behaviour: prefix cache and tool calls
 
@@ -181,6 +182,6 @@ That is 0.63 (R9700) and 0.74 (8060S) of the decode roofline at short context. N
 
 ## 14. loom-serve patches
 
-The `patches/` folder holds three small loom-serve patches for tool calling (open as pull requests in ROCm/hrx-system): tool call `arguments` as a JSON object (#3551), a missing tool call `type` means `function` (#3552), and the function name on tool messages (#3554). The package works without them: its chat policy accepts the same requests and prints a nameless tool header. With the patches applied, a client that sends `arguments` as an object or omits `type` no longer gets HTTP 400 from loom-serve, and tool messages carry the name as the template prints it. See `patches/README.md`.
+This repository holds only the package (programs, card files and `patches/`); the tools, tests and measurement logs are not part of it. The `patches/` folder holds three small loom-serve patches for tool calling (open as pull requests in ROCm/hrx-system): tool call `arguments` as a JSON object (#3551), a missing tool call `type` means `function` (#3552), and the function name on tool messages (#3554). The package works without them: its chat policy accepts the same requests and prints a nameless tool header. With the patches applied, a client that sends `arguments` as an object or omits `type` no longer gets HTTP 400 from loom-serve, and tool messages carry the name as the template prints it. See `patches/README.md`.
 
 Open loom-serve limits that need runtime work and have no patch yet: hard enforcement of `tool_choice` required and named functions (#3556), prefix-cache capture at the end of the prompt (#3555), and reuse of generated state when a client drops `reasoning_content` (#3557).

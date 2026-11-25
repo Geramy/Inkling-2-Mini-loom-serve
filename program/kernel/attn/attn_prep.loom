@@ -108,34 +108,30 @@ kernel.def export("inkling_attn_prep") @inkling_attn_prep(%cap: index) {
         %xq = scalar.mulf %raw, %scale : f32
         scf.yield %xq : f32
       } else {
-        %x0, %ys, %yd = scf.for %lag = [%c0 to %c4 step %c1](%xc = %zero_f : f32, %sa = %zero_f : f32, %da = %zero_f : f32) -> (f32, f32, f32) {
+        %x0, %ys, %yd = scf.for %lag = [%c0 to %c4 step %c1](%xc = %zero_f : f32, %sa = %zero_f : f32, %da = %zero_f : f32) -> (f32, f32, f32) unroll {
           %in_span = index.cmp uge, %rel, %lag : index
-          %xl = scf.if %in_span -> (f32) {
-            %src0 = index.sub %token, %lag : index
-            %src = index.assume %src0 [range(%src0, 0, 32767), lt(%src0, %cap)] : index
-            %v = view.load %raw_view[%src, %chan] : view<[%cap]x1024xf32> -> f32
-            scf.yield %v : f32
-          } else {
-            %short = index.sub %lag, %rel : index
-            %srow = index.sub %c3, %short : index
-            %sbase = index.mul %srow, %c6656 : index
-            %sc = index.add %sbase, %row_chan0 : index
-            %at = index.add %sc, %chan : index
-            %v = view.load %state_view[%at] : view<19968xf32> -> f32
-            scf.yield %v : f32
-          }
+          %lag_in = index.min %lag, %token : index
+          %src0 = index.sub %token, %lag_in : index
+          %src = index.assume %src0 [range(%src0, 0, 32767), lt(%src0, %cap)] : index
+          %xr = view.load %raw_view[%src, %chan] : view<[%cap]x1024xf32> -> f32
+          %far = index.max %lag, %rel : index
+          %short0 = index.sub %far, %rel : index
+          %short = index.max %short0, %c1 : index
+          %srow = index.sub %c3, %short : index
+          %sbase = index.mul %srow, %c6656 : index
+          %sc = index.add %sbase, %row_chan0 : index
+          %at0 = index.add %sc, %chan : index
+          %at = index.assume %at0 [range(%at0, 0, 19967)] : index
+          %xs = view.load %state_view[%at] : view<19968xf32> -> f32
+          %xl = scf.select %in_span, %xr, %xs : f32
           %tap = index.sub %c3, %lag : index
           %w_at = index.madd %chan, %c4, %tap : index
           %w = view.load %w_view[%w_at] : view<4096xf32> -> f32
           %sa_next = scalar.fmaf %w, %xl, %sa : f32
-          %dv = scf.if %is_global -> (f32) {
-            %dyn_at = index.madd %kv_head, %c4, %lag : index
-            %dd = view.load %dyn_view[%token, %dyn_at] : view<[%cap]x32xf32> -> f32
-            %t = scalar.mulf %dd, %xl : f32
-            scf.yield %t : f32
-          } else {
-            scf.yield %zero_f : f32
-          }
+          %dyn_at = index.madd %kv_head, %c4, %lag : index
+          %dd = view.load %dyn_view[%token, %dyn_at] : view<[%cap]x32xf32> -> f32
+          %t = scalar.mulf %dd, %xl : f32
+          %dv = scf.select %is_global, %t, %zero_f : f32
           %da_next = scalar.addf %da, %dv : f32
           %is_cur = index.cmp eq, %lag, %c0 : index
           %xc_next = scf.select %is_cur, %xl, %xc : f32

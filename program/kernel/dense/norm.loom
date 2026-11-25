@@ -59,6 +59,58 @@ func.def public inline @inkling_dense_rms_row(%width_in: index, %input: buffer, 
   func.return
 }
 
+
+// Width 2304 with weights: the three loads of a workitem are issued together and the row is not read twice.
+func.def public inline @inkling_dense_rms_row_e(%input: buffer, %src_origin: offset, %output: buffer, %dst_origin: offset, %weight: buffer, %epsilon: f32) {
+  %c0 = index.constant 0 : index
+  %c4 = index.constant 4 : index
+  %c1024 = index.constant 1024 : index
+  %c2048 = index.constant 2048 : index
+  %c2301 = index.constant 2301 : index
+  %width = index.constant 2304 : index
+  %b0 = index.constant 0 : offset
+  %zero = scalar.constant 0.0 : f32
+  %zero4 = vector.splatf 0.0 : vector<4xf32>
+  %t0 = kernel.workitem.id<x> : index
+  %t = index.assume %t0 [range(%t0, 0, 255)] : index
+  %e0 = index.mul %t, %c4 : index
+  %e1 = index.add %e0, %c1024 : index
+  %e2 = index.add %e0, %c2048 : index
+  %fit2 = index.cmp ult, %e2, %c2301 : index
+  %e2c = scf.select %fit2, %e2, %e0 : index
+  %src = buffer.view %input[%src_origin] : buffer -> view<2304xf32>
+  %dst = buffer.view %output[%dst_origin] : buffer -> view<2304xf32>
+  %scales = buffer.view %weight[%b0] : buffer -> view<2304xf32>
+  %x0 = vector.load %src[%e0] : view<2304xf32> -> vector<4xf32>
+  %x1 = vector.load %src[%e1] : view<2304xf32> -> vector<4xf32>
+  %x2 = vector.load %src[%e2c] : view<2304xf32> -> vector<4xf32>
+  %w0 = vector.load %scales[%e0] : view<2304xf32> -> vector<4xf32>
+  %w1 = vector.load %scales[%e1] : view<2304xf32> -> vector<4xf32>
+  %w2 = vector.load %scales[%e2c] : view<2304xf32> -> vector<4xf32>
+  %q0 = vector.mulf %x0, %x0 : vector<4xf32>
+  %a0 = vector.reduce<addf> %q0, %zero : vector<4xf32>, f32
+  %q1 = vector.mulf %x1, %x1 : vector<4xf32>
+  %a1 = vector.reduce<addf> %q1, %a0 : vector<4xf32>, f32
+  %q2 = vector.mulf %x2, %x2 : vector<4xf32>
+  %r2 = vector.reduce<addf> %q2, %a1 : vector<4xf32>, f32
+  %partial = scf.select %fit2, %r2, %a1 : f32
+  %sum = kernel.workgroup.reduce<addf> %partial : f32
+  %scale = func.call @inkling_dense_rms_scale(%sum, %width, %epsilon) : (f32, index, f32) -> (f32)
+  %scale4 = vector.splat %scale : vector<4xf32>
+  %y0 = vector.mulf %x0, %scale4 : vector<4xf32>
+  %o0 = vector.mulf %y0, %w0 : vector<4xf32>
+  vector.store %o0, %dst[%e0] : vector<4xf32>, view<2304xf32>
+  %y1 = vector.mulf %x1, %scale4 : vector<4xf32>
+  %o1 = vector.mulf %y1, %w1 : vector<4xf32>
+  vector.store %o1, %dst[%e1] : vector<4xf32>, view<2304xf32>
+  scf.if %fit2 {
+    %y2 = vector.mulf %x2, %scale4 : vector<4xf32>
+    %o2 = vector.mulf %y2, %w2 : vector<4xf32>
+    vector.store %o2, %dst[%e2] : vector<4xf32>, view<2304xf32>
+  }
+  func.return
+}
+
 kernel.def @inkling_rms_norm(%rows: index) {
   %c1 = index.constant 1 : index
   %threads = index.constant 256 : index
@@ -71,7 +123,13 @@ kernel.def @inkling_rms_norm(%rows: index) {
     %true = scalar.constant true : i1
     %src_origin = func.call @inkling_dense_row_origin(%x_origin, %row, %x_stride) : (offset, index, index) -> (offset)
     %dst_origin = func.call @inkling_dense_row_origin(%d_origin, %row, %d_stride) : (offset, index, index) -> (offset)
-    func.call @inkling_dense_rms_row(%width, %input, %src_origin, %output, %dst_origin, %weight, %true, %epsilon) : (index, buffer, offset, buffer, offset, buffer, i1, f32)
+    %e_width = index.constant 2304 : index
+    %is_e = index.cmp eq, %width, %e_width : index
+    scf.if %is_e {
+      func.call @inkling_dense_rms_row_e(%input, %src_origin, %output, %dst_origin, %weight, %epsilon) : (buffer, offset, buffer, offset, buffer, f32)
+    } else {
+      func.call @inkling_dense_rms_row(%width, %input, %src_origin, %output, %dst_origin, %weight, %true, %epsilon) : (index, buffer, offset, buffer, offset, buffer, i1, f32)
+    }
   }
   kernel.return
 }
@@ -106,7 +164,13 @@ kernel.def @inkling_rms_norm_cols(%rows: index) {
       }
       scf.yield %w12 : buffer
     }
-    func.call @inkling_dense_rms_row(%width, %input, %row_origin, %output, %row_origin, %weight, %true, %epsilon) : (index, buffer, offset, buffer, offset, buffer, i1, f32)
+    %e_width = index.constant 2304 : index
+    %is_e = index.cmp eq, %width, %e_width : index
+    scf.if %is_e {
+      func.call @inkling_dense_rms_row_e(%input, %row_origin, %output, %row_origin, %weight, %epsilon) : (buffer, offset, buffer, offset, buffer, f32)
+    } else {
+      func.call @inkling_dense_rms_row(%width, %input, %row_origin, %output, %row_origin, %weight, %true, %epsilon) : (index, buffer, offset, buffer, offset, buffer, i1, f32)
+    }
   }
   kernel.return
 }

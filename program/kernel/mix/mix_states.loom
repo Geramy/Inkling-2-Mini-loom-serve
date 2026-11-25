@@ -79,6 +79,41 @@ func.def public inline @inkling_mix_axpy(%acc: vector<4xf32>, %c: f32, %x: vecto
   func.return %r : vector<4xf32>
 }
 
+func.def public inline @inkling_mix_dots(%src: buffer, %src_bytes: offset, %query: buffer, %lane: index, %r1: index, %r2: index, %r3: index) -> (vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>) {
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c4 = index.constant 4 : index
+  %c18 = index.constant 18 : index
+  %c32 = index.constant 32 : index
+  %embd = index.constant 2304 : index
+  %origin = index.constant 0 : offset
+  %zero4 = vector.splatf 0.0 : vector<4xf32>
+  %xv = buffer.view %src[%src_bytes] : buffer -> view<2304xf32>
+  %qv = buffer.view %query[%origin] : buffer -> view<9216xf32>
+  %ss, %d0, %d1, %d2, %d3 = scf.for %j = [%c0 to %c18 step %c1](%a = %zero4 : vector<4xf32>, %a0 = %zero4 : vector<4xf32>, %a1 = %zero4 : vector<4xf32>, %a2 = %zero4 : vector<4xf32>, %a3 = %zero4 : vector<4xf32>) -> (vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>) unroll {
+    %packet = index.madd %j, %c32, %lane : index
+    %e = index.mul %packet, %c4 : index
+    %x = vector.load %xv[%e] : view<2304xf32> -> vector<4xf32>
+    %a_next = vector.fmaf %x, %x, %a : vector<4xf32>
+    %o1 = index.mul %r1, %embd : index
+    %o2 = index.mul %r2, %embd : index
+    %o3 = index.mul %r3, %embd : index
+    %i1 = index.add %o1, %e : index
+    %i2 = index.add %o2, %e : index
+    %i3 = index.add %o3, %e : index
+    %u0 = vector.load %qv[%e] : view<9216xf32> -> vector<4xf32>
+    %u1 = vector.load %qv[%i1] : view<9216xf32> -> vector<4xf32>
+    %u2 = vector.load %qv[%i2] : view<9216xf32> -> vector<4xf32>
+    %u3 = vector.load %qv[%i3] : view<9216xf32> -> vector<4xf32>
+    %n0 = vector.fmaf %x, %u0, %a0 : vector<4xf32>
+    %n1 = vector.fmaf %x, %u1, %a1 : vector<4xf32>
+    %n2 = vector.fmaf %x, %u2, %a2 : vector<4xf32>
+    %n3 = vector.fmaf %x, %u3, %a3 : vector<4xf32>
+    scf.yield %a_next, %n0, %n1, %n2, %n3 : vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>
+  }
+  func.return %ss, %d0, %d1, %d2, %d3 : vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>
+}
+
 kernel.def export("inkling_mix_states") @inkling_mix_states(%cap: index, %ncommit: index, %nq: index) {
   %one = index.constant 1 : index
   %threads = index.constant 288 : index
@@ -144,32 +179,20 @@ kernel.def export("inkling_mix_states") @inkling_mix_states(%cap: index, %ncommi
     %r1 = index.min %c1, %nq_last : index
     %r2 = index.min %c2, %nq_last : index
     %r3 = index.min %c3, %nq_last : index
-    %qv = buffer.view %query[%origin] : buffer -> view<9216xf32>
     %wave_s = index.min %wave, %nb : index
-    %bank0 = vector.splatf 0.0 : vector<18x4xf32>
-    %bank, %ss, %d0, %d1, %d2, %d3 = scf.for %j = [%c0 to %c18 step %c1](%b = %bank0 : vector<18x4xf32>, %a = %zero4 : vector<4xf32>, %a0 = %zero4 : vector<4xf32>, %a1 = %zero4 : vector<4xf32>, %a2 = %zero4 : vector<4xf32>, %a3 = %zero4 : vector<4xf32>) -> (vector<18x4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>) unroll {
-      %packet = index.madd %j, %c32, %lane : index
-      %e = index.mul %packet, %c4 : index
-      %x = func.call @inkling_mix_load(%blocks, %cur, %wave_s, %nb, %src_token, %block_stride, %blocks_off, %cur_off, %e) : (buffer, buffer, index, index, index, index, index, index, index) -> (vector<4xf32>)
-      %b_next = vector.insert %x into %b[%j] : vector<4xf32>, vector<18x4xf32>
-      %a_next = vector.fmaf %x, %x, %a : vector<4xf32>
-      %o0 = index.mul %c0, %embd : index
-      %o1 = index.mul %r1, %embd : index
-      %o2 = index.mul %r2, %embd : index
-      %o3 = index.mul %r3, %embd : index
-      %i0 = index.add %o0, %e : index
-      %i1 = index.add %o1, %e : index
-      %i2 = index.add %o2, %e : index
-      %i3 = index.add %o3, %e : index
-      %u0 = vector.load %qv[%i0] : view<9216xf32> -> vector<4xf32>
-      %u1 = vector.load %qv[%i1] : view<9216xf32> -> vector<4xf32>
-      %u2 = vector.load %qv[%i2] : view<9216xf32> -> vector<4xf32>
-      %u3 = vector.load %qv[%i3] : view<9216xf32> -> vector<4xf32>
-      %n0 = vector.fmaf %x, %u0, %a0 : vector<4xf32>
-      %n1 = vector.fmaf %x, %u1, %a1 : vector<4xf32>
-      %n2 = vector.fmaf %x, %u2, %a2 : vector<4xf32>
-      %n3 = vector.fmaf %x, %u3, %a3 : vector<4xf32>
-      scf.yield %b_next, %a_next, %n0, %n1, %n2, %n3 : vector<18x4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>
+    %wave_cur = index.cmp eq, %wave_s, %nb : index
+    %tok_off = index.mul %src_token, %embd : index
+    %cur_el = index.add %tok_off, %cur_off : index
+    %blk_el0 = index.madd %wave_s, %block_stride, %tok_off : index
+    %blk_el = index.add %blk_el0, %blocks_off : index
+    %cur_bytes = index.scale %cur_el, %four : index, offset -> offset
+    %blk_bytes = index.scale %blk_el, %four : index, offset -> offset
+    %ss, %d0, %d1, %d2, %d3 = scf.if %wave_cur -> (vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>) {
+      %t0, %t1, %t2, %t3, %t4 = func.call @inkling_mix_dots(%cur, %cur_bytes, %query, %lane, %r1, %r2, %r3) : (buffer, offset, buffer, index, index, index, index) -> (vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>)
+      scf.yield %t0, %t1, %t2, %t3, %t4 : vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>
+    } else {
+      %t0, %t1, %t2, %t3, %t4 = func.call @inkling_mix_dots(%blocks, %blk_bytes, %query, %lane, %r1, %r2, %r3) : (buffer, offset, buffer, index, index, index, index) -> (vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>)
+      scf.yield %t0, %t1, %t2, %t3, %t4 : vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>
     }
     %ss_lane = vector.reduce<addf> %ss, %f0 : vector<4xf32>, f32
     %sumsq = kernel.subgroup.reduce<addf> %ss_lane {cluster_size = 32} : f32

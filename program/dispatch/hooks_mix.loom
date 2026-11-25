@@ -174,15 +174,16 @@ command.def public target(@inkling_execution) @inkling_hook_post_ffn(%layer: ind
   %i2 = index.constant 2 : index
   %first2 = index.cmp ult, %pass, %i2 : index
   %bank_and = scalar.andi %is17, %first2 : i1
-  %i1 = index.constant 1 : index
-  %i0 = index.constant 0 : index
-  %bank_on = scf.select %bank_and, %i1, %i0 : index
   %pass2 = index.mul %pass, %i2 : index
   %cap = config.get @inkling.tokens : index
   %i2304 = index.constant 2304 : index
   %cE = index.mul %cap, %i2304 : index
   %set_base = index.mul %pass2, %cE : index
+  %i1 = index.constant 1 : index
+  %i0 = index.constant 0 : index
+  %bank_on = scf.select %bank_and, %i1, %i0 : index
   %bank_origin = index.add %set_base, %cE : index
+  %multi_rows = index.cmp ugt, %cap, %i1 : index
   %i79872 = index.constant 79872 : index
   %convv0 = index.mul %visit, %i79872 : index
   %i167772160 = index.constant 167772160 : index
@@ -195,9 +196,11 @@ command.def public target(@inkling_execution) @inkling_hook_post_ffn(%layer: ind
   %span_cap = config.get @inkling.spans : index
   %i23 = index.constant 23 : index
   %is23 = index.cmp eq, %layer, %i23 : index
+  scf.if %multi_rows {
   %w1 = command.parameter %parameters, "blk.{}.ffn_post_conv.weight"[%layer] : view<9216xf32>
   %wb2 = command.parameter.base %w1 : view<9216xf32> -> buffer
   kernel.launch @inkling_conv_res[%cap](%cap, %i4352, %convv, %i0, %i0, %cE, %bank_on, %bank_origin, %span_table, %arena, %y, %wb2, %cur, %blocks, %bank) : [index](index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
+  }
   scf.if %is5 {
   kernel.launch @inkling_mix_states[%cap, %span_cap, %i1](%cap, %span_cap, %i1, %i0, %cE, %cE, %i0, %i0, %i0, %i0, %i0, %slot7, %i4352, %convv, %span_table, %xn, %blocks, %cur, %xn, %xn, %blocks, %small, %arena, %y) : [index, index, index](index, index, index, index, index, index, index, index, index, index, index, index, index, index, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer, buffer)
   } else {

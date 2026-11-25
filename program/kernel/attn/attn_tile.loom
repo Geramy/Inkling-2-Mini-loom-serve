@@ -44,35 +44,52 @@ func.def public inline @inkling_attn_stage_block(%stage: buffer, %act: buffer, %
   %loads = index.div %c1024, %threads : index
   %block_pos = index.mul %block, %c64 : index
   %head_col = index.mul %g, %c128 : index
-  scf.for %it = [%c0 to %loads step %c1] unroll {
-    %idx0 = index.madd %it, %threads, %tid : index
-    %idx = index.assume %idx0 [range(%idx0, 0, 1023)] : index
-    %row = index.div %idx, %c16 : index
-    %c8x = index.rem %idx, %c16 : index
-    %col = index.mul %c8x, %c8 : index
-    %kpos = index.add %block_pos, %row : index
-    %above = index.cmp ule, %kmin, %kpos : index
-    %below = index.cmp ult, %kpos, %kv_end : index
-    %ok = scalar.andi %above, %below : i1
-    %value = scf.if %ok -> (vector<8xf16>) {
+  %block_end = index.add %block_pos, %c64 : index
+  %act_lo = index.max %pos0, %block_pos : index
+  %act_hi = index.min %kv_end, %block_end : index
+  %has_act = index.cmp ult, %act_lo, %act_hi : index
+  %cap_last = index.sub %cap, %c1 : index
+  scf.if %has_act {
+    scf.for %it = [%c0 to %loads step %c1] unroll {
+      %idx0 = index.madd %it, %threads, %tid : index
+      %idx = index.assume %idx0 [range(%idx0, 0, 1023)] : index
+      %row = index.div %idx, %c16 : index
+      %c8x = index.rem %idx, %c16 : index
+      %col = index.mul %c8x, %c8 : index
+      %kpos = index.add %block_pos, %row : index
+      %above = index.cmp ule, %kmin, %kpos : index
+      %below = index.cmp ult, %kpos, %kv_end : index
+      %ok = scalar.andi %above, %below : i1
       %from_act = index.cmp uge, %kpos, %pos0 : index
-      %v = scf.if %from_act -> (vector<8xf16>) {
-        %rel = index.sub %kpos, %pos0 : index
-        %tok0 = index.add %begin, %rel : index
-        %tok = index.assume %tok0 [range(%tok0, 0, 32767), lt(%tok0, %cap)] : index
-        %col_act = index.add %head_col, %col : index
-        %a = vector.load %act_view[%tok, %col_act] : view<[%cap]x1024xf16> -> vector<8xf16>
-        scf.yield %a : vector<8xf16>
-      } else {
-        %at = index.madd %row, %c128, %col : index
-        %c = vector.load %cache_view[%at] : view<8192xf16> -> vector<8xf16>
-        scf.yield %c : vector<8xf16>
-      }
-      scf.yield %v : vector<8xf16>
-    } else {
-      scf.yield %zero8 : vector<8xf16>
+      %kact = index.max %kpos, %pos0 : index
+      %rel = index.sub %kact, %pos0 : index
+      %tok0 = index.add %begin, %rel : index
+      %tok1 = index.min %tok0, %cap_last : index
+      %tok = index.assume %tok1 [range(%tok1, 0, 32767), lt(%tok1, %cap)] : index
+      %col_act = index.add %head_col, %col : index
+      %a = vector.load %act_view[%tok, %col_act] : view<[%cap]x1024xf16> -> vector<8xf16>
+      %at = index.madd %row, %c128, %col : index
+      %c = vector.load %cache_view[%at] : view<8192xf16> -> vector<8xf16>
+      %pick = scf.select %from_act, %a, %c : vector<8xf16>
+      %value = scf.select %ok, %pick, %zero8 : vector<8xf16>
+      vector.store %value, %stage_view[%row, %col] : vector<8xf16>, view<64x136xf16>
     }
-    vector.store %value, %stage_view[%row, %col] : vector<8xf16>, view<64x136xf16>
+  } else {
+    scf.for %it = [%c0 to %loads step %c1] unroll {
+      %idx0 = index.madd %it, %threads, %tid : index
+      %idx = index.assume %idx0 [range(%idx0, 0, 1023)] : index
+      %row = index.div %idx, %c16 : index
+      %c8x = index.rem %idx, %c16 : index
+      %col = index.mul %c8x, %c8 : index
+      %kpos = index.add %block_pos, %row : index
+      %above = index.cmp ule, %kmin, %kpos : index
+      %below = index.cmp ult, %kpos, %kv_end : index
+      %ok = scalar.andi %above, %below : i1
+      %at = index.madd %row, %c128, %col : index
+      %c = vector.load %cache_view[%at] : view<8192xf16> -> vector<8xf16>
+      %value = scf.select %ok, %c, %zero8 : vector<8xf16>
+      vector.store %value, %stage_view[%row, %col] : vector<8xf16>, view<64x136xf16>
+    }
   }
   func.return
 }
@@ -208,6 +225,7 @@ kernel.def export("inkling_attn_tile") @inkling_attn_tile(%grid_x: index, %grid_
   %c128 = index.constant 128 : index
   %c136 = index.constant 136 : index
   %c256 = index.constant 256 : index
+  %c384 = index.constant 384 : index
   %c1023 = index.constant 1023 : index
   %c2048 = index.constant 2048 : index
   %c32768 = index.constant 32768 : index
@@ -318,28 +336,23 @@ kernel.def export("inkling_attn_tile") @inkling_attn_tile(%grid_x: index, %grid_
         %channel = index.mul %lane, %qpk : index
         %q_col0 = index.madd %row_head, %c128, %channel : index
         %q_col = index.assume %q_col0 [range(%q_col0, 0, 3071)] : index
-        %value = scf.if %valid -> (vector<[%qpk]xf16>) {
-          %loaded = vector.load %q_view[%token, %q_col] : view<[%cap]x3072xf32> -> vector<[%qpk]xf32>
-          %half = vector.fptrunc %loaded : vector<[%qpk]xf32> to vector<[%qpk]xf16>
-          scf.yield %half : vector<[%qpk]xf16>
-        } else {
-          scf.yield %zero_q : vector<[%qpk]xf16>
-        }
+        %loaded = vector.load %q_view[%token, %q_col] : view<[%cap]x3072xf32> -> vector<[%qpk]xf32>
+        %half = vector.fptrunc %loaded : vector<[%qpk]xf32> to vector<[%qpk]xf16>
+        %value = scf.select %valid, %half, %zero_q : vector<[%qpk]xf16>
         vector.store %value, %q_stage_view[%local_row, %channel] : vector<[%qpk]xf16>, view<16x136xf16>
       }
-      scf.for %e = [%tid to %c256 step %threads] {
+      %r_iters = index.div %c256, %threads : index
+      scf.for %r_it = [%c0 to %r_iters step %c1] unroll {
+        %e0 = index.madd %r_it, %threads, %tid : index
+        %e = index.assume %e0 [range(%e0, 0, 255)] : index
         %local_row = index.div %e, %c16 : index
         %mm = index.rem %e, %c16 : index
         %valid, %token0, %row_head, %qpos = func.call @inkling_attn_row(%dec, %local_row, %rel0, %len, %begin, %pos0, %head, %kvh) : (i1, index, index, index, index, index, index, index) -> (i1, index, index, index)
         %token = index.assume %token0 [range(%token0, 0, 32767), lt(%token0, %cap)] : index
         %r_col0 = index.madd %row_head, %c16, %mm : index
         %r_col = index.assume %r_col0 [range(%r_col0, 0, 383)] : index
-        %rv = scf.if %valid -> (f32) {
-          %loaded = view.load %r_view[%token, %r_col] : view<[%cap]x384xf32> -> f32
-          scf.yield %loaded : f32
-        } else {
-          scf.yield %zero_f : f32
-        }
+        %loaded = view.load %r_view[%token, %r_col] : view<[%cap]x384xf32> -> f32
+        %rv = scf.select %valid, %loaded, %zero_f : f32
         %lr = index.assume %local_row [range(%local_row, 0, 15)] : index
         view.store %rv, %r_stage_view[%lr, %mm] : f32, view<16x16xf32>
       }
@@ -367,30 +380,14 @@ kernel.def export("inkling_attn_tile") @inkling_attn_tile(%grid_x: index, %grid_
       %h1b = index.assume %h1 [range(%h1, 0, 23)] : index
       %h2b = index.assume %h2 [range(%h2, 0, 23)] : index
       %h3b = index.assume %h3 [range(%h3, 0, 23)] : index
-      %s0 = scf.if %v0 -> (f32) {
-        %x = view.load %sink_view[%t0b, %h0b] : view<[%cap]x24xf32> -> f32
-        scf.yield %x : f32
-      } else {
-        scf.yield %zero_f : f32
-      }
-      %s1 = scf.if %v1 -> (f32) {
-        %x = view.load %sink_view[%t1b, %h1b] : view<[%cap]x24xf32> -> f32
-        scf.yield %x : f32
-      } else {
-        scf.yield %zero_f : f32
-      }
-      %s2 = scf.if %v2 -> (f32) {
-        %x = view.load %sink_view[%t2b, %h2b] : view<[%cap]x24xf32> -> f32
-        scf.yield %x : f32
-      } else {
-        scf.yield %zero_f : f32
-      }
-      %s3 = scf.if %v3 -> (f32) {
-        %x = view.load %sink_view[%t3b, %h3b] : view<[%cap]x24xf32> -> f32
-        scf.yield %x : f32
-      } else {
-        scf.yield %zero_f : f32
-      }
+      %x0 = view.load %sink_view[%t0b, %h0b] : view<[%cap]x24xf32> -> f32
+      %s0 = scf.select %v0, %x0, %zero_f : f32
+      %x1 = view.load %sink_view[%t1b, %h1b] : view<[%cap]x24xf32> -> f32
+      %s1 = scf.select %v1, %x1, %zero_f : f32
+      %x2 = view.load %sink_view[%t2b, %h2b] : view<[%cap]x24xf32> -> f32
+      %s2 = scf.select %v2, %x2, %zero_f : f32
+      %x3 = view.load %sink_view[%t3b, %h3b] : view<[%cap]x24xf32> -> f32
+      %s3 = scf.select %v3, %x3, %zero_f : f32
       %sink4 = vector.from_elements %s0, %s1, %s2, %s3 : vector<4xf32>
       %neg4 = vector.splatf -1e+30 : vector<4xf32>
       %zero4 = vector.splatf 0.0 : vector<4xf32>
@@ -498,7 +495,8 @@ kernel.def export("inkling_attn_tile") @inkling_attn_tile(%grid_x: index, %grid_
         view.store %l3, %ml_view[%row3, 1] : f32, view<16x2xf32>
       }
       kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
-      scf.for %e = [%tid to %c2048 step %threads] {
+      %e_end = scf.select %dec, %c384, %c2048 : index
+      scf.for %e = [%tid to %e_end step %threads] {
         %local_row0 = index.div %e, %c128 : index
         %local_row = index.assume %local_row0 [range(%local_row0, 0, 15)] : index
         %d0 = index.rem %e, %c128 : index
