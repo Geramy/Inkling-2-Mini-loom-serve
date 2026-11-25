@@ -66,14 +66,14 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 | metric | llama.cpp | Loom | margin vs best llama.cpp | roofline | Loom % of roofline |
 |---|---|---|---|---|---|
-| decode tok/s, short prompt | 14.9 | 44.8 | +201 % | 57.2 | 78 % |
+| decode tok/s, short prompt | 14.9 | 45.0 | +202 % | 57.2 | 79 % |
 | decode tok/s, 2k context | 11.3 | 42.1 | +273 % | 54.1 | 78 % |
-| decode tok/s, 32k context | — | 35.3 | — | 43.9 | 80 % |
-| prefill tok/s, 1k document | 57.6 | 934.1 | +1522 % | 4792.4 | 19 % |
-| prefill tok/s, 2k document | 53.6 | 1094.5 | +1942 % | 4701.2 | 23 % |
-| prefill tok/s, 8k document | 48.7 | 1156.5 | +2275 % | 4511.8 | 26 % |
-| prefill tok/s, 16k document | 44.6 | 1111.9 | +2393 % | 4329.3 | 26 % |
-| prefill tok/s, 32k document | — | 996.6 | — | 4014.1 | 25 % |
+| decode tok/s, 32k context | — | 35.4 | — | 43.9 | 81 % |
+| prefill tok/s, 1k document | 57.6 | 1117.6 | +1840 % | 4792.4 | 23 % |
+| prefill tok/s, 2k document | 53.6 | 1284.9 | +2297 % | 4701.2 | 27 % |
+| prefill tok/s, 8k document | 48.7 | 1329.3 | +2630 % | 4511.8 | 29 % |
+| prefill tok/s, 16k document | 44.6 | 1259.0 | +2723 % | 4329.3 | 29 % |
+| prefill tok/s, 32k document | — | 1110.2 | — | 4014.1 | 28 % |
 | 4 streams, aggregate decode tok/s | — | 96.8 | — | 217.8 | 44 % |
 | speculative decoding, drafted tokens accepted | n/a | n/a | n/a | n/a | n/a |
 
@@ -88,7 +88,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 - Not supported / not measured: llama.cpp ROCm: not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache; llama.cpp ROCm: not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot); llama.cpp ROCm: Loom rows: median of 3 serialized sessions of the final build (one GPU at a time, nothing else running).
 - Measured on AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04, a named machine (this GPU has no DevLab runner); both engines ran on it.
 - Margin vs best llama.cpp: (Loom / max(ROCm, Vulkan) - 1) × 100 %, using the available measured tokens/s for each row on this GPU. With only one valid backend, that backend is used; with neither, the margin is not measured. Raw backend values and their measurement sources are retained below and in the table.
-- Measured 2026-11-24; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown); source: named-machine run.
+- Measured 2026-11-25; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown); source: named-machine run.
 - Roofline: the hardware ceiling for this GGUF on AMD Ryzen AI Max+ 395 "Strix Halo" 8060S (gfx1151), measured read bandwidth at 230 GB/s and 44 TFLOP/s sustained at 85 W (spec 59), from loom-roofline `roofline.py` (loom-skills `618f89e`); the 4-stream ceiling of this mixture-of-experts model assumes the four streams route to the same experts (the bound a run may not exceed).
 - — not measured; n/a not applicable.
 
@@ -96,15 +96,15 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 | metric | llama.cpp | Loom | margin vs best llama.cpp | roofline | Loom % of roofline |
 |---|---|---|---|---|---|
-| decode tok/s, short prompt | 14.9 | 105.8 | +610 % | 154.3 | 69 % |
-| decode tok/s, 2k context | 11.3 | 97.5 | +763 % | 145.8 | 67 % |
+| decode tok/s, short prompt | 14.9 | 106.4 | +614 % | 154.3 | 69 % |
+| decode tok/s, 2k context | 11.3 | 97.6 | +764 % | 145.8 | 67 % |
 | decode tok/s, 32k context | — | 83.1 | — | 118.4 | 70 % |
-| prefill tok/s, 1k document | 57.6 | 2699.1 | +4586 % | 19306.3 | 14 % |
-| prefill tok/s, 2k document | 53.6 | 3209.6 | +5888 % | 20543.5 | 16 % |
-| prefill tok/s, 8k document | 48.7 | 3440.5 | +6965 % | 19715.8 | 17 % |
-| prefill tok/s, 16k document | 44.6 | 3311.9 | +7326 % | 18918.3 | 18 % |
-| prefill tok/s, 32k document | — | 2949.4 | — | 17540.9 | 17 % |
-| 4 streams, aggregate decode tok/s | — | 231.9 | — | 587.2 | 39 % |
+| prefill tok/s, 1k document | 57.6 | 3061.0 | +5214 % | 19306.3 | 16 % |
+| prefill tok/s, 2k document | 53.6 | 3633.6 | +6679 % | 20543.5 | 18 % |
+| prefill tok/s, 8k document | 48.7 | 3812.1 | +7728 % | 19715.8 | 19 % |
+| prefill tok/s, 16k document | 44.6 | 3632.3 | +8044 % | 18918.3 | 19 % |
+| prefill tok/s, 32k document | — | 3205.0 | — | 17540.9 | 18 % |
+| 4 streams, aggregate decode tok/s | — | 235.1 | — | 587.2 | 40 % |
 | speculative decoding, drafted tokens accepted | n/a | n/a | n/a | n/a | n/a |
 
 **Methodology**
@@ -118,7 +118,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 - Not supported / not measured: llama.cpp ROCm: not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache; llama.cpp ROCm: not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot); llama.cpp ROCm: Loom rows: median of 3 serialized sessions of the final build (one GPU at a time, nothing else running).
 - Measured on AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04, a named machine (this GPU has no DevLab runner); both engines ran on it.
 - Margin vs best llama.cpp: (Loom / max(ROCm, Vulkan) - 1) × 100 %, using the available measured tokens/s for each row on this GPU. With only one valid backend, that backend is used; with neither, the margin is not measured. Raw backend values and their measurement sources are retained below and in the table.
-- Measured 2026-11-24; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown); source: named-machine run.
+- Measured 2026-11-25; device AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04; hrx-loom `0.3.0` (hrx-system commit unknown); source: named-machine run.
 - Roofline: the hardware ceiling for this GGUF on AMD Radeon AI PRO R9700 (gfx1201, 32 GB), measured read bandwidth at 620 GB/s and 191 TFLOP/s, from loom-roofline `roofline.py` (loom-skills `618f89e`); the 4-stream ceiling of this mixture-of-experts model assumes the four streams route to the same experts (the bound a run may not exceed).
 - — not measured; n/a not applicable.
 

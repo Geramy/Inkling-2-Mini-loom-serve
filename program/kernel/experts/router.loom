@@ -98,13 +98,11 @@ kernel.def export("inkling_router_logits") @inkling_router_logits(%n: index) {
       %token_raw = index.add %t0, %j : index
       %live = index.cmp ult, %token_raw, %n : index
       %token = index.assume %token_raw [ge(%token_raw, 0), le(%token_raw, 2147483646)] : index
-      %xr = scf.if %live -> (vector<4xf32>) {
-        %tk = index.assume %token_raw [ge(%token_raw, 0), lt(%token_raw, %n)] : index
-        %xl = vector.load %xv[%tk, %k4] : view<[%n]x[%c2304]xf32> -> vector<4xf32>
-        scf.yield %xl : vector<4xf32>
-      } else {
-        scf.yield %zero4 : vector<4xf32>
-      }
+      %last_token = index.sub %n, %c1 : index
+      %tk_min = index.min %token_raw, %last_token : index
+      %tk = index.assume %tk_min [ge(%tk_min, 0), lt(%tk_min, %n)] : index
+      %xl = vector.load %xv[%tk, %k4] : view<[%n]x[%c2304]xf32> -> vector<4xf32>
+      %xr = scf.select %live, %xl, %zero4 : vector<4xf32>
       %c0j = index.cmp eq, %j, %c0 : index
       %c1j = index.cmp eq, %j, %c1 : index
       %c2j = index.constant 2 : index

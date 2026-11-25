@@ -81,7 +81,7 @@
      "date": "2026-11-25",
      "detail": "tool messages sent with name",
      "level": "dev",
-     "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
      "source": "machine",
      "status": "pass"
     },
@@ -89,7 +89,7 @@
      "date": "2026-11-25",
      "detail": "from d08221b, not re-run on this build",
      "level": "dev",
-     "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
      "source": "machine",
      "status": "pass"
     },
@@ -97,7 +97,7 @@
      "date": "2026-11-25",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
      "source": "machine",
      "status": "pass"
     },
@@ -105,7 +105,7 @@
      "date": "2026-11-25",
      "detail": "from d08221b, not re-run on this build",
      "level": "dev",
-     "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
      "source": "machine",
      "status": "pass"
     },
@@ -113,7 +113,7 @@
      "date": "2026-11-25",
      "detail": "34/34",
      "level": null,
-     "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
      "source": "machine",
      "status": "pass"
     },
@@ -121,7 +121,7 @@
      "date": "2026-11-25",
      "detail": "default temperature 1.0, check expects greedy",
      "level": "dev",
-     "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
      "source": "machine",
      "status": "fail"
     }
@@ -148,18 +148,18 @@
        "perf.py URL llama-cpu-baseline --kind llama --repeats 3 [--long]  (llama-server -ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja; rows from an earlier session, not re-measured)",
        "gates golden and compare: from d08221b, not re-run on this build (no llama.cpp reference runs)"
       ],
-      "date": "2026-11-24",
+      "date": "2026-11-25",
       "metrics": {
        "decode": {
         "baseline": 14.9,
         "baseline_runs": [
          14.86
         ],
-        "loom": 105.8,
+        "loom": 106.4,
         "loom_runs": [
-         106.24,
-         105.79,
-         104.92
+         106.88,
+         106.35,
+         106.38
         ]
        },
        "decode_2k": {
@@ -167,20 +167,20 @@
         "baseline_runs": [
          11.26
         ],
-        "loom": 97.5,
+        "loom": 97.6,
         "loom_runs": [
-         97.64,
-         97.46,
-         96.89
+         97.91,
+         97.59,
+         97.55
         ]
        },
        "decode_32k": {
         "baseline": null,
         "loom": 83.1,
         "loom_runs": [
-         83.24,
-         83.11,
-         82.82
+         83.12,
+         83.52,
+         83.09
         ]
        },
        "prefill_16k": {
@@ -188,11 +188,11 @@
         "baseline_runs": [
          44.6
         ],
-        "loom": 3311.9,
+        "loom": 3632.3,
         "loom_runs": [
-         3360.0,
-         3311.9,
-         3302.6
+         3702.1,
+         3632.3,
+         3627.9
         ]
        },
        "prefill_1k": {
@@ -200,11 +200,11 @@
         "baseline_runs": [
          57.6
         ],
-        "loom": 2699.1,
+        "loom": 3061.0,
         "loom_runs": [
-         2774.5,
-         2699.1,
-         2686.2
+         3141.3,
+         3061.0,
+         3052.6
         ]
        },
        "prefill_2k": {
@@ -212,20 +212,20 @@
         "baseline_runs": [
          53.6
         ],
-        "loom": 3209.6,
+        "loom": 3633.6,
         "loom_runs": [
-         3289.1,
-         3209.6,
-         3202.0
+         3727.0,
+         3633.6,
+         3623.9
         ]
        },
        "prefill_32k": {
         "baseline": null,
-        "loom": 2949.4,
+        "loom": 3205.0,
         "loom_runs": [
-         2969.8,
-         2949.4,
-         2948.3
+         3246.1,
+         3205.0,
+         3202.6
         ]
        },
        "prefill_8k": {
@@ -233,24 +233,24 @@
         "baseline_runs": [
          48.7
         ],
-        "loom": 3440.5,
+        "loom": 3812.1,
         "loom_runs": [
-         3505.9,
-         3440.5,
-         3434.5
+         3894.8,
+         3812.1,
+         3807.0
         ]
        },
        "streams4": {
         "baseline": null,
-        "loom": 231.9,
+        "loom": 235.1,
         "loom_runs": [
-         231.9,
-         238.7,
-         231.3
+         235.1,
+         239.2,
+         232.2
         ]
        }
       },
-      "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+      "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
       "runs": {
        "decode_prefill": 3,
        "streams4": 3
@@ -327,7 +327,7 @@
      "date": "2026-11-25",
      "detail": "tool messages sent with name",
      "level": "dev",
-     "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
      "source": "machine",
      "status": "pass"
     },
@@ -335,7 +335,7 @@
      "date": "2026-11-25",
      "detail": "from d08221b, not re-run on this build",
      "level": "dev",
-     "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
      "source": "machine",
      "status": "pass"
     },
@@ -343,7 +343,7 @@
      "date": "2026-11-25",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
      "source": "machine",
      "status": "pass"
     },
@@ -351,7 +351,7 @@
      "date": "2026-11-25",
      "detail": "from d08221b, not re-run on this build",
      "level": "dev",
-     "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
      "source": "machine",
      "status": "pass"
     },
@@ -359,7 +359,7 @@
      "date": "2026-11-25",
      "detail": "34/34",
      "level": null,
-     "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
      "source": "machine",
      "status": "pass"
     },
@@ -367,7 +367,7 @@
      "date": "2026-11-25",
      "detail": "default temperature 1.0, check expects greedy",
      "level": "dev",
-     "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
      "source": "machine",
      "status": "fail"
     }
@@ -394,18 +394,18 @@
        "perf.py URL llama-cpu-baseline --kind llama --repeats 3 [--long]  (llama-server -ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja; rows from an earlier session, not re-measured)",
        "gates golden and compare: from d08221b, not re-run on this build (no llama.cpp reference runs)"
       ],
-      "date": "2026-11-24",
+      "date": "2026-11-25",
       "metrics": {
        "decode": {
         "baseline": 14.9,
         "baseline_runs": [
          14.86
         ],
-        "loom": 44.8,
+        "loom": 45.0,
         "loom_runs": [
-         45.07,
-         44.81,
-         44.62
+         45.04,
+         44.95,
+         44.5
         ]
        },
        "decode_2k": {
@@ -415,18 +415,18 @@
         ],
         "loom": 42.1,
         "loom_runs": [
+         42.19,
          42.13,
-         42.13,
-         41.82
+         41.69
         ]
        },
        "decode_32k": {
         "baseline": null,
-        "loom": 35.3,
+        "loom": 35.4,
         "loom_runs": [
-         35.37,
-         35.31,
-         35.2
+         35.44,
+         35.42,
+         35.09
         ]
        },
        "prefill_16k": {
@@ -434,11 +434,11 @@
         "baseline_runs": [
          44.6
         ],
-        "loom": 1111.9,
+        "loom": 1259.0,
         "loom_runs": [
-         1125.0,
-         1111.9,
-         1087.7
+         1259.0,
+         1262.4,
+         1224.9
         ]
        },
        "prefill_1k": {
@@ -446,11 +446,11 @@
         "baseline_runs": [
          57.6
         ],
-        "loom": 934.1,
+        "loom": 1117.6,
         "loom_runs": [
-         965.4,
-         934.1,
-         918.0
+         1135.6,
+         1117.6,
+         1089.6
         ]
        },
        "prefill_2k": {
@@ -458,20 +458,20 @@
         "baseline_runs": [
          53.6
         ],
-        "loom": 1094.5,
+        "loom": 1284.9,
         "loom_runs": [
-         1116.7,
-         1094.5,
-         1075.7
+         1290.2,
+         1284.9,
+         1253.2
         ]
        },
        "prefill_32k": {
         "baseline": null,
-        "loom": 996.6,
+        "loom": 1110.2,
         "loom_runs": [
-         1004.7,
-         996.6,
-         973.0
+         1110.2,
+         1114.3,
+         1073.0
         ]
        },
        "prefill_8k": {
@@ -479,11 +479,11 @@
         "baseline_runs": [
          48.7
         ],
-        "loom": 1156.5,
+        "loom": 1329.3,
         "loom_runs": [
-         1172.2,
-         1156.5,
-         1132.9
+         1331.7,
+         1329.3,
+         1294.5
         ]
        },
        "streams4": {
@@ -491,12 +491,12 @@
         "loom": 96.8,
         "loom_runs": [
          96.8,
-         95.5,
-         97.6
+         99.3,
+         96.7
         ]
        }
       },
-      "programs_sha256": "8e28c33dd2602ca4ee51c9c9f330ee7b962a6a45054392465865c9a8239bdc20",
+      "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
       "runs": {
        "decode_prefill": 3,
        "streams4": 3

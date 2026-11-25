@@ -5,6 +5,10 @@ func.decl @inkling_experts_records_tile(%n: index, %tile: index) -> (index)
 func.decl @inkling_experts_row_bytes(%wtype: index, %units: index) -> (offset)
 func.decl @inkling_experts_stage_w(%wtype: index, %w: buffer, %row_byte: offset, %row_units: index, %kb: index, %w_stage: buffer, %stage_row: index)
 func.decl @inkling_experts_stage_x(%src: buffer, %rows: index, %cols: index, %src_row: index, %kb: index, %part: index, %x_stage: buffer, %stage_row: index)
+func.decl @inkling_experts_w_raw(%w: buffer, %row_byte: offset, %row_units: index, %kb: index) -> (i32, i32, i32, i32, i32, i32, i32, i32, i32)
+func.decl @inkling_experts_stage_w_fp4(%r0: i32, %r1: i32, %r2: i32, %r3: i32, %r4: i32, %r5: i32, %r6: i32, %r7: i32, %r8: i32, %w_stage: buffer, %stage_row: index)
+func.decl @inkling_experts_x_load(%src: buffer, %rows: index, %cols: index, %src_row: index, %kb: index, %part: index) -> (vector<16xf16>)
+func.decl @inkling_experts_x_store(%v: vector<16xf16>, %x_stage: buffer, %stage_row: index, %part: index)
 
 template.decl @inkling.mma.zero_acc() -> (vector<8xf32>)
 template.decl @inkling.mma.k64_2x2(%x_stage: buffer, %w_stage: buffer, %col0: index, %row0: index, %acc00: vector<8xf32>, %acc01: vector<8xf32>, %acc10: vector<8xf32>, %acc11: vector<8xf32>) -> (vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>)
@@ -80,7 +84,37 @@ kernel.def export("inkling_experts_down_wmma") @inkling_experts_down_wmma(%n: in
     %xroute_hi_sel = scf.select %xvalid_hi, %route_hi_raw, %c0 : index
     %xroute_hi = index.assume %xroute_hi_sel [ge(%xroute_hi_sel, 0), lt(%xroute_hi_sel, %routes)] : index
     %acc0 = template.apply<@inkling.mma.zero_acc>() : () -> (vector<8xf32>)
-    %a00, %a01, %a10, %a11, %b00, %b01, %b10, %b11 = scf.for %kb = [%c0 to %c18 step %c1](%p00 = %acc0 : vector<8xf32>, %p01 = %acc0 : vector<8xf32>, %p10 = %acc0 : vector<8xf32>, %p11 = %acc0 : vector<8xf32>, %q00 = %acc0 : vector<8xf32>, %q01 = %acc0 : vector<8xf32>, %q10 = %acc0 : vector<8xf32>, %q11 = %acc0 : vector<8xf32>) -> (vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>) {
+    // NVFP4: the words and the act rows of the next K block are loaded before the matrix operations of the current block.
+    %fast = index.cmp eq, %wtype, %c0 : index
+    %c17 = index.constant 17 : index
+    %a00, %a01, %a10, %a11, %b00, %b01, %b10, %b11 = scf.if %fast -> (vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>) {
+      %pr0, %pr1, %pr2, %pr3, %pr4, %pr5, %pr6, %pr7, %pr8 = func.call @inkling_experts_w_raw(%w, %w_byte, %c72, %c0) : (buffer, offset, index, index) -> (i32, i32, i32, i32, i32, i32, i32, i32, i32)
+      %pxl = func.call @inkling_experts_x_load(%act, %routes, %c1152, %xroute, %c0, %xpart) : (buffer, index, index, index, index, index) -> (vector<16xf16>)
+      %pxh = func.call @inkling_experts_x_load(%act, %routes, %c1152, %xroute_hi, %c0, %xpart) : (buffer, index, index, index, index, index) -> (vector<16xf16>)
+      %g00, %g01, %g10, %g11, %h00, %h01, %h10, %h11, %l0, %l1, %l2, %l3, %l4, %l5, %l6, %l7, %l8, %lxl, %lxh = scf.for %kb = [%c0 to %c18 step %c1](%p00 = %acc0 : vector<8xf32>, %p01 = %acc0 : vector<8xf32>, %p10 = %acc0 : vector<8xf32>, %p11 = %acc0 : vector<8xf32>, %q00 = %acc0 : vector<8xf32>, %q01 = %acc0 : vector<8xf32>, %q10 = %acc0 : vector<8xf32>, %q11 = %acc0 : vector<8xf32>, %w0 = %pr0 : i32, %w1 = %pr1 : i32, %w2 = %pr2 : i32, %w3 = %pr3 : i32, %w4 = %pr4 : i32, %w5 = %pr5 : i32, %w6 = %pr6 : i32, %w7 = %pr7 : i32, %w8 = %pr8 : i32, %xl = %pxl : vector<16xf16>, %xh = %pxh : vector<16xf16>) -> (vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, i32, i32, i32, i32, i32, i32, i32, i32, i32, vector<16xf16>, vector<16xf16>) {
+        kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+        func.call @inkling_experts_stage_w_fp4(%w0, %w1, %w2, %w3, %w4, %w5, %w6, %w7, %w8, %w_stage, %tid) : (i32, i32, i32, i32, i32, i32, i32, i32, i32, buffer, index) -> ()
+        scf.if %xvalid {
+          func.call @inkling_experts_x_store(%xl, %x_stage, %xrow, %xpart) : (vector<16xf16>, buffer, index, index) -> ()
+        }
+        scf.if %xvalid_hi {
+          func.call @inkling_experts_x_store(%xh, %x_stage, %xrow_hi, %xpart) : (vector<16xf16>, buffer, index, index) -> ()
+        }
+        kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+        %kb1 = index.add %kb, %c1 : index
+        %more = index.cmp ult, %kb1, %c18 : index
+        %kn = scf.select %more, %kb1, %c17 : index
+        %nr0, %nr1, %nr2, %nr3, %nr4, %nr5, %nr6, %nr7, %nr8 = func.call @inkling_experts_w_raw(%w, %w_byte, %c72, %kn) : (buffer, offset, index, index) -> (i32, i32, i32, i32, i32, i32, i32, i32, i32)
+        %nxl = func.call @inkling_experts_x_load(%act, %routes, %c1152, %xroute, %kn, %xpart) : (buffer, index, index, index, index, index) -> (vector<16xf16>)
+        %nxh = func.call @inkling_experts_x_load(%act, %routes, %c1152, %xroute_hi, %kn, %xpart) : (buffer, index, index, index, index, index) -> (vector<16xf16>)
+        %wave_row = index.mul %wave, %c32 : index
+        %n00, %n01, %n10, %n11 = template.apply<@inkling.mma.k64_2x2>(%x_stage, %w_stage, %c0, %wave_row, %p00, %p01, %p10, %p11) : (buffer, buffer, index, index, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>) -> (vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>)
+        %m00, %m01, %m10, %m11 = template.apply<@inkling.mma.k64_2x2>(%x_stage, %w_stage, %c32, %wave_row, %q00, %q01, %q10, %q11) : (buffer, buffer, index, index, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>) -> (vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>)
+        scf.yield %n00, %n01, %n10, %n11, %m00, %m01, %m10, %m11, %nr0, %nr1, %nr2, %nr3, %nr4, %nr5, %nr6, %nr7, %nr8, %nxl, %nxh : vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, i32, i32, i32, i32, i32, i32, i32, i32, i32, vector<16xf16>, vector<16xf16>
+      }
+      scf.yield %g00, %g01, %g10, %g11, %h00, %h01, %h10, %h11 : vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>
+    } else {
+    %e00, %e01, %e10, %e11, %f00, %f01, %f10, %f11 = scf.for %kb = [%c0 to %c18 step %c1](%p00 = %acc0 : vector<8xf32>, %p01 = %acc0 : vector<8xf32>, %p10 = %acc0 : vector<8xf32>, %p11 = %acc0 : vector<8xf32>, %q00 = %acc0 : vector<8xf32>, %q01 = %acc0 : vector<8xf32>, %q10 = %acc0 : vector<8xf32>, %q11 = %acc0 : vector<8xf32>) -> (vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>) {
       kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
       func.call @inkling_experts_stage_w(%wtype, %w, %w_byte, %c72, %kb, %w_stage, %tid) : (index, buffer, offset, index, index, buffer, index) -> ()
       scf.if %xvalid {
@@ -94,6 +128,8 @@ kernel.def export("inkling_experts_down_wmma") @inkling_experts_down_wmma(%n: in
       %n00, %n01, %n10, %n11 = template.apply<@inkling.mma.k64_2x2>(%x_stage, %w_stage, %c0, %wave_row, %p00, %p01, %p10, %p11) : (buffer, buffer, index, index, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>) -> (vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>)
       %m00, %m01, %m10, %m11 = template.apply<@inkling.mma.k64_2x2>(%x_stage, %w_stage, %c32, %wave_row, %q00, %q01, %q10, %q11) : (buffer, buffer, index, index, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>) -> (vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>)
       scf.yield %n00, %n01, %n10, %n11, %m00, %m01, %m10, %m11 : vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>
+    }
+    scf.yield %e00, %e01, %e10, %e11, %f00, %f01, %f10, %f11 : vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>, vector<8xf32>
     }
     %is_fp4 = index.cmp eq, %wtype, %c0 : index
     %sv = buffer.view %scales[%origin] : buffer -> view<128xf32>
