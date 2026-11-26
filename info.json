@@ -23,7 +23,7 @@
     "status": "yes",
     "value": {
      "native": 1048576,
-     "tokens": 131072
+     "tokens": 262144
     }
    },
    "image_input": {
@@ -33,7 +33,7 @@
    "max_output_tokens": {
     "status": "yes",
     "value": {
-     "max_tokens": 4096
+     "max_tokens": 65536
     }
    },
    "reasoning_effort": {
@@ -71,7 +71,7 @@
     "value": null
    }
   },
-  "memory_bytes": 24925405184,
+  "memory_bytes": 31960000000,
   "output": "unsloth-Inkling-2-Mini-loom"
  },
  "devices": {

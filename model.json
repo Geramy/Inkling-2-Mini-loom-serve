@@ -155,17 +155,36 @@
    "programs": "source",
    "execution": {
     "rows": 4,
-    "context_capacity": 131072,
+    "context_capacity": 262144,
     "prefill_capacity": 2048,
     "checkpoint_capacity": 4,
-    "max_tokens": 4096,
+    "max_tokens": 65536,
     "session_cache_capacity": 0,
     "prefix_cache_capacity": 16
    },
    "memory": {
     "weights_bytes": 17617780736,
-    "transient_bytes": 10800000000,
-    "workload": "4 rows, 131072 context, 2048 prefill tokens, 4 checkpoints, 16 prefix cache endpoints (0.17 GB each); measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
+    "transient_bytes": 14400000000,
+    "workload": "4 rows, 262144 context, 2048 prefill tokens, 4 checkpoints, 16 prefix cache endpoints (0.171 GB each), max_tokens 65536 (the default of a request, not a cap; prompt tokens plus max_tokens must fit the context); measured memory in use after load: weights + 2.95 GB (Q4, prefill 2048) or 2.5 GB (Q8, prefill 512) + 32768 bytes per context position + the endpoints; transient_bytes is the measured memory in use minus the weights, rounded up, and loom-serve does not enforce it (docs/OPT_FIT.md)"
+   }
+  },
+  "chat-1m": {
+   "service": "chat",
+   "variant": "ud-q4-k-xl",
+   "programs": "source",
+   "execution": {
+    "rows": 4,
+    "context_capacity": 1048576,
+    "prefill_capacity": 2048,
+    "checkpoint_capacity": 4,
+    "max_tokens": 65536,
+    "session_cache_capacity": 0,
+    "prefix_cache_capacity": 16
+   },
+   "memory": {
+    "weights_bytes": 17617780736,
+    "transient_bytes": 40200000000,
+    "workload": "4 rows, 1048576 context, 2048 prefill tokens, 4 checkpoints, 16 prefix cache endpoints (0.171 GB each), max_tokens 65536 (the default of a request, not a cap; prompt tokens plus max_tokens must fit the context); measured memory in use after load: weights + 2.95 GB (Q4, prefill 2048) or 2.5 GB (Q8, prefill 512) + 32768 bytes per context position + the endpoints; transient_bytes is the measured memory in use minus the weights, rounded up, and loom-serve does not enforce it (docs/OPT_FIT.md)"
    }
   },
   "chat-r9700": {
@@ -174,17 +193,17 @@
    "programs": "source",
    "execution": {
     "rows": 4,
-    "context_capacity": 131072,
+    "context_capacity": 294912,
     "prefill_capacity": 2048,
     "checkpoint_capacity": 4,
-    "max_tokens": 4096,
+    "max_tokens": 65536,
     "session_cache_capacity": 0,
     "prefix_cache_capacity": 16
    },
    "memory": {
     "weights_bytes": 17617780736,
-    "transient_bytes": 10800000000,
-    "workload": "4 rows, 131072 context, 2048 prefill tokens, 4 checkpoints, 16 prefix cache endpoints (0.17 GB each); measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
+    "transient_bytes": 15400000000,
+    "workload": "4 rows, 294912 context, 2048 prefill tokens, 4 checkpoints, 16 prefix cache endpoints (0.171 GB each), max_tokens 65536 (the default of a request, not a cap; prompt tokens plus max_tokens must fit the context); measured memory in use after load: weights + 2.95 GB (Q4, prefill 2048) or 2.5 GB (Q8, prefill 512) + 32768 bytes per context position + the endpoints; transient_bytes is the measured memory in use minus the weights, rounded up, and loom-serve does not enforce it (docs/OPT_FIT.md)"
    }
   },
   "chat-q8": {
@@ -193,17 +212,17 @@
    "programs": "source",
    "execution": {
     "rows": 4,
-    "context_capacity": 32768,
+    "context_capacity": 262144,
     "prefill_capacity": 512,
     "checkpoint_capacity": 4,
-    "max_tokens": 4096,
+    "max_tokens": 65536,
     "session_cache_capacity": 0,
     "prefix_cache_capacity": 16
    },
    "memory": {
     "weights_bytes": 22855473152,
-    "transient_bytes": 6400000000,
-    "workload": "4 rows, 32768 context, 512 prefill tokens, 4 checkpoints, 16 prefix cache endpoints (0.17 GB each); measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
+    "transient_bytes": 14000000000,
+    "workload": "4 rows, 262144 context, 512 prefill tokens, 4 checkpoints, 16 prefix cache endpoints (0.171 GB each), max_tokens 65536 (the default of a request, not a cap; prompt tokens plus max_tokens must fit the context); measured memory in use after load: weights + 2.95 GB (Q4, prefill 2048) or 2.5 GB (Q8, prefill 512) + 32768 bytes per context position + the endpoints; transient_bytes is the measured memory in use minus the weights, rounded up, and loom-serve does not enforce it (docs/OPT_FIT.md)"
    }
   },
   "chat-q8-r9700": {
@@ -212,17 +231,17 @@
    "programs": "source",
    "execution": {
     "rows": 4,
-    "context_capacity": 32768,
+    "context_capacity": 147456,
     "prefill_capacity": 512,
     "checkpoint_capacity": 4,
-    "max_tokens": 4096,
+    "max_tokens": 32768,
     "session_cache_capacity": 0,
     "prefix_cache_capacity": 16
    },
    "memory": {
     "weights_bytes": 22855473152,
-    "transient_bytes": 6400000000,
-    "workload": "4 rows, 32768 context, 512 prefill tokens, 4 checkpoints, 16 prefix cache endpoints (0.17 GB each); measured: 19.9 GB + 39.4 KB per context position, non-weight memory 7.3 GB at 131072 with prefill 2048 and 3.6 GB at 32768 with prefill 512 (docs/CONTEXT_TABLE.md)"
+    "transient_bytes": 10100000000,
+    "workload": "4 rows, 147456 context, 512 prefill tokens, 4 checkpoints, 16 prefix cache endpoints (0.171 GB each), max_tokens 32768 (the default of a request, not a cap; prompt tokens plus max_tokens must fit the context); measured memory in use after load: weights + 2.95 GB (Q4, prefill 2048) or 2.5 GB (Q8, prefill 512) + 32768 bytes per context position + the endpoints; transient_bytes is the measured memory in use minus the weights, rounded up, and loom-serve does not enforce it (docs/OPT_FIT.md)"
    }
   }
  },

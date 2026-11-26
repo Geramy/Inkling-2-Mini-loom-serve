@@ -134,9 +134,9 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 | image input | ❌ | not supported by Loom (the upstream model has it) |
 | audio input / output | — | not applicable |
 | sampling | ❌ | greedy decoding only |
-| context size | ✅ | 131,072 tokens per request |
+| context size | ✅ | 262,144 tokens per request |
 | concurrency | ✅ | 4 concurrent requests |
-| max output tokens | ✅ | 4,096 (preset `max_tokens`) |
+| max output tokens | ✅ | 65,536 (preset `max_tokens`) |
 
 ## Correctness
 

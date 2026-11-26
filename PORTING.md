@@ -32,12 +32,13 @@ Presets (all: 4 rows, 4 checkpoints, max 4096 new tokens; prefill capacity 2048 
 
 | Preset | GPU | Variant | Context capacity |
 |---|---|---|---|
-| `chat` | Radeon 8060S (gfx1151) | `ud-q4-k-xl` | 131072 |
-| `chat-r9700` | Radeon AI PRO R9700 (gfx1201) | `ud-q4-k-xl` | 131072 |
-| `chat-q8` | Radeon 8060S | `ud-q8-k-xl` | 32768 |
-| `chat-q8-r9700` | Radeon AI PRO R9700 | `ud-q8-k-xl` | 32768 |
+| `chat` | Radeon 8060S (gfx1151) | `ud-q4-k-xl` | 262144 |
+| `chat-1m` | Radeon 8060S (128 GB machine) | `ud-q4-k-xl` | 1048576 |
+| `chat-r9700` | Radeon AI PRO R9700 (gfx1201) | `ud-q4-k-xl` | 294912 |
+| `chat-q8` | Radeon 8060S | `ud-q8-k-xl` | 262144 |
+| `chat-q8-r9700` | Radeon AI PRO R9700 | `ud-q8-k-xl` | 147456 |
 
-The native context is 1,048,576. A preset sets the served context from measured memory: used memory is about 19.9 GB plus 39.4 KB per context position at 4 rows, so Q4 at 131072 uses about 24.9 GB on both GPUs (measured with prefill capacity 2048; the preset budgets 8.0 GB of non-weight memory). The R9700 admitted up to 327680 positions in tests. The 8060S admitted 1,048,576, but a full request of that size takes hours. The Q8 presets stay at 32768 and prefill capacity 512 because 131072 and the larger prefill capacity were not measured for Q8 (the Q8 weights are 5.2 GB larger). Each preset also carries `memory.weights_bytes`, `transient_bytes` and a `workload` text with the fit.
+The native context is 1,048,576. A preset sets the served context from measured memory (section 9 has the table and the formula: 20.57 GB for Q4 at prefill 2048, or 25.38 GB for Q8 at prefill 512, plus 32768 bytes per context position and 0.171 GB per prefix cache endpoint, at 4 rows). The Q8 presets use prefill capacity 512. Each preset carries `memory.weights_bytes`, `transient_bytes`, a default `max_tokens` and a `workload` text with the fit.
 
 ## 3. Tokenizer
 
@@ -112,7 +113,18 @@ loom-serve --model=<dir> '--device=amdgpu://?completion_spin_ns=4294967295' --po
 ```
 
 - On a two-GPU host the device must be named (`amdgpu://<id>?completion_spin_ns=4294967295`, ids from `loom-run --list_devices=amdgpu`) because the generated quick start in `README.md` uses the unnamed device URI, which can select the wrong GPU.
-- Use the preset of your GPU: `chat` (8060S) or `chat-r9700` (R9700); `chat-q8` and `chat-q8-r9700` for Q8_K_XL. A fetched directory holds only the preset you selected. Without `--origin`, `loom-fetch` downloads the GGUF from Hugging Face.
+- Presets (all Q4_K_XL unless named): `chat` (8060S, 64 GB machine or larger, context 262144), `chat-1m` (8060S, 128 GB machine, context 1,048,576 = the native limit), `chat-r9700` (R9700 34 GB, context 294912); `chat-q8` (8060S, 262144) and `chat-q8-r9700` (R9700, 147456) for Q8_K_XL. All use 4 rows and 16 prefix cache endpoints. A fetched directory holds only the preset you selected.
+
+| Preset | GPU, weights | context | prefill | default `max_tokens` | `transient_bytes` | memory in use (measured) |
+|---|---|---|---|---|---|---|
+| `chat` | 8060S, Q4 | 262144 | 2048 | 65536 | 14.4e9 | 31.96 GB |
+| `chat-1m` | 8060S, Q4, 128 GB machine | 1048576 | 2048 | 65536 | 40.2e9 | 57.73 GB |
+| `chat-r9700` | R9700, Q4 | 294912 | 2048 | 65536 | 15.4e9 | 32.97 GB (1.24 GB free) |
+| `chat-q8` | 8060S, Q8 | 262144 | 512 | 65536 | 14.0e9 | 36.77 GB |
+| `chat-q8-r9700` | R9700, Q8 | 147456 | 512 | 32768 | 10.1e9 | 32.95 GB (1.26 GB free) |
+
+- Sizing another machine: loom-serve 0.3.0 has no flag for the execution values and no automatic fit (`memory.transient_bytes` is informational). Use a deployment document: `{"name": "thinkingmachines/Inkling-2-Mini", "model": {"path": "<dir>/model.json", "preset": "chat"}, "definition": {"kind": "text", "rows": 4, "context_capacity": N, "prefill_capacity": 2048, "prefix_cache_capacity": 16, "max_tokens": 65536}}` and `loom-serve --model=deployment.json --device=... --pool_backing=fixed`. Choose N with: memory in use = 20.57 GB (Q4, prefill 2048) or 25.38 GB (Q8, prefill 512) + 32768 bytes x N + 0.171 GB x prefix_cache_capacity, minus 0.34 GB per row below 4; keep 1 GB free. N must be a multiple of 64 (page) and of prefill_capacity; the native limit is 1,048,576.
+- `max_tokens` of a preset is the default of a request without `max_tokens`, not a cap. A request may ask for more. Prompt tokens plus `max_tokens` must fit `context_capacity` (HTTP 400 `OUT_OF_RANGE` otherwise, also for the default): a prompt longer than `context_capacity - max_tokens` needs an explicit smaller `max_tokens`. A runaway generation blocks one row until `max_tokens` tokens are out or the client closes the connection (65536 tokens take about 11 minutes on the R9700 and 28 minutes on the 8060S).
 - The generated `README.md` gives `--parameter_mode=preload` for the R9700 (a rule of the card tool for hrx-loom 0.2.0). hrx-loom 0.3.0 rejects that value (`loom-serve` accepts `file` or `direct`): leave the flag out, as in the command above. `--pool_backing=fixed` was used for every measurement.
 - Model id: `thinkingmachines/Inkling-2-Mini`. Endpoint `/v1/chat/completions` (OpenAI style, streaming or not).
 - The model thinks first (default effort `high`): the reasoning is in `reasoning_content`. Give `max_tokens` enough room. Set the effort with `reasoning_effort` (none, minimal, low, medium, high, xhigh, max, or a number from 0 to 0.99) or `chat_template_kwargs`.
@@ -125,7 +137,7 @@ loom-serve --model=<dir> '--device=amdgpu://?completion_spin_ns=4294967295' --po
 - A tool message without `name` is accepted (section 13). The runtime still rejects `function.arguments` given as a JSON object and a tool call without `type` (HTTP 400): those checks run before the package policy.
 - Images, audio and video are not supported (text parts only). There is no vision projector and no speculative decoding.
 - Unsupported request fields are rejected with HTTP 400 (`logprobs`, `top_logprobs`, `stop`, `n` above 1, penalties other than the neutral value).
-- The served context is below the native 1,048,576 (131072 for Q4 presets, 32768 for Q8 presets). Attention makes very long prefill slow.
+- The served context is 262144 (chat, chat-q8), 294912 (chat-r9700), 147456 (chat-q8-r9700) and 1,048,576 (chat-1m); the native limit is 1,048,576. Attention makes very long prefill slow (R9700 265k tokens: 202 s; 8060S 236k tokens: 532 s). Decode at depth: R9700 42 tok/s at 265k, 8060S 18 tok/s at 236k.
 - Near-ties in routing and output can flip against llama.cpp, so greedy text matches for many tokens and then may differ.
 - Performance numbers on the card compare with a CPU llama.cpp only. There are no ROCm or Vulkan llama.cpp numbers.
 - The generated `README.md` says "greedy decoding only" in its sampling row, and the sampling gate in `info.json` is failed. Both come from the skills' check, which assumes a greedy default. This server samples: the default temperature is 1.0 (the recommendation of the model), and `temperature`, `top_p`, `top_k` and `seed` are supported. The supplementary check `scripts/sampling_supplement.py` passes 4 of 4 on both GPUs. The README text is generated and is not edited by hand.
