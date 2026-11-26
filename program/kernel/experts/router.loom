@@ -158,7 +158,7 @@ kernel.def export("inkling_router_logits") @inkling_router_logits(%n: index) {
   kernel.return
 }
 
-func.decl @inkling_experts_route_groups(%n: index, %tile: index, %ids: buffer, %tasks: buffer)
+func.decl @inkling_experts_route_groups(%n: index, %live_tokens: index, %tile: index, %ids: buffer, %tasks: buffer)
 
 // Top 8 of one token: a wave, a lane owns 4 consecutive experts. Ties go to the lower expert index.
 func.def public inline @inkling_router_select_one(%n: index, %token_raw: index, %lane: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer) {
@@ -350,11 +350,23 @@ kernel.def export("inkling_router_decode") @inkling_router_decode() {
   %c1 = index.constant 1 : index
   %c128 = index.constant 128 : index
   kernel.launch.config workgroups(%c1, %c1, %c1) workgroup_size(%c128, %c1, %c1) : index
-} launch(%n: index, %tile: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer, %tasks: buffer) {
+} launch(%n: index, %tile: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer, %tasks: buffer, %metadata: buffer) {
   %c4 = index.constant 4 : index
   %wave = kernel.subgroup.id : index
   %lane = kernel.subgroup.lane.id : index
-  scf.for %token = [%wave to %n step %c4] {
+  %c1_live = index.constant 1 : index
+  %one_row = index.cmp eq, %n, %c1_live : index
+  %live = scf.if %one_row -> (index) {
+    scf.yield %n : index
+  } else {
+    %meta_origin = index.constant 0 : offset
+    %meta_header = buffer.view %metadata[%meta_origin] : buffer -> view<1xi32>
+    %live_word = view.load %meta_header[0] : view<1xi32> -> i32
+    %live_raw = index.cast %live_word : i32 to index
+    %live_min = index.min %live_raw, %n : index
+    scf.yield %live_min : index
+  }
+  scf.for %token = [%wave to %live step %c4] {
     func.call @inkling_router_select_one(%n, %token, %lane, %logits, %bias, %ids, %wts) : (index, index, index, buffer, buffer, buffer, buffer)
   }
   kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
@@ -363,7 +375,7 @@ kernel.def export("inkling_router_decode") @inkling_router_decode() {
   scf.if %one_token {
     func.call @inkling_experts_route_one(%tile, %ids, %tasks) : (index, buffer, buffer)
   } else {
-    func.call @inkling_experts_route_groups(%n, %tile, %ids, %tasks) : (index, index, buffer, buffer)
+    func.call @inkling_experts_route_groups(%n, %live, %tile, %ids, %tasks) : (index, index, index, buffer, buffer)
   }
   kernel.return
 }

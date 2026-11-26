@@ -166,7 +166,7 @@ Measured on the published route (median of 3 fresh servers per GPU, Q4_K_XL, `pe
 
 A request of 130972 tokens (the Q4 preset context) completes in 120 s on the R9700 and 343 s on the 8060S (183 s and 443 s before). The speed of the CPU reference is in the card (`README.md`, `REPORT.md`).
 
-Wave 2 (on hrx-loom 0.3.0) adds seven changes. Each is in the files named in section 4.
+Wave 2 (on hrx-loom 0.3.0) adds eight changes. Each is in the files named in section 4.
 
 - Attention front end: the q, k, v, gate and rel projections run as one grouped GEMV (shared input), and the attention prep, K/V append and conv commit are fused. The merge of split attention is one launch (about 336 launches less per token).
 - Experts, decode: the gate/up and down kernels are software pipelined (NVFP4 fast path). On the 8060S the down kernel is a wave64 kernel (`kernel/experts/down_w64.loom`, `lib/inkling/targets_w64.loom`); the R9700 does not use it.
@@ -175,15 +175,25 @@ Wave 2 (on hrx-loom 0.3.0) adds seven changes. Each is in the files named in sec
 - Grouped projection grid: the grouped attention projection GEMV has its own workgroup-per-unit tune value (7 on gfx1201, 4 on gfx1151), which cuts the tail of the launch on the R9700 (decode +2.3 to +2.8 percent; same arithmetic, bitwise equal outputs).
 - Small decode kernels without waits on branches: a value that leaves an `scf.if` makes the compiler wait for its load, so a loop that loads through `scf.if` issues one load, waits, then issues the next. In `mix_states`, the attention tile, the attention prep conv, the norms (width 2304), `conv_res` and the router (one-token direct route table) the branch now sits outside the loop or both sides load and a select picks one, with the same arithmetic order (bitwise equal results). The expert combine is folded into the post-FFN conv/residual kernel for one-token steps (`inkling_conv_res_combine`), and the attention tile prefill mode is not launched for one-token steps. A decode step has 786 launches instead of 882.
 - Experts matrix path pipelined (prefill): the NVFP4 branch of the gate/up and down matrix kernels loads the next K block (weight words and activation vectors) while the matrix operations of the current block run, instead of load, wait, compute per block. `router_logits` loads x without a branch per load, and the controller apply step issues its loads before the liveness guard. Same decoded values and matrix operation order, so results are bitwise equal; prefill 2k +11 percent (R9700) and +14 percent (8060S), decode unchanged within noise.
+- Router skips dead rows: with 3 live streams the router (`router_decode` and the routes kernel) no longer selects experts for the empty fourth row, so 3 streams cost less than a full 4-row step. Aggregate decode of 1 to 4 concurrent streams, tok/s, client-measured, one session per arm (before = previous build, after = this build; 3 requests per cell, median; not a card metric; the server-side 3 and 4 stream values are in the table below):
 
-Measured on the published route (median of 3 serialized fresh servers per GPU, one GPU at a time, Q4_K_XL, `perf.py` rows, tok/s; wave 1 in brackets):
+| streams | R9700 before | R9700 after | 8060S before | 8060S after |
+|---|---|---|---|---|
+| 1 | 104.1 | 105.2 | 44.1 | 44.3 |
+| 2 | 152.5 | 153.7 | 64.4 | 64.9 |
+| 3 | 160.6 | 189.3 (+17.9 %) | 65.4 | 78.9 (+20.6 %) |
+| 4 | 221.1 | 220.0 | 90.7 | 91.4 |
+
+- Batch invariance: batched greedy text is not bit-exact against the same prompt decoded alone. With several streams decoded together the text of a stream can differ from its solo text at a late character (for example character 226 of 398 in a test of four different prompts), because the batched kernels reduce in a different order. Solo runs are reproducible, and the build before this change shows the same behaviour. Cause not isolated; a state bug is not known.
+
+Measured on the server of the published route: speed comes from loom-serve itself (`GET /metrics`: request duration and token counters read before and after each request), not from a client clock (this replaces the earlier client-measured table; the numbers are not comparable with it). Median of 3 fresh servers per GPU, both GPUs at the same time, Q4_K_XL, tok/s. Prefill is prompt tokens divided by the time to the first token, so it includes tokenizing and queueing; decode is the difference of a long and a short generation; 4 streams are 4 concurrent requests. 3 streams (not a card row): 188.5 tok/s on the R9700 and 77.5 on the 8060S:
 
 | | decode short | decode 2k | decode 8k | decode 32k | prefill 1k | prefill 2k | prefill 8k | prefill 16k | prefill 32k | 4 streams |
 |---|---|---|---|---|---|---|---|---|---|---|
-| R9700 | 106.4 (90.2) | 97.6 (83.2) | 94.0 (80.3) | 83.1 (71.3) | 3061 (2576) | 3634 (2996) | 3812 (3092) | 3632 (2801) | 3205 (2242) | 235.1 (218.9) |
-| 8060S | 45.0 (39.7) | 42.1 (36.7) | 40.3 (34.9) | 35.4 (29.7) | 1118 (894) | 1285 (1033) | 1329 (1051) | 1259 (973) | 1110 (812) | 96.8 (89.0) |
+| R9700 | 104.7 | 96.0 | 92.4 | 81.0 | 3313 | 3814 | 3869 | 3646 | 3218 | 220.2 |
+| 8060S | 44.2 | 41.6 | 40.0 | 34.6 | 1204 | 1332 | 1341 | 1266 | 1116 | 90.1 |
 
-That is 0.69 (R9700) and 0.79 (8060S) of the decode roofline at short context. Not verified for wave 2: the layer check of the capture route on hrx-loom 0.3.0, and a run of the wave 1 build on 0.3.0 against 0.2.0 in the same session on the R9700. The last gates that need a llama.cpp reference (golden, compare) were not re-run on the final build; the card marks them as taken from the previous build.
+That is 0.68 (R9700) and 0.77 (8060S) of the decode roofline at short context. Not verified for wave 2: the layer check of the capture route on hrx-loom 0.3.0, and a run of the wave 1 build on 0.3.0 against 0.2.0 in the same session on the R9700. The last gates that need a llama.cpp reference (golden, compare) were not re-run on the final build; the card marks them as taken from the previous build.
 
 ## 13. Chat behaviour: prefix cache and tool calls
 

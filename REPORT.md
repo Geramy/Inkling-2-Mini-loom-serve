@@ -22,40 +22,38 @@ How the values on this repository's model card were measured. Generated from `in
 
 - Baseline: llama.cpp `llama.cpp-cpu/418fe97+PR32704`, server arguments `-ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja` (model path, host and port left out).
 
-### Session 1: named-machine run, 2026-11-25
+### Session 1: named-machine run, 2026-11-21
 
 - Device: AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04.
 - Loom SDK: hrx-loom `0.3.0` (hrx-system commit unknown).
-- Programs measured: sha256 `540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e`, the same as this repository's programs.
+- Programs measured: sha256 `2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942`, the same as this repository's programs.
 - Values: the median over 3 sessions (4 streams: over 3 runs), a session's value being the median of its samples.
 - Commands:
 
 ```bash
 loom-serve --device='amdgpu://<URI>?completion_spin_ns=4294967295' --model=<preset dir> --preset=chat --pool_backing=fixed --workers=8
-perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini
-perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini --long
-c4_steady.py URL 4 --model thinkingmachines/Inkling-2-Mini --label loom-baseline
+srv_measure.py URL OUT.json   (server-side: GET /metrics request duration and token counters around each request; 3 fresh sessions, both GPUs at the same time)
 perf.py URL llama-cpu-baseline --kind llama --repeats 3 [--long]  (llama-server -ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja; rows from an earlier session, not re-measured)
 gates golden and compare: from d08221b, not re-run on this build (no llama.cpp reference runs)
 ```
 
 | metric | engine | runs | value |
 |---|---|---|---|
-| decode tok/s, short prompt | Loom | 45.04, 44.95, 44.5 | 45.0 |
+| decode tok/s, short prompt | Loom | 44.39, 44.06, 44.17 | 44.2 |
 | decode tok/s, short prompt | llama.cpp | 14.86 | 14.9 |
-| decode tok/s, 2k context | Loom | 42.19, 42.13, 41.69 | 42.1 |
+| decode tok/s, 2k context | Loom | 41.76, 41.57, 41.45 | 41.6 |
 | decode tok/s, 2k context | llama.cpp | 11.26 | 11.3 |
-| decode tok/s, 32k context | Loom | 35.44, 35.42, 35.09 | 35.4 |
-| prefill tok/s, 1k document | Loom | 1135.6, 1117.6, 1089.6 | 1117.6 |
+| decode tok/s, 32k context | Loom | 34.6, 32.3, 34.79 | 34.6 |
+| prefill tok/s, 1k document | Loom | 1232.9, 1203.5, 1168.6 | 1203.5 |
 | prefill tok/s, 1k document | llama.cpp | 57.6 | 57.6 |
-| prefill tok/s, 2k document | Loom | 1290.2, 1284.9, 1253.2 | 1284.9 |
+| prefill tok/s, 2k document | Loom | 1368.2, 1331.6, 1302.7 | 1331.6 |
 | prefill tok/s, 2k document | llama.cpp | 53.6 | 53.6 |
-| prefill tok/s, 8k document | Loom | 1331.7, 1329.3, 1294.5 | 1329.3 |
+| prefill tok/s, 8k document | Loom | 1371.9, 1341.2, 1308.0 | 1341.2 |
 | prefill tok/s, 8k document | llama.cpp | 48.7 | 48.7 |
-| prefill tok/s, 16k document | Loom | 1259.0, 1262.4, 1224.9 | 1259.0 |
+| prefill tok/s, 16k document | Loom | 1287.4, 1265.7, 1228.6 | 1265.7 |
 | prefill tok/s, 16k document | llama.cpp | 44.6 | 44.6 |
-| prefill tok/s, 32k document | Loom | 1110.2, 1114.3, 1073.0 | 1110.2 |
-| 4 streams, aggregate decode tok/s | Loom | 96.8, 99.3, 96.7 | 96.8 |
+| prefill tok/s, 32k document | Loom | 1131.4, 1115.8, 1080.6 | 1115.8 |
+| 4 streams, aggregate decode tok/s | Loom | 89.5, 90.3, 90.1 | 90.1 |
 
 ### Roofline
 
@@ -77,58 +75,56 @@ gates golden and compare: from d08221b, not re-run on this build (no llama.cpp r
 
 ### Gate evidence
 
-#### named-machine run, 2026-11-25
+#### named-machine run, 2026-11-26
 
 - Gates: `kernel_tests` pass (34/34).
 - Device: AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04.
 - Loom SDK: hrx-loom `0.3.0` (hrx-system commit unknown).
-- Programs: sha256 `540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e`, the same as this repository's programs.
+- Programs: sha256 `2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942`, the same as this repository's programs.
 
-#### named-machine run, LEVEL=dev, 2026-11-25
+#### named-machine run, LEVEL=dev, 2026-11-26
 
 - Gates: `golden` pass (from d08221b, not re-run on this build), `compare` pass (from d08221b, not re-run on this build), `consistency` pass, `agent` pass (tool messages sent with name), `sampling` fail (default temperature 1.0, check expects greedy).
 - Device: AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04.
 - Loom SDK: hrx-loom `0.3.0` (hrx-system commit unknown).
-- Programs: sha256 `540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e`, the same as this repository's programs.
+- Programs: sha256 `2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942`, the same as this repository's programs.
 
 ## AMD Radeon AI PRO R9700 (gfx1201, 32 GB)
 
 - Baseline: llama.cpp `llama.cpp-cpu/418fe97+PR32704`, server arguments `-ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja` (model path, host and port left out).
 
-### Session 1: named-machine run, 2026-11-25
+### Session 1: named-machine run, 2026-11-21
 
 - Device: AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04.
 - Loom SDK: hrx-loom `0.3.0` (hrx-system commit unknown).
-- Programs measured: sha256 `540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e`, the same as this repository's programs.
+- Programs measured: sha256 `2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942`, the same as this repository's programs.
 - Values: the median over 3 sessions (4 streams: over 3 runs), a session's value being the median of its samples.
 - Commands:
 
 ```bash
 loom-serve --device='amdgpu://<URI>?completion_spin_ns=4294967295' --model=<preset dir> --preset=chat-r9700 --pool_backing=fixed --workers=8
-perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini
-perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini --long
-c4_steady.py URL 4 --model thinkingmachines/Inkling-2-Mini --label loom-baseline
+srv_measure.py URL OUT.json   (server-side: GET /metrics request duration and token counters around each request; 3 fresh sessions, both GPUs at the same time)
 perf.py URL llama-cpu-baseline --kind llama --repeats 3 [--long]  (llama-server -ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja; rows from an earlier session, not re-measured)
 gates golden and compare: from d08221b, not re-run on this build (no llama.cpp reference runs)
 ```
 
 | metric | engine | runs | value |
 |---|---|---|---|
-| decode tok/s, short prompt | Loom | 106.88, 106.35, 106.38 | 106.4 |
+| decode tok/s, short prompt | Loom | 104.95, 104.73, 104.75 | 104.8 |
 | decode tok/s, short prompt | llama.cpp | 14.86 | 14.9 |
-| decode tok/s, 2k context | Loom | 97.91, 97.59, 97.55 | 97.6 |
+| decode tok/s, 2k context | Loom | 96.23, 95.99, 95.95 | 96.0 |
 | decode tok/s, 2k context | llama.cpp | 11.26 | 11.3 |
-| decode tok/s, 32k context | Loom | 83.12, 83.52, 83.09 | 83.1 |
-| prefill tok/s, 1k document | Loom | 3141.3, 3061.0, 3052.6 | 3061.0 |
+| decode tok/s, 32k context | Loom | 81.32, 81.01, 81.01 | 81.0 |
+| prefill tok/s, 1k document | Loom | 3406.8, 3308.8, 3313.0 | 3313.0 |
 | prefill tok/s, 1k document | llama.cpp | 57.6 | 57.6 |
-| prefill tok/s, 2k document | Loom | 3727.0, 3633.6, 3623.9 | 3633.6 |
+| prefill tok/s, 2k document | Loom | 3919.7, 3813.8, 3808.4 | 3813.8 |
 | prefill tok/s, 2k document | llama.cpp | 53.6 | 53.6 |
-| prefill tok/s, 8k document | Loom | 3894.8, 3812.1, 3807.0 | 3812.1 |
+| prefill tok/s, 8k document | Loom | 3971.3, 3869.4, 3865.2 | 3869.4 |
 | prefill tok/s, 8k document | llama.cpp | 48.7 | 48.7 |
-| prefill tok/s, 16k document | Loom | 3702.1, 3632.3, 3627.9 | 3632.3 |
+| prefill tok/s, 16k document | Loom | 3738.0, 3645.6, 3641.7 | 3645.6 |
 | prefill tok/s, 16k document | llama.cpp | 44.6 | 44.6 |
-| prefill tok/s, 32k document | Loom | 3246.1, 3205.0, 3202.6 | 3205.0 |
-| 4 streams, aggregate decode tok/s | Loom | 235.1, 239.2, 232.2 | 235.1 |
+| prefill tok/s, 32k document | Loom | 3277.7, 3217.6, 3213.5 | 3217.6 |
+| 4 streams, aggregate decode tok/s | Loom | 221.6, 219.8, 220.2 | 220.2 |
 
 ### Roofline
 
@@ -150,16 +146,16 @@ gates golden and compare: from d08221b, not re-run on this build (no llama.cpp r
 
 ### Gate evidence
 
-#### named-machine run, 2026-11-25
+#### named-machine run, 2026-11-26
 
 - Gates: `kernel_tests` pass (34/34).
 - Device: AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04.
 - Loom SDK: hrx-loom `0.3.0` (hrx-system commit unknown).
-- Programs: sha256 `540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e`, the same as this repository's programs.
+- Programs: sha256 `2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942`, the same as this repository's programs.
 
-#### named-machine run, LEVEL=dev, 2026-11-25
+#### named-machine run, LEVEL=dev, 2026-11-26
 
 - Gates: `golden` pass (from d08221b, not re-run on this build), `compare` pass (from d08221b, not re-run on this build), `consistency` pass, `agent` pass (tool messages sent with name), `sampling` fail (default temperature 1.0, check expects greedy).
 - Device: AMD RYZEN AI MAX+ 395 w/ Radeon 8060S, AMD Radeon 8060S Graphics + AMD Radeon AI PRO R9700, Ubuntu 24.04.
 - Loom SDK: hrx-loom `0.3.0` (hrx-system commit unknown).
-- Programs: sha256 `540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e`, the same as this repository's programs.
+- Programs: sha256 `2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942`, the same as this repository's programs.

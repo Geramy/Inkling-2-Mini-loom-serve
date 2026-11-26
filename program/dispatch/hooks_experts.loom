@@ -16,7 +16,7 @@ kernel.decl @inkling_experts_gate_up_wmma(%n: index) launch(%n: index, %wtype: i
 
 kernel.decl @inkling_experts_routes() launch(%n: index, %tile: index, %ids: buffer, %tasks: buffer)
 
-kernel.decl @inkling_router_decode() launch(%n: index, %tile: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer, %tasks: buffer)
+kernel.decl @inkling_router_decode() launch(%n: index, %tile: index, %logits: buffer, %bias: buffer, %ids: buffer, %wts: buffer, %tasks: buffer, %metadata: buffer)
 
 kernel.decl @inkling_router_logits(%n: index) launch(%n: index, %x: buffer, %rw: buffer, %logits: buffer, %x16: buffer)
 
@@ -131,7 +131,7 @@ command.def public target(@inkling_execution) @inkling_hook_experts(%layer: inde
     scf.yield %q8gu, %q8dn, %wb2, %wb2 : buffer, buffer, buffer, buffer
   }
   scf.if %decode_rows {
-  kernel.launch @inkling_router_decode(%cap, %i8, %small, %wb2, %ab, %ob, %tasks) : (index, index, buffer, buffer, buffer, buffer, buffer)
+  kernel.launch @inkling_router_decode(%cap, %i8, %small, %wb2, %ab, %ob, %tasks, %metadata) : (index, index, buffer, buffer, buffer, buffer, buffer, buffer)
   } else {
   kernel.launch @inkling_router_select[%cap](%cap, %small, %wb2, %ab, %ob) : [index](index, buffer, buffer, buffer, buffer)
   }

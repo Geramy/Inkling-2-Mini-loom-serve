@@ -4,7 +4,7 @@
 
 func.decl @inkling_experts_records(%n: index) -> (index)
 
-func.def public inline @inkling_experts_route_groups(%n: index, %tile: index, %ids: buffer, %tasks: buffer) {
+func.def public inline @inkling_experts_route_groups(%n: index, %live_tokens: index, %tile: index, %ids: buffer, %tasks: buffer) {
   %c0 = index.constant 0 : index
   %c1 = index.constant 1 : index
   %c2 = index.constant 2 : index
@@ -15,6 +15,8 @@ func.def public inline @inkling_experts_route_groups(%n: index, %tile: index, %i
   %records_origin = index.constant 16 : offset
   %counter_bytes = index.constant 512 : offset
   %routes = index.mul %n, %c8 : index
+  %live_routes0 = index.mul %live_tokens, %c8 : index
+  %live_routes = index.min %live_routes0, %routes : index
   %records = func.call pure @inkling_experts_records(%n) : (index) -> (index)
   %tid = kernel.workitem.id<x> : index
   %tid_word = index.cast %tid : index to i32
@@ -31,8 +33,9 @@ func.def public inline @inkling_experts_route_groups(%n: index, %tile: index, %i
   %one = scalar.constant 1 : i32
   view.store %zero, %counters[%tid] : i32, view<128xi32>
   kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
-  scf.for %r = [%tid to %routes step %c128] {
-    %id32 = view.load %idv[%r] : view<[%routes]xi32> -> i32
+  scf.for %r = [%tid to %live_routes step %c128] {
+    %r_ok = index.assume %r [ge(%r, 0), lt(%r, %routes)] : index
+    %id32 = view.load %idv[%r_ok] : view<[%routes]xi32> -> i32
     %id_raw = index.cast %id32 : i32 to index
     %id = index.assume %id_raw [ge(%id_raw, 0), lt(%id_raw, 128)] : index
     %rank = view.atomic.rmw<addi> %one, %counters[%id] {ordering = relaxed, scope = workgroup} : i32, view<128xi32> -> i32
@@ -68,8 +71,9 @@ func.def public inline @inkling_experts_route_groups(%n: index, %tile: index, %i
   kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
   view.store %zero, %counters[%tid] : i32, view<128xi32>
   kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
-  scf.for %r = [%tid to %routes step %c128] {
-    %id32 = view.load %idv[%r] : view<[%routes]xi32> -> i32
+  scf.for %r = [%tid to %live_routes step %c128] {
+    %r_ok = index.assume %r [ge(%r, 0), lt(%r, %routes)] : index
+    %id32 = view.load %idv[%r_ok] : view<[%routes]xi32> -> i32
     %id_raw = index.cast %id32 : i32 to index
     %id = index.assume %id_raw [ge(%id_raw, 0), lt(%id_raw, 128)] : index
     %rank = view.atomic.rmw<addi> %one, %counters[%id] {ordering = relaxed, scope = workgroup} : i32, view<128xi32> -> i32
@@ -93,6 +97,6 @@ kernel.def export("inkling_experts_routes") @inkling_experts_routes() {
   %c128 = index.constant 128 : index
   kernel.launch.config workgroups(%c1, %c1, %c1) workgroup_size(%c128, %c1, %c1) : index
 } launch(%n: index, %tile: index, %ids: buffer, %tasks: buffer) {
-  func.call @inkling_experts_route_groups(%n, %tile, %ids, %tasks) : (index, index, buffer, buffer)
+  func.call @inkling_experts_route_groups(%n, %n, %tile, %ids, %tasks) : (index, index, index, buffer, buffer)
   kernel.return
 }

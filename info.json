@@ -78,50 +78,50 @@
   "radeon-r9700": {
    "gates": {
     "agent": {
-     "date": "2026-11-25",
+     "date": "2026-11-26",
      "detail": "tool messages sent with name",
      "level": "dev",
-     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+     "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
      "source": "machine",
      "status": "pass"
     },
     "compare": {
-     "date": "2026-11-25",
+     "date": "2026-11-26",
      "detail": "from d08221b, not re-run on this build",
      "level": "dev",
-     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+     "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
      "source": "machine",
      "status": "pass"
     },
     "consistency": {
-     "date": "2026-11-25",
+     "date": "2026-11-26",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+     "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
      "source": "machine",
      "status": "pass"
     },
     "golden": {
-     "date": "2026-11-25",
+     "date": "2026-11-26",
      "detail": "from d08221b, not re-run on this build",
      "level": "dev",
-     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+     "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
      "source": "machine",
      "status": "pass"
     },
     "kernel_tests": {
-     "date": "2026-11-25",
+     "date": "2026-11-26",
      "detail": "34/34",
      "level": null,
-     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+     "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
      "source": "machine",
      "status": "pass"
     },
     "sampling": {
-     "date": "2026-11-25",
+     "date": "2026-11-26",
      "detail": "default temperature 1.0, check expects greedy",
      "level": "dev",
-     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+     "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
      "source": "machine",
      "status": "fail"
     }
@@ -132,7 +132,7 @@
      "differs": [
       "not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache",
       "not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot)",
-      "Loom rows: median of 3 serialized sessions of the final build (one GPU at a time, nothing else running)"
+      "Loom rows are measured on the server (request duration from /metrics), not by a client; llama.cpp rows are its own server timings"
      ],
      "name": "llama.cpp",
      "version": "llama.cpp-cpu/418fe97+PR32704"
@@ -142,24 +142,22 @@
       "aggregate": "median",
       "commands": [
        "loom-serve --device='amdgpu://<URI>?completion_spin_ns=4294967295' --model=<preset dir> --preset=chat-r9700 --pool_backing=fixed --workers=8",
-       "perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini",
-       "perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini --long",
-       "c4_steady.py URL 4 --model thinkingmachines/Inkling-2-Mini --label loom-baseline",
+       "srv_measure.py URL OUT.json   (server-side: GET /metrics request duration and token counters around each request; 3 fresh sessions, both GPUs at the same time)",
        "perf.py URL llama-cpu-baseline --kind llama --repeats 3 [--long]  (llama-server -ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja; rows from an earlier session, not re-measured)",
        "gates golden and compare: from d08221b, not re-run on this build (no llama.cpp reference runs)"
       ],
-      "date": "2026-11-25",
+      "date": "2026-11-21",
       "metrics": {
        "decode": {
         "baseline": 14.9,
         "baseline_runs": [
          14.86
         ],
-        "loom": 106.4,
+        "loom": 104.8,
         "loom_runs": [
-         106.88,
-         106.35,
-         106.38
+         104.95,
+         104.73,
+         104.75
         ]
        },
        "decode_2k": {
@@ -167,20 +165,20 @@
         "baseline_runs": [
          11.26
         ],
-        "loom": 97.6,
+        "loom": 96.0,
         "loom_runs": [
-         97.91,
-         97.59,
-         97.55
+         96.23,
+         95.99,
+         95.95
         ]
        },
        "decode_32k": {
         "baseline": null,
-        "loom": 83.1,
+        "loom": 81.0,
         "loom_runs": [
-         83.12,
-         83.52,
-         83.09
+         81.32,
+         81.01,
+         81.01
         ]
        },
        "prefill_16k": {
@@ -188,11 +186,11 @@
         "baseline_runs": [
          44.6
         ],
-        "loom": 3632.3,
+        "loom": 3645.6,
         "loom_runs": [
-         3702.1,
-         3632.3,
-         3627.9
+         3738.0,
+         3645.6,
+         3641.7
         ]
        },
        "prefill_1k": {
@@ -200,11 +198,11 @@
         "baseline_runs": [
          57.6
         ],
-        "loom": 3061.0,
+        "loom": 3313.0,
         "loom_runs": [
-         3141.3,
-         3061.0,
-         3052.6
+         3406.8,
+         3308.8,
+         3313.0
         ]
        },
        "prefill_2k": {
@@ -212,20 +210,20 @@
         "baseline_runs": [
          53.6
         ],
-        "loom": 3633.6,
+        "loom": 3813.8,
         "loom_runs": [
-         3727.0,
-         3633.6,
-         3623.9
+         3919.7,
+         3813.8,
+         3808.4
         ]
        },
        "prefill_32k": {
         "baseline": null,
-        "loom": 3205.0,
+        "loom": 3217.6,
         "loom_runs": [
-         3246.1,
-         3205.0,
-         3202.6
+         3277.7,
+         3217.6,
+         3213.5
         ]
        },
        "prefill_8k": {
@@ -233,24 +231,24 @@
         "baseline_runs": [
          48.7
         ],
-        "loom": 3812.1,
+        "loom": 3869.4,
         "loom_runs": [
-         3894.8,
-         3812.1,
-         3807.0
+         3971.3,
+         3869.4,
+         3865.2
         ]
        },
        "streams4": {
         "baseline": null,
-        "loom": 235.1,
+        "loom": 220.2,
         "loom_runs": [
-         235.1,
-         239.2,
-         232.2
+         221.6,
+         219.8,
+         220.2
         ]
        }
       },
-      "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+      "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
       "runs": {
        "decode_prefill": 3,
        "streams4": 3
@@ -324,50 +322,50 @@
   "strix-halo": {
    "gates": {
     "agent": {
-     "date": "2026-11-25",
+     "date": "2026-11-26",
      "detail": "tool messages sent with name",
      "level": "dev",
-     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+     "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
      "source": "machine",
      "status": "pass"
     },
     "compare": {
-     "date": "2026-11-25",
+     "date": "2026-11-26",
      "detail": "from d08221b, not re-run on this build",
      "level": "dev",
-     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+     "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
      "source": "machine",
      "status": "pass"
     },
     "consistency": {
-     "date": "2026-11-25",
+     "date": "2026-11-26",
      "detail": null,
      "level": "dev",
-     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+     "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
      "source": "machine",
      "status": "pass"
     },
     "golden": {
-     "date": "2026-11-25",
+     "date": "2026-11-26",
      "detail": "from d08221b, not re-run on this build",
      "level": "dev",
-     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+     "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
      "source": "machine",
      "status": "pass"
     },
     "kernel_tests": {
-     "date": "2026-11-25",
+     "date": "2026-11-26",
      "detail": "34/34",
      "level": null,
-     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+     "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
      "source": "machine",
      "status": "pass"
     },
     "sampling": {
-     "date": "2026-11-25",
+     "date": "2026-11-26",
      "detail": "default temperature 1.0, check expects greedy",
      "level": "dev",
-     "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+     "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
      "source": "machine",
      "status": "fail"
     }
@@ -378,7 +376,7 @@
      "differs": [
       "not supported: ROCm and Vulkan llama.cpp builds (owner rule); this baseline is the CPU build, 12 threads, f32 KV cache",
       "not measured: 32k rows and 4 streams (baseline server has context 33792 and one slot)",
-      "Loom rows: median of 3 serialized sessions of the final build (one GPU at a time, nothing else running)"
+      "Loom rows are measured on the server (request duration from /metrics), not by a client; llama.cpp rows are its own server timings"
      ],
      "name": "llama.cpp",
      "version": "llama.cpp-cpu/418fe97+PR32704"
@@ -388,24 +386,22 @@
       "aggregate": "median",
       "commands": [
        "loom-serve --device='amdgpu://<URI>?completion_spin_ns=4294967295' --model=<preset dir> --preset=chat --pool_backing=fixed --workers=8",
-       "perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini",
-       "perf.py URL loom-baseline --model thinkingmachines/Inkling-2-Mini --long",
-       "c4_steady.py URL 4 --model thinkingmachines/Inkling-2-Mini --label loom-baseline",
+       "srv_measure.py URL OUT.json   (server-side: GET /metrics request duration and token counters around each request; 3 fresh sessions, both GPUs at the same time)",
        "perf.py URL llama-cpu-baseline --kind llama --repeats 3 [--long]  (llama-server -ngl 0 -c 33792 -np 1 -t 12 -ctk f32 -ctv f32 --jinja; rows from an earlier session, not re-measured)",
        "gates golden and compare: from d08221b, not re-run on this build (no llama.cpp reference runs)"
       ],
-      "date": "2026-11-25",
+      "date": "2026-11-21",
       "metrics": {
        "decode": {
         "baseline": 14.9,
         "baseline_runs": [
          14.86
         ],
-        "loom": 45.0,
+        "loom": 44.2,
         "loom_runs": [
-         45.04,
-         44.95,
-         44.5
+         44.39,
+         44.06,
+         44.17
         ]
        },
        "decode_2k": {
@@ -413,20 +409,20 @@
         "baseline_runs": [
          11.26
         ],
-        "loom": 42.1,
+        "loom": 41.6,
         "loom_runs": [
-         42.19,
-         42.13,
-         41.69
+         41.76,
+         41.57,
+         41.45
         ]
        },
        "decode_32k": {
         "baseline": null,
-        "loom": 35.4,
+        "loom": 34.6,
         "loom_runs": [
-         35.44,
-         35.42,
-         35.09
+         34.6,
+         32.3,
+         34.79
         ]
        },
        "prefill_16k": {
@@ -434,11 +430,11 @@
         "baseline_runs": [
          44.6
         ],
-        "loom": 1259.0,
+        "loom": 1265.7,
         "loom_runs": [
-         1259.0,
-         1262.4,
-         1224.9
+         1287.4,
+         1265.7,
+         1228.6
         ]
        },
        "prefill_1k": {
@@ -446,11 +442,11 @@
         "baseline_runs": [
          57.6
         ],
-        "loom": 1117.6,
+        "loom": 1203.5,
         "loom_runs": [
-         1135.6,
-         1117.6,
-         1089.6
+         1232.9,
+         1203.5,
+         1168.6
         ]
        },
        "prefill_2k": {
@@ -458,20 +454,20 @@
         "baseline_runs": [
          53.6
         ],
-        "loom": 1284.9,
+        "loom": 1331.6,
         "loom_runs": [
-         1290.2,
-         1284.9,
-         1253.2
+         1368.2,
+         1331.6,
+         1302.7
         ]
        },
        "prefill_32k": {
         "baseline": null,
-        "loom": 1110.2,
+        "loom": 1115.8,
         "loom_runs": [
-         1110.2,
-         1114.3,
-         1073.0
+         1131.4,
+         1115.8,
+         1080.6
         ]
        },
        "prefill_8k": {
@@ -479,24 +475,24 @@
         "baseline_runs": [
          48.7
         ],
-        "loom": 1329.3,
+        "loom": 1341.2,
         "loom_runs": [
-         1331.7,
-         1329.3,
-         1294.5
+         1371.9,
+         1341.2,
+         1308.0
         ]
        },
        "streams4": {
         "baseline": null,
-        "loom": 96.8,
+        "loom": 90.1,
         "loom_runs": [
-         96.8,
-         99.3,
-         96.7
+         89.5,
+         90.3,
+         90.1
         ]
        }
       },
-      "programs_sha256": "540ca170082badc9f8f257c47ed1bf71b8f19562948f9bb59355971d59bbf63e",
+      "programs_sha256": "2cd300d17bba806085fb69038820e9449379820668f322bd994e493f1e7ba942",
       "runs": {
        "decode_prefill": 3,
        "streams4": 3
